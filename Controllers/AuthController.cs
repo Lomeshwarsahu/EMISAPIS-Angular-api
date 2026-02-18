@@ -1,7 +1,7 @@
 ﻿using EMISAPIS.DTOS;
-using Microsoft.Data.SqlClient;
-
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace EMISAPIS.Controllers
 {
@@ -74,12 +74,16 @@ namespace EMISAPIS.Controllers
             return Ok(users);
         }
         [HttpGet("{id}")]
-        public async Task<IActionResult> GetStudent(int id)
+        public async Task<IActionResult> GetUserbyid(int id)
         {
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
-
+            //            SELECT user_id, user_name
+            //FROM users
+            //WHERE user_type IN('AD') AND roleid IS NOT NULL
+            //ORDER BY user_id;
             string query = "SELECT * FROM Users WHERE user_id=@user_id";
+            //string query = "SELECT user_id, user_name FROM users WHERE user_type IN ('AD') AND roleid IS NOT NULL ORDER BY user_id;";
             using SqlCommand cmd = new SqlCommand(query, con);
             cmd.Parameters.AddWithValue("@user_id", id);
 
@@ -106,6 +110,49 @@ namespace EMISAPIS.Controllers
             }
 
             return NotFound("Student not found");
+        }
+        [HttpGet("GetAdUsers")]
+        public async Task<IActionResult> GetUsersByRole()
+        {
+            var users = new List<UserDTO>();
+
+            using (SqlConnection con = new SqlConnection(_connectionString))
+            {
+                await con.OpenAsync();
+
+                // 1. Aapki nayi query yaha apply ki gayi hai
+                string query = @"SELECT user_id, user_name 
+                         FROM users 
+                         WHERE user_type IN ('AD') AND roleid IS NOT NULL 
+                         ORDER BY user_id";
+
+                using (SqlCommand cmd = new SqlCommand(query, con))
+                {
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            // 2. Sirf wahi data map karein jo query se aa raha hai
+                            users.Add(new UserDTO
+                            {
+                                // user_id check aur convert
+                                user_id = reader["user_id"] != DBNull.Value
+                                          ? Convert.ToInt32(reader["user_id"]) : 0,
+
+                                // user_name check aur convert
+                                user_name = reader["user_name"] != DBNull.Value
+                                            ? reader["user_name"].ToString() : string.Empty
+
+                                // IMPORTANT: Baaki columns (email, password, address) yaha se hata diye gaye hain
+                                // kyunki query unhe return nahi kar rahi hai.
+                                // UserDTO ke baaki fields null ya default rahenge.
+                            });
+                        }
+                    }
+                }
+            }
+
+            return Ok(users);
         }
     }
 }
