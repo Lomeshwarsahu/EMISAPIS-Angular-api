@@ -1,4 +1,5 @@
 ﻿using EMISAPIS.DTOS;
+using EMISAPIS.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using static System.Runtime.InteropServices.JavaScript.JSType;
@@ -73,86 +74,110 @@ namespace EMISAPIS.Controllers
 
             return Ok(users);
         }
+
+
         [HttpGet("{id}")]
         public async Task<IActionResult> GetUserbyid(int id)
         {
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
-            //            SELECT user_id, user_name
-            //FROM users
-            //WHERE user_type IN('AD') AND roleid IS NOT NULL
-            //ORDER BY user_id;
-            string query = "SELECT * FROM Users WHERE user_id=@user_id";
-            //string query = "SELECT user_id, user_name FROM users WHERE user_type IN ('AD') AND roleid IS NOT NULL ORDER BY user_id;";
-            using SqlCommand cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@user_id", id);
 
+            string query = "";
+            switch (id)
+            {
+                case 1:
+                    query = @"SELECT user_id, user_name 
+                  FROM users 
+                  WHERE user_type IN ('AD') 
+                  AND roleid IS NOT NULL 
+                  ORDER BY user_id";
+                    break;
+
+                case 2:
+                    query = @"SELECT 
+                    u.user_id AS user_id, 
+                    fa.facility_aut_name AS user_name
+                  FROM facility_aut fa
+                  INNER JOIN users u 
+                    ON fa.facility_aut_id = u.facility_aut_id
+                  WHERE ordercase IS NOT NULL";
+                    break;
+
+                case 3:
+                    query = @"SELECT user_id, user_name 
+                  FROM users 
+                  WHERE IsCGMSCUser='Y'  
+                  ORDER BY user_id";
+                    break;
+                case 4:
+                    query = @"SELECT user_id, user_name FROM users WHERE authority = 12 AND user_id != 12 ORDER BY user_id";
+
+                    break;
+                case 5:
+                    query = @"select u.user_id,u.e_mail_id,u.location_id,u.designation,u.user_name,u.passcommon,u.password from users u 
+                                inner join maslocations l on l.location_id=u.location_id where facility_type_id=3";
+
+                    break;
+                case 6:
+                    query = @"SELECT user_id, user_name
+                 FROM users
+                 WHERE user_type IN ('SUP')
+                 ORDER BY user_id";
+
+                    break;
+                case 7:
+                    query = @"SELECT user_id, user_name
+                 FROM users
+                 WHERE user_type IN ('SUP')
+                 ORDER BY user_id";
+
+                    break;
+                case 8:
+                    query = @"SELECT 
+    ms.supplier_id AS user_id,
+    ms.name AS user_name
+FROM massuppliers ms
+WHERE NOT EXISTS
+(
+    SELECT 1 
+    FROM users u
+    WHERE u.supplier_id = ms.supplier_id
+    AND u.user_type = 'SUP'
+)";
+                   
+
+                    break;
+
+                default:
+                    return BadRequest("Invalid id");
+            }
+
+
+            using SqlCommand cmd = new SqlCommand(query, con);
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
 
-            if (await reader.ReadAsync())
-            {
-                var users = new UserDTO
-                {
-                    user_id = reader["user_id"] != DBNull.Value
-                ? Convert.ToInt32(reader["user_id"]) : 0,
+            List<UserDTO> usersList = new List<UserDTO>();
 
-                    user_name = reader["user_name"].ToString(),
-                    e_mail_id = reader["e_mail_id"].ToString(),
-                    password = reader["password"].ToString(),
-                    user_type = reader["user_type"].ToString(),
-                    designation = reader["designation"].ToString(),
-                    address = reader["address"].ToString(),
-                    location_id = reader["location_id"] != DBNull.Value
-                ? Convert.ToInt32(reader["location_id"]) : 0,
+            while (await reader.ReadAsync())
+            {
+                var user = new UserDTO
+                {
+                                            user_id = reader["user_id"] != DBNull.Value
+                                                      ? Convert.ToInt32(reader["user_id"]) : 0,
+                                            user_name = reader["user_name"] != DBNull.Value
+                                                        ? reader["user_name"].ToString() : string.Empty
                 };
 
-                return Ok(users);
+
+
+                usersList.Add(user);
             }
 
-            return NotFound("Student not found");
+            if (usersList.Count == 0)
+                return NotFound("No users found");
+
+            return Ok(usersList);
         }
-        [HttpGet("GetAdUsers")]
-        public async Task<IActionResult> GetUsersByRole()
-        {
-            var users = new List<UserDTO>();
 
-            using (SqlConnection con = new SqlConnection(_connectionString))
-            {
-                await con.OpenAsync();
-
-                // 1. Aapki nayi query yaha apply ki gayi hai
-                string query = @"SELECT user_id, user_name 
-                         FROM users 
-                         WHERE user_type IN ('AD') AND roleid IS NOT NULL 
-                         ORDER BY user_id";
-
-                using (SqlCommand cmd = new SqlCommand(query, con))
-                {
-                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
-                    {
-                        while (await reader.ReadAsync())
-                        {
-                            // 2. Sirf wahi data map karein jo query se aa raha hai
-                            users.Add(new UserDTO
-                            {
-                                // user_id check aur convert
-                                user_id = reader["user_id"] != DBNull.Value
-                                          ? Convert.ToInt32(reader["user_id"]) : 0,
-
-                                // user_name check aur convert
-                                user_name = reader["user_name"] != DBNull.Value
-                                            ? reader["user_name"].ToString() : string.Empty
-
-                                // IMPORTANT: Baaki columns (email, password, address) yaha se hata diye gaye hain
-                                // kyunki query unhe return nahi kar rahi hai.
-                                // UserDTO ke baaki fields null ya default rahenge.
-                            });
-                        }
-                    }
-                }
-            }
-
-            return Ok(users);
-        }
     }
 }
