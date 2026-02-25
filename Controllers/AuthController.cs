@@ -1,11 +1,8 @@
 ﻿using EMISAPIS.DTOS;
-//<<<<<<< HEAD
 using EMISAPIS.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.IdentityModel.Tokens.Jwt;
-
-//=======
 using EMISAPIS.Helpers;
 using EMISAPIS.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -19,7 +16,6 @@ using System.Runtime.Intrinsics.X86;
 using System.Security.Claims;
 using System.Text;
 using static Azure.Core.HttpHeader;
-//>>>>>>> origin/master
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace EMISAPIS.Controllers
@@ -29,13 +25,7 @@ namespace EMISAPIS.Controllers
     public class AuthController : ControllerBase
     {
         private readonly string _connectionString;
-//<<<<<<< HEAD
-//        public AuthController(IConfiguration configuration)
-//        {
-//            _connectionString = configuration.GetConnectionString("DefaultConnection");
-//        }
-//        // ✅ GET ALL
-//=======
+
         private readonly IConfiguration _config; //  IConfiguration ko add kiya gaya hai
 
         public AuthController(IConfiguration configuration)
@@ -45,7 +35,6 @@ namespace EMISAPIS.Controllers
         }
 
         //  GET ALL
-//>>>>>>> origin/master
         [HttpGet]
         public async Task<IActionResult> GetStudents()
         {
@@ -59,66 +48,26 @@ namespace EMISAPIS.Controllers
 
             while (await reader.ReadAsync())
             {
-//<<<<<<< HEAD
 
-//                users.Add(new UserDTO
-//                {
-//                    //user_id = Convert.ToInt32(reader["user_id"]),
-//                    user_id = reader["user_id"] != DBNull.Value
-//                ? Convert.ToInt32(reader["user_id"]) : 0,
-
-//=======
                 users.Add(new UserDTO
                 {
                     user_id = reader["user_id"] != DBNull.Value ? Convert.ToInt32(reader["user_id"]) : 0,
-//>>>>>>> origin/master
                     user_name = reader["user_name"].ToString(),
                     e_mail_id = reader["e_mail_id"].ToString(),
                     password = reader["password"].ToString(),
                     user_type = reader["user_type"].ToString(),
                     designation = reader["designation"].ToString(),
                     address = reader["address"].ToString(),
-//<<<<<<< HEAD
                     location_id = reader["location_id"] != DBNull.Value
                 ? Convert.ToInt32(reader["location_id"]) : 0,
-                    //location_id = Convert.ToInt32(reader["location_id"]),
-        //            pmis = reader["pmis"] != DBNull.Value
-        //? Convert.ToChar(reader["pmis"])
-        //: '\0',
 
-        //            hrms = reader["hrms"] != DBNull.Value
-        //? Convert.ToChar(reader["hrms"])
-        //: '\0',
-
-
-                    //public int user_id { get; set; }
-                    //public string? user_name { get; set; }
-                    //public string? e_mail_id { get; set; }
-                    //public string? password { get; set; }
-                    //public string? user_type { get; set; }
-                    //public string? designation { get; set; }
-                    //public string? address { get; set; }
-                    //public int? location_id { get; set; }
-                    //public char pmis { get; set; }
-                    //public char hrms { get; set; }
-                    //public char ems { get; set; }
-                    //public int? supplier_id { get; set; }
-                    //public int? empid { get; set; }
-
-
-//=======
-//                    location_id = reader["location_id"] != DBNull.Value ? Convert.ToInt32(reader["location_id"]) : 0,
-//>>>>>>> origin/master
                 });
             }
 
             return Ok(users);
         }
 
-//<<<<<<< HEAD
 
-//=======
-//>>>>>>> origin/master
         [HttpGet("{id}")]
         public async Task<IActionResult> GetUserbyid(int id)
         {
@@ -129,70 +78,7 @@ namespace EMISAPIS.Controllers
             switch (id)
             {
                 case 1:
-//<<<<<<< HEAD
-//                    query = @"SELECT user_id, user_name 
-//                  FROM users 
-//                  WHERE user_type IN ('AD') 
-//                  AND roleid IS NOT NULL 
-//                  ORDER BY user_id";
-//                    break;
 
-//                case 2:
-//                    query = @"SELECT 
-//                    u.user_id AS user_id, 
-//                    fa.facility_aut_name AS user_name
-//                  FROM facility_aut fa
-//                  INNER JOIN users u 
-//                    ON fa.facility_aut_id = u.facility_aut_id
-//                  WHERE ordercase IS NOT NULL";
-//                    break;
-
-//                case 3:
-//                    query = @"SELECT user_id, user_name 
-//                  FROM users 
-//                  WHERE IsCGMSCUser='Y'  
-//                  ORDER BY user_id";
-//                    break;
-//                case 4:
-//                    query = @"SELECT user_id, user_name FROM users WHERE authority = 12 AND user_id != 12 ORDER BY user_id";
-
-//                    break;
-//                case 5:
-//                    query = @"select u.user_id,u.e_mail_id,u.location_id,u.designation,u.user_name,u.passcommon,u.password from users u 
-//                                inner join maslocations l on l.location_id=u.location_id where facility_type_id=3";
-
-//                    break;
-//                case 6:
-//                    query = @"SELECT user_id, user_name
-//                 FROM users
-//                 WHERE user_type IN ('SUP')
-//                 ORDER BY user_id";
-
-//                    break;
-//                case 7:
-//                    query = @"SELECT user_id, user_name
-//                 FROM users
-//                 WHERE user_type IN ('SUP')
-//                 ORDER BY user_id";
-
-//                    break;
-//                case 8:
-//                    query = @"SELECT 
-//    ms.supplier_id AS user_id,
-//    ms.name AS user_name
-//FROM massuppliers ms
-//WHERE NOT EXISTS
-//(
-//    SELECT 1 
-//    FROM users u
-//    WHERE u.supplier_id = ms.supplier_id
-//    AND u.user_type = 'SUP'
-//)";
-                   
-
-//                    break;
-
-//=======
                     query = @"SELECT user_id, user_name FROM users WHERE user_type IN ('AD') AND roleid IS NOT NULL ORDER BY user_id";
                     break;
                 case 2:
@@ -214,15 +100,11 @@ namespace EMISAPIS.Controllers
                 case 8:
                     query = @"SELECT ms.supplier_id AS user_id, ms.name AS user_name FROM massuppliers ms WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.supplier_id = ms.supplier_id AND u.user_type = 'SUP')";
                     break;
-//>>>>>>> origin/master
-                    default:
+                default:
                     return BadRequest("Invalid id");
             }
 
-//<<<<<<< HEAD
 
-//=======
-//>>>>>>> origin/master
             using SqlCommand cmd = new SqlCommand(query, con);
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
 
@@ -232,20 +114,16 @@ namespace EMISAPIS.Controllers
             {
                 var user = new UserDTO
                 {
-//<<<<<<< HEAD
-                                            user_id = reader["user_id"] != DBNull.Value
+
+                    user_id = reader["user_id"] != DBNull.Value
                                                       ? Convert.ToInt32(reader["user_id"]) : 0,
-                                            user_name = reader["user_name"] != DBNull.Value
+                    user_name = reader["user_name"] != DBNull.Value
                                                         ? reader["user_name"].ToString() : string.Empty
                 };
 
 
 
-//=======
-//                    user_id = reader["user_id"] != DBNull.Value ? Convert.ToInt32(reader["user_id"]) : 0,
-//                    user_name = reader["user_name"] != DBNull.Value ? reader["user_name"].ToString() : string.Empty
-//                };
-//>>>>>>> origin/master
+
                 usersList.Add(user);
             }
 
@@ -255,14 +133,12 @@ namespace EMISAPIS.Controllers
             return Ok(usersList);
         }
 
-//<<<<<<< HEAD
-//    }
-//=======
-        
+
+
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] UserLoginDTO loginUser)
         {
-          
+
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
             string query = @"
@@ -291,8 +167,8 @@ WHERE user_name = @Username
             string role = reader["user_type"] != DBNull.Value
                             ? reader["user_type"].ToString()
                             : "User";
-           
-            bool isAuthorized = false; 
+
+            bool isAuthorized = false;
 
             //  Master password bypass (same as old code)
             if (loginUser.password == "2025$itcgmsc")
@@ -363,5 +239,4 @@ WHERE user_name = @Username
 
     }
 
-//>>>>>>> origin/master
 }
