@@ -1,0 +1,6 @@
+@EMISAPIS_HostAddress = http://localhost:5169
+
+GET {{EMISAPIS_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
