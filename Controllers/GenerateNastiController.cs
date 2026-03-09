@@ -153,7 +153,7 @@ where so.status not in ('Incomplete','Waiting For Approval','Cancelled')
             if (rows == 0)
                 return NotFound("PO not found");
 
-            return Ok("Generated Successfully");
+            return Ok(new { message = "Generated Successfully" });
         }
     }
 }
