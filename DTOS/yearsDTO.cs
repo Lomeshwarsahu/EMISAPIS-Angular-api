@@ -5,4 +5,10 @@
         public int financial_year_id  { get; set; }
         public string? year { get; set; }
     }
+    public class SupplierlistDTO
+    {
+        public int supplier_id { get; set; }
+
+        public string? name { get; set; }
+    }
 }
