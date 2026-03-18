@@ -1,8 +1,11 @@
 ﻿using EMISAPIS.DTOS;
+using EMISAPIS.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using System.Data;
+using System.Diagnostics;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 
 namespace EMISAPIS.Controllers
@@ -307,23 +310,74 @@ and s.STATUS in ('P'))ORDER BY Rowno";
 
             List<FitPaymentDTO> list = new List<FitPaymentDTO>();
 
+            //while (await reader.ReadAsync())
+            //{
+            //    list.Add(new FitPaymentDTO
+            //    {
+            //        //PoId = Convert.ToInt32(reader["po_id"]),
+            //        PoId = reader["po_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_id"]),
+            //        TenderNo = reader["tender_no"]?.ToString(),
+            //        PoNo = reader["po_no"]?.ToString(),
+            //        Supplier = reader["Supplier"]?.ToString(),
+            //        PoDate = reader["po_date"]?.ToString(),
+            //        ItemName = reader["item_name"]?.ToString(),
+
+            //        POQty = reader["POQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["POQTY"]),
+            //        SupplyQty = reader["Supplyqty"] == DBNull.Value ? 0 : Convert.ToInt32(reader["Supplyqty"]),
+            //        ReceiptQty = reader["receiptQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["receiptQTY"]),
+
+            //        PresentFile = reader["PresentFile"]?.ToString()
+            //    });
+            //}
             while (await reader.ReadAsync())
             {
                 list.Add(new FitPaymentDTO
                 {
-                    //PoId = Convert.ToInt32(reader["po_id"]),
+                    FitUnfit = reader["fitunfit"]?.ToString(),
+
                     PoId = reader["po_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_id"]),
                     TenderNo = reader["tender_no"]?.ToString(),
                     PoNo = reader["po_no"]?.ToString(),
                     Supplier = reader["Supplier"]?.ToString(),
                     PoDate = reader["po_date"]?.ToString(),
+
+                    FacilityAutName = reader["facility_aut_name"]?.ToString(),
+                    ItemCode = reader["item_code_as_per_tender"]?.ToString(),
                     ItemName = reader["item_name"]?.ToString(),
 
                     POQty = reader["POQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["POQTY"]),
+                    POValue = reader["POValue"] == DBNull.Value ? 0 : Convert.ToInt64(reader["POValue"]),
+
                     SupplyQty = reader["Supplyqty"] == DBNull.Value ? 0 : Convert.ToInt32(reader["Supplyqty"]),
+                    InstallationQty = reader["instalationQty"] == DBNull.Value ? 0 : Convert.ToInt32(reader["instalationQty"]),
                     ReceiptQty = reader["receiptQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["receiptQTY"]),
 
-                    PresentFile = reader["PresentFile"]?.ToString()
+                    LastRDate = reader["LastRDate1"]?.ToString(),
+                    PoType = reader["potype"]?.ToString(),
+
+                    FileNo = reader["fileno"]?.ToString(),
+                    FileDt = reader["filedt"]?.ToString(),
+
+                    PresentFile = reader["PresentFile"]?.ToString(),
+                    PresentUserId = reader["presentuserid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["presentuserid"]),
+                    ToUserId = reader["TOUSERID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["TOUSERID"]),
+
+                    PenaltyPercent = reader["penaltypercent"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["penaltypercent"]),
+
+                    ReasonId = reader["reasonid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["reasonid"]),
+                    ReasonName = reader["ReasonName"]?.ToString(),
+                    IsSolved = reader["issolved"]?.ToString(),
+
+                    SiteStatus = reader["SiteStatus"]?.ToString(),
+
+                    RowNo = reader["Rowno"] == DBNull.Value ? 0 : Convert.ToInt32(reader["Rowno"]),
+
+                    ToDate = reader["todate"]?.ToString(),
+                    EntDT = reader["entDT"]?.ToString(),
+
+                    Remarks = reader["remarks"]?.ToString(),
+
+                    ExtStatus = reader["Extstatus"]?.ToString()
                 });
             }
 
@@ -604,6 +658,136 @@ ReceiptCopy ,ext ,ext_reccopy,d.decrepencyid from descrepency d inner join maslo
             return Ok(list);
         }
 
+        [HttpGet("sendto/{distId}")]
+        public async Task<IActionResult> GetSendTo(string sb, int distId)
+        {
+            List<UserDTO> list = new List<UserDTO>();
+            string where = "";
+
+            //if (distId == 21)
+            //    where = "and user_id in (5)";
+            //else if (distId == 383)
+            //    where = "and user_id in (21)";
+            //else if (distId == 5)
+            //    where = "and user_id in (29)";
+            //else if (distId == 29)
+            //    where = "and user_id in (5)";
+            if (sb == "S")
+            {
+                if (distId == 21)
+                    where = "and user_id in (5)";
+
+                if (distId == 383)
+                    where = "and user_id in (21)";
+
+                if (distId == 5)
+                    where = "and user_id in (29)";
+
+                if (distId == 29)
+                    where = "and user_id in (5)";
+            }
+            else
+            {
+                if (distId == 21)
+                    where = "and user_id in (383)";
+
+                if (distId == 383)
+                    where = "and user_id in (383)";
+
+                if (distId == 5)
+                    where = "and user_id in (21)";
+
+                if (distId == 29)
+                    where = "and user_id in (5)";
+            }
+
+            string connStr = _config.GetConnectionString("DefaultConnection");
+
+            using (SqlConnection con = new SqlConnection(connStr))
+            {
+                //string query = $"select user_id,user_name from users where 1=1 {where}";
+                string query = $"select user_id,user_name,hodno depmobile,emailid depemail from users where 1 = 1 {where}";
+              
+                SqlCommand cmd = new SqlCommand(query, con);
+
+                await con.OpenAsync();
+                SqlDataReader dr = await cmd.ExecuteReaderAsync();
+
+                while (await dr.ReadAsync())
+                {
+                    list.Add(new UserDTO
+                    {
+                        user_id = Convert.ToInt32(dr["user_id"]),
+                        user_name = dr["user_name"].ToString()
+                    });
+                }
+            }
+
+            return Ok(list);
+        }
+
+
+        [HttpPost("forward")]
+        public async Task<IActionResult> ForwardFile(FileMovementRequestDTO req)
+        {
+            if (req.ToUserId == 0)
+                return BadRequest("Select Send To Officer");
+
+            if (string.IsNullOrEmpty(req.Remarks))
+                return BadRequest("Remarks Required");
+
+            string connStr = _config.GetConnectionString("DefaultConnection");
+
+            using (SqlConnection con = new SqlConnection(connStr))
+            {
+                await con.OpenAsync();
+
+                // check existing movement
+                string checkQuery = @"SELECT TOP 1 * 
+                              FROM MASFILEMOVEMENT 
+                              WHERE ponoid=@ponoid 
+                              AND presentfileflag='Y'";
+
+                SqlCommand checkCmd = new SqlCommand(checkQuery, con);
+                checkCmd.Parameters.AddWithValue("@ponoid", req.PonoId);
+
+                var reader = await checkCmd.ExecuteReaderAsync();
+                bool exists = reader.HasRows;
+                reader.Close();
+
+                // update old movement
+                if (exists)
+                {
+                    string updateQuery = @"UPDATE MASFILEMOVEMENT 
+                                   SET presentfileflag='N' 
+                                   WHERE ponoid=@ponoid";
+
+                    SqlCommand updateCmd = new SqlCommand(updateQuery, con);
+                    updateCmd.Parameters.AddWithValue("@ponoid", req.PonoId);
+                    await updateCmd.ExecuteNonQueryAsync();
+                }
+
+                // insert new movement
+                string insertQuery = @"INSERT INTO MASFILEMOVEMENT
+                              (userid,todate,entryDT,remarks,Flag,presentfileflag,touserid,ponoid,fileid)
+                              VALUES
+                              (@userid,@todate,GETDATE(),@remarks,@flag,'Y',@touserid,@ponoid,@fileid)";
+
+                SqlCommand insertCmd = new SqlCommand(insertQuery, con);
+
+                insertCmd.Parameters.AddWithValue("@userid", req.UserId);
+                insertCmd.Parameters.AddWithValue("@todate", req.ForwardDate);
+                insertCmd.Parameters.AddWithValue("@remarks", req.Remarks);
+                insertCmd.Parameters.AddWithValue("@flag", req.Flag);
+                insertCmd.Parameters.AddWithValue("@touserid", req.ToUserId);
+                insertCmd.Parameters.AddWithValue("@ponoid", req.PonoId);
+                insertCmd.Parameters.AddWithValue("@fileid", req.FileId);
+
+                await insertCmd.ExecuteNonQueryAsync();
+            }
+
+            return Ok(new { message = "File Forwarded Successfully" });
+        }
         //    DataTable dt = new DataTable();
 
         //    using (SqlConnection con = new SqlConnection(_configuration.GetConnectionString("DefaultConnection")))

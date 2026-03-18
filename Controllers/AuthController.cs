@@ -164,6 +164,7 @@ WHERE user_name = @Username
             string storedCommonString = reader["passcommon"]?.ToString();
             string username = reader["user_name"]?.ToString();
             string roleid = reader["roleid"]?.ToString();
+            string user_id = reader["user_id"]?.ToString();
             string role = reader["user_type"] != DBNull.Value
                             ? reader["user_type"].ToString()
                             : "User";
@@ -230,6 +231,7 @@ WHERE user_name = @Username
             {
                 username = username,
                 roleid = roleid,
+                user_id= user_id,
                 user_type = role,
                 token = new JwtSecurityTokenHandler().WriteToken(token),
                 message = "Login Successful"
