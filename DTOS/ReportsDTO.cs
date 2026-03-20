@@ -57,4 +57,14 @@ namespace EMISAPIS.DTOS
         public decimal? BalToReceipt { get; set; }
         public decimal? BalToInstall { get; set; }
     }
+    public class DistrictsDTO
+    {
+        public int DP_DistrictID { get; set; }
+        public string? DBStart_Name_En { get; set; }
+    }
+    public class DiectorateDTO
+    {
+        public int facility_aut_id { get; set; }
+        public string? facility_aut_name { get; set; }
+    }
 }
