@@ -1,6 +1,7 @@
 ﻿using EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 
 namespace EMISAPIS.Controllers
 {
@@ -49,6 +50,8 @@ namespace EMISAPIS.Controllers
 
             return Ok(list);
         }
+
+
 
 
         [HttpGet("ExtensionEHODetails")]
@@ -171,6 +174,237 @@ order by posu.PO_date desc";
             }
 
             return Ok(list);
+        }
+
+
+
+
+        //[HttpGet("header/{poId}")]
+        //public async Task<IActionResult> GetHeader(int poId)
+        //{
+        //    List<PoHeaderforextDTO> list = new List<PoHeaderforextDTO>();
+
+        //    string query = @"  select s.name as SupplierName,
+        //       m.item_name as ItemName,
+        //       p.po_no as PoNo,
+        //       convert(varchar,p.po_date,103) as PoDate,
+        //       pt.tranche_days as SupplyDays,
+        //       convert(varchar,
+        //       DATEADD(DAY, pt.tranche_days, p.po_date),103) as PoEndDate
+        //from purchase_order p
+        //inner join po_tranche pt on pt.po_id=p.po_id
+        //inner join massuppliers s on s.supplier_id=p.supplier_id
+        //inner join po_items pi on pi.po_id=p.po_id
+        //inner join masitems m on m.item_id=pi.item_id
+        //where p.po_id = {0}", poId;
+
+        //    using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+        //    {
+        //        SqlCommand cmd = new SqlCommand(query, conn);
+
+        //        await conn.OpenAsync();
+
+        //        SqlDataReader reader = await cmd.ExecuteReaderAsync();
+
+        //        while (await reader.ReadAsync())
+        //        {
+        //            SupplierlistDTO data = new SupplierlistDTO
+        //            {
+        //                supplier_id = reader["supplier_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["supplier_id"]),
+        //                name = reader["name"] == DBNull.Value ? null : reader["name"].ToString()
+        //            };
+
+        //            list.Add(data);
+        //        }
+        //    }
+
+        //    return Ok(list);
+        //}
+
+
+        [HttpGet("header/{poId}")]
+        public async Task<IActionResult> GetHeader1(int poId)
+        {
+            List<PoHeaderforextDTO> list = new List<PoHeaderforextDTO>();
+
+            string query = @"
+    select s.name as SupplierName,
+           m.item_name as ItemName,
+           p.po_no as PoNo,
+           case when p.soissueDT is null 
+                then CONVERT(varchar,p.po_date,103) 
+                else CONVERT(varchar,p.soissueDT,103) end as PoDate,
+           pt.tranche_days as SupplyDays,
+           case when p2.extendeddate is null then 
+                CONVERT(varchar, DATEADD(DAY, pt.tranche_days,
+                (case when p.soissueDT is null then p.po_date else p.soissueDT end)),103)
+           else CONVERT(varchar,p2.extendeddate,103) end as PoEndDate
+    from purchase_order p
+    inner join po_tranche pt on pt.po_id=p.po_id
+    inner join massuppliers s on s.supplier_id=p.supplier_id
+    left join (select distinct item_id,po_id from po_items) pi on pi.po_id=p.po_id
+    inner join masitems m on m.item_id=pi.item_id
+    left join purchase_order p2 on p2.po_id=p.po_id
+    where p.po_id = @poId
+    and p.status in ('Order Placed','Partially Received','Completed')";
+
+            using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+            {
+                SqlCommand cmd = new SqlCommand(query, conn);
+                cmd.Parameters.AddWithValue("@poId", poId);
+
+                await conn.OpenAsync();
+
+                SqlDataReader reader = await cmd.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
+                {
+                    PoHeaderforextDTO data = new PoHeaderforextDTO
+                    {
+                        SupplierName = reader["SupplierName"] == DBNull.Value ? null : reader["SupplierName"].ToString(),
+                        ItemName = reader["ItemName"] == DBNull.Value ? null : reader["ItemName"].ToString(),
+                        PoNo = reader["PoNo"] == DBNull.Value ? null : reader["PoNo"].ToString(),
+                        PoDate = reader["PoDate"] == DBNull.Value ? null : reader["PoDate"].ToString(),
+                        SupplyDays = reader["SupplyDays"] == DBNull.Value ? null : reader["SupplyDays"].ToString(),
+                        PoEndDate = reader["PoEndDate"] == DBNull.Value ? null : reader["PoEndDate"].ToString()
+                    };
+
+                    list.Add(data);
+                }
+            }
+
+            return Ok(list);
+        }
+
+
+        [HttpGet("list/{poId}")]
+        public async Task<IActionResult> GetExtensions(int poId)
+        {
+            List<ExtensionListDTO> list = new List<ExtensionListDTO>();
+
+            string query = @"
+        SELECT ped.extensionId,
+               ped.po_id,
+               ped.remark,
+               ped.days,
+               convert(varchar,ped.extended_date,103) as extended_date,
+               convert(varchar,ped.po_end_date,103) as po_end_date,
+               ped.path,
+               convert(varchar,ped.letter_date,103) as letter_date,
+               ped.letter_no,
+               convert(varchar,ped.sys_gen_apply_date,105) as sys_gen_apply_date,
+               s.status,
+               case when s.isldpenality='N' 
+                    then 'Approved without Penalty' 
+                    else 'Approved with Penalty' end as penalty
+        FROM PO_extension_detail ped
+        inner join purchase_order s on ped.po_id = s.po_id
+        where ped.po_id = @poId
+        order by ped.extensionId";
+
+            using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+            {
+                SqlCommand cmd = new SqlCommand(query, conn);
+                cmd.Parameters.AddWithValue("@poId", poId);
+
+                await conn.OpenAsync();
+
+                SqlDataReader reader = await cmd.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
+                {
+                    ExtensionListDTO data = new ExtensionListDTO
+                    {
+                        ExtensionId = reader["extensionId"] == DBNull.Value ? 0 : Convert.ToInt32(reader["extensionId"]),
+                        PoId = reader["po_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_id"]),
+                        Remark = reader["remark"] == DBNull.Value ? null : reader["remark"].ToString(),
+                        Days = reader["days"] == DBNull.Value ? 0 : Convert.ToInt32(reader["days"]),
+                        ExtendedDate = reader["extended_date"] == DBNull.Value ? null : reader["extended_date"].ToString(),
+                        PoEndDate = reader["po_end_date"] == DBNull.Value ? null : reader["po_end_date"].ToString(),
+                        Path = reader["path"] == DBNull.Value ? null : reader["path"].ToString(),
+                        LetterDate = reader["letter_date"] == DBNull.Value ? null : reader["letter_date"].ToString(),
+                        LetterNo = reader["letter_no"] == DBNull.Value ? null : reader["letter_no"].ToString(),
+                        SysGenApplyDate = reader["sys_gen_apply_date"] == DBNull.Value ? null : reader["sys_gen_apply_date"].ToString(),
+                        Status = reader["status"] == DBNull.Value ? null : reader["status"].ToString(),
+                        Penalty = reader["penalty"] == DBNull.Value ? null : reader["penalty"].ToString()
+                    };
+
+                    list.Add(data);
+                }
+            }
+
+            return Ok(list);
+        }
+
+        [HttpPost("apply")]
+        public async Task<IActionResult> ApplyExtension(CreateExtensionDTO dto)
+        {
+            if (dto.Days <= 0)
+                return BadRequest("Extension Days must be greater than 0");
+
+            if (string.IsNullOrEmpty(dto.Remark))
+                return BadRequest("Remark Required");
+
+            if (dto.LetterDate == DateTime.MinValue)
+                return BadRequest("Letter Date Required");
+
+            string letterNo = $"{new Random().Next(100, 999)}-{new Random().Next(100, 999)}-{dto.PoId}-Extension";
+
+            using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+            {
+                await conn.OpenAsync();
+
+                using (SqlTransaction tran = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        // ✅ 1. Insert into PO_extension_detail
+                        string insertQuery = @"
+                INSERT INTO PO_extension_detail
+                (po_id, remark, days, extended_date, po_end_date, path, letter_date, letter_no, sys_gen_apply_date, status)
+                VALUES
+                (@PoId, @Remark, @Days, @ExtendedDate, @PoEndDate, 'NA', @LetterDate, @LetterNo, GETDATE(), 'Y')";
+
+                        SqlCommand cmd = new SqlCommand(insertQuery, conn, tran);
+                        cmd.Parameters.AddWithValue("@PoId", dto.PoId);
+                        cmd.Parameters.AddWithValue("@Remark", dto.Remark);
+                        cmd.Parameters.AddWithValue("@Days", dto.Days);
+                        cmd.Parameters.AddWithValue("@ExtendedDate", dto.ExtendedDate);
+                        cmd.Parameters.AddWithValue("@PoEndDate", dto.PoEndDate);
+                        cmd.Parameters.AddWithValue("@LetterDate", dto.LetterDate);
+                        cmd.Parameters.AddWithValue("@LetterNo", letterNo);
+
+                        await cmd.ExecuteNonQueryAsync();
+
+                        // ✅ 2. Update purchase_order
+                        string updateQuery = @"
+                UPDATE purchase_order
+                SET extendeddate = @ExtendedDate,
+                    isldpenality = @IsPenalty
+                WHERE po_id = @PoId";
+
+                        SqlCommand cmd2 = new SqlCommand(updateQuery, conn, tran);
+                        cmd2.Parameters.AddWithValue("@ExtendedDate", dto.ExtendedDate);
+                        cmd2.Parameters.AddWithValue("@IsPenalty", dto.IsPenalty ?? "N");
+                        cmd2.Parameters.AddWithValue("@PoId", dto.PoId);
+
+                        await cmd2.ExecuteNonQueryAsync();
+
+                        tran.Commit();
+
+                        return Ok(new
+                        {
+                            message = "Extension Applied Successfully",
+                            letterNo = letterNo
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        tran.Rollback();
+                        return StatusCode(500, ex.Message);
+                    }
+                }
+            }
         }
     }
 }
