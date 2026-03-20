@@ -304,10 +304,63 @@ and m.item_id =@item_id
 
             return Ok(result);
         }
-    
 
 
 
+        //  GET Districts
+        //[HttpGet]
+        [HttpGet("GetDistricts")]
+        public async Task<IActionResult> GetDistricts()
+        {
+            var Districts = new List<DistrictsDTO>();
 
-}
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+
+            using SqlCommand cmd = new SqlCommand("select DP_DistrictID,DBStart_Name_En from Districts", con);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+
+                Districts.Add(new DistrictsDTO
+                {
+                    DP_DistrictID = reader["DP_DistrictID"] != DBNull.Value ? Convert.ToInt32(reader["DP_DistrictID"]) : 0,
+                    DBStart_Name_En = reader["DBStart_Name_En"].ToString(),
+
+                });
+            }
+
+            return Ok(Districts);
+        }
+
+        //  GET year
+        //[HttpGet]
+        [HttpGet("GetDiectorate")]
+        public async Task<IActionResult> GetDiectorate()
+        {
+            var Diectorate = new List<DiectorateDTO>();
+
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+
+            using SqlCommand cmd = new SqlCommand("select facility_aut_id,facility_aut_name from facility_aut order by ordercase", con);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+
+                Diectorate.Add(new DiectorateDTO
+                {
+                    facility_aut_id = reader["facility_aut_id"] != DBNull.Value ? Convert.ToInt32(reader["facility_aut_id"]) : 0,
+                    facility_aut_name = reader["facility_aut_name"].ToString(),
+
+                });
+            }
+
+            return Ok(Diectorate);
+        }
+
+
+    }
 }
