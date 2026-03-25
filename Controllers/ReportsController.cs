@@ -19,7 +19,9 @@ namespace EMISAPIS.Controllers
         }
 
         //dropdownlist
-        [HttpGet("{directorateId}")]
+        //[HttpGet("{directorateId}")]
+        [HttpGet("items/{directorateId}")]
+
         public async Task<IActionResult> GetItemlist(int directorateId)
         {
             using SqlConnection con = new SqlConnection(_connectionString);
@@ -361,6 +363,210 @@ and m.item_id =@item_id
             return Ok(Diectorate);
         }
 
+        //distrinc wise details 
+        [HttpGet("GetDistrictWiseDetails")]
+        public IActionResult GetDistrictWiseDetails(
+                   int districtId,
+                   int directorateId,
+                   int financialYearId,
+                   string fromDate,
+                   string toDate)
+        {
+            List<DistrictWiseDetailDTO> list = new List<DistrictWiseDetailDTO>();
 
+            using (SqlConnection con = new SqlConnection(_connectionString))
+            {
+                con.Open();
+
+                string query = @"
+                    select distinct 
+                        case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype,
+                        t.tender_no,
+                        p.outward_no + '/' + p.po_no as po_no,
+                        convert(varchar,p.po_date,103) as po_date,
+                        ms.name as supplier_name,
+                        m.item_code_as_per_tender,
+                        m.item_name,
+                        dis.DBStart_Name_En,
+                        pi.consignee_id,
+                        ml.location_name,
+                        pi.quantity as po_qty,
+                        pi.basicrate,
+                        pi.percentage,
+                        pi.totalprice,
+                        case when m.categoryId = 2 then 'Reagent' else 'Equipment' end as Eqptype,
+                        p.po_id,
+                        isnull(sdd.supply_qty,0) as supply_qty,
+                        isnull(re.receiptQTY,0) as receiptQTY,
+                        isnull(ins.insqty,0) as insqty
+                    from purchase_order p
+                    inner join po_items pi on pi.po_id = p.po_id
+                    inner join masitems m on m.item_id = pi.item_id
+                    inner join maslocations ml on ml.location_id = pi.consignee_id
+                    inner join Districts dis on dis.DP_DistrictID = ml.DP_DistrictID
+                    inner join massuppliers ms on ms.supplier_id = p.supplier_id
+                    inner join tenders t on t.tender_id = p.tender_id
+                    inner join facility_aut fau on fau.facility_aut_id = p.directorate_id
+                    left join (
+                        select sd.po_id, sum(id.supplyqty) as supply_qty, sd.location_id 
+                        from SupplierDispatch sd 
+                        inner join Issue_item_details id on id.Issue_id = sd.Issue_id
+                        where sd.status='C'
+                        group by sd.po_id, sd.location_id
+                    ) sdd on sdd.po_id=pi.po_id and sdd.location_id=pi.consignee_id
+                    left join (
+                        select isnull(sum(r.receipt_qty),0) as receiptQTY, r.po_id, r.location_id
+                        from receipts r
+                        where r.recieved_date is not null and r.status in ('C','Received')
+                        group by r.po_id, r.location_id
+                    ) re on re.po_id=pi.po_id and re.location_id=pi.consignee_id
+                    left join (
+                        select sum(ri.received_qty) as insqty, r.po_id, r.location_id
+                        from receipts r
+                        left join receipt_item_details ri on ri.receipt_id=r.receipt_id
+                        where r.recieved_date is not null and r.status='C'
+                        group by r.po_id, r.location_id
+                    ) ins on ins.po_id=pi.po_id and ins.location_id=pi.consignee_id
+                    where p.po_date between CONVERT(date,@fromDate,103) and CONVERT(date,@toDate,103)
+                    and p.status='Order Placed'
+                    and dis.DP_DistrictID=@districtId
+                    and p.directorate_id=@directorateId
+                    and p.financial_year_id=@financialYearId
+                ";
+
+                using (SqlCommand cmd = new SqlCommand(query, con))
+                {
+                    cmd.Parameters.AddWithValue("@fromDate", fromDate);
+                    cmd.Parameters.AddWithValue("@toDate", toDate);
+                    cmd.Parameters.AddWithValue("@districtId", districtId);
+                    cmd.Parameters.AddWithValue("@directorateId", directorateId);
+                    cmd.Parameters.AddWithValue("@financialYearId", financialYearId);
+
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            list.Add(new DistrictWiseDetailDTO
+                            {
+                                potype = reader["potype"].ToString(),
+                                tender_no = reader["tender_no"].ToString(),
+                                po_no = reader["po_no"].ToString(),
+                                po_date = reader["po_date"].ToString(),
+                                supplier_name = reader["supplier_name"].ToString(),
+                                item_code_as_per_tender = reader["item_code_as_per_tender"].ToString(),
+                                item_name = reader["item_name"].ToString(),
+                                DBStart_Name_En = reader["DBStart_Name_En"].ToString(),
+                                consignee_id = Convert.ToInt32(reader["consignee_id"]),
+                                location_name = reader["location_name"].ToString(),
+                                po_qty = Convert.ToDecimal(reader["po_qty"]),
+                                basicrate = Convert.ToDecimal(reader["basicrate"]),
+                                percentage = Convert.ToDecimal(reader["percentage"]),
+                                totalprice = Convert.ToDecimal(reader["totalprice"]),
+                                Eqptype = reader["Eqptype"].ToString(),
+                                po_id = Convert.ToInt32(reader["po_id"]),
+                                supply_qty = Convert.ToDecimal(reader["supply_qty"]),
+                                receiptQTY = Convert.ToDecimal(reader["receiptQTY"]),
+                                insqty = Convert.ToDecimal(reader["insqty"])
+                            });
+                        }
+                    }
+                }
+            }
+
+            return Ok(list);
+        }
+
+        //indent po summary dirwise
+
+        // GET: api/reports/indentposummary?directorateId=5&financialYearId=19
+        [HttpGet("GetIndentPOSummaryDirwise")]
+        public async Task<IActionResult> GetIndentPOSummaryDirwise(int directorateId, int financialYearId)
+        {
+            List<IndentPOSummaryDirwiseDTO> list = new List<IndentPOSummaryDirwiseDTO>();
+
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+
+            string query = @"
+        select 
+            convert(varchar,idc.consolidated_date,105) as IndentDT,  
+            case when idc.description is not null then idc.description else 'Not Entered' end as Indent_Letter_no,
+            p.outward_no + '/' + p.po_no as po_no,
+            convert(varchar,(case when p.soissueDT is null then p.po_date else soissueDT end),105) as podate,
+            item_code_as_per_tender,item_name,eqtype,
+            sum(ii.indent_quantity) as Indent_Qty,
+            sum(POQTY) as poqty,
+            count(consignee_id) as no_of_consignee,
+            sum(povalue) as povalue,
+            idc.indent_consolidation_id,
+            idc.year as indent_year,
+            mfy.year as po_year  
+
+        from purchase_order p
+        inner join mas_financial_year mfy on mfy.financial_year_id = p.financial_year_id
+
+        inner join
+        (
+            select po_id,quantity as POQTY,pi.consignee_id,indent_id,
+                   m.item_code_as_per_tender,m.item_name,
+                   case when m.categoryid=2 then 'Reagent' else 'Equipment' end as eqtype,
+                   totalprice as povalue  
+            from po_items pi
+            inner join masitems m on m.item_id=pi.item_id
+        ) pi on pi.po_id=p.po_id
+
+        inner join indent ind on ind.indent_id=pi.indent_id
+        inner join indent_items ii on ii.indent_id = ind.indent_id
+
+        inner join 
+        ( 
+            select idcc.indent_consolidation_id,idcc.description,idcc.consolidated_date,mf.year 
+            from indent_consolidation idcc
+            inner join mas_financial_year mf on mf.financial_year_id = idcc.financial_year_id
+        ) idc on idc.indent_consolidation_id=ind.indent_consolidation_id
+
+        where p.status not in ('Incomplete','Waiting For Approval','Cancelled')
+          and p.financial_year_id = @FinancialYearId
+          and p.directorate_id = @DirectorateId
+
+        group by idc.consolidated_date,idc.description,p.po_no,p.soissueDT,p.po_date,
+                 item_code_as_per_tender,item_name,eqtype,
+                 p.outward_no,idc.indent_consolidation_id,idc.year,mfy.year
+
+        order by idc.description
+        ";
+
+            using SqlCommand cmd = new SqlCommand(query, con);
+            cmd.Parameters.AddWithValue("@DirectorateId", directorateId);
+            cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
+
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                list.Add(new IndentPOSummaryDirwiseDTO
+                {
+                    IndentDT = reader["IndentDT"]?.ToString(),
+                    Indent_Letter_no = reader["Indent_Letter_no"]?.ToString(),
+                    po_no = reader["po_no"]?.ToString(),
+                    podate = reader["podate"]?.ToString(),
+                    item_code_as_per_tender = reader["item_code_as_per_tender"]?.ToString(),
+                    item_name = reader["item_name"]?.ToString(),
+                    eqtype = reader["eqtype"]?.ToString(),
+                    Indent_Qty = reader["Indent_Qty"] != DBNull.Value ? Convert.ToDecimal(reader["Indent_Qty"]) : 0,
+                    poqty = reader["poqty"] != DBNull.Value ? Convert.ToDecimal(reader["poqty"]) : 0,
+                    no_of_consignee = reader["no_of_consignee"] != DBNull.Value ? Convert.ToInt32(reader["no_of_consignee"]) : 0,
+                    povalue = reader["povalue"] != DBNull.Value ? Convert.ToDecimal(reader["povalue"]) : 0,
+                    indent_consolidation_id = reader["indent_consolidation_id"] != DBNull.Value ? Convert.ToInt32(reader["indent_consolidation_id"]) : 0,
+                    indent_year = reader["indent_year"]?.ToString(),
+                    po_year = reader["po_year"]?.ToString()
+                });
+            }
+
+            if (list.Count == 0)
+                return NotFound("No data found");
+
+            return Ok(list);
+        }
     }
 }
