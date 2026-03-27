@@ -336,8 +336,79 @@ order by posu.PO_date desc";
             return Ok(list);
         }
 
+        //[HttpPost("apply")]
+        //public async Task<IActionResult> ApplyExtension(CreateExtensionDTO dto)
+        //{
+        //    if (dto.Days <= 0)
+        //        return BadRequest("Extension Days must be greater than 0");
+
+        //    if (string.IsNullOrEmpty(dto.Remark))
+        //        return BadRequest("Remark Required");
+
+        //    if (dto.LetterDate == DateTime.MinValue)
+        //        return BadRequest("Letter Date Required");
+
+        //    string letterNo = $"{new Random().Next(100, 999)}-{new Random().Next(100, 999)}-{dto.PoId}-Extension";
+
+        //    using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+        //    {
+        //        await conn.OpenAsync();
+
+        //        using (SqlTransaction tran = conn.BeginTransaction())
+        //        {
+        //            try
+        //            {
+        //                // ✅ 1. Insert into PO_extension_detail
+        //                string insertQuery = @"
+        //        INSERT INTO PO_extension_detail
+        //        (po_id, remark, days, extended_date, po_end_date, path, letter_date, letter_no, sys_gen_apply_date, status)
+        //        VALUES
+        //        (@PoId, @Remark, @Days, @ExtendedDate, @PoEndDate, 'NA', @LetterDate, @LetterNo, GETDATE(), 'Y')";
+
+        //                SqlCommand cmd = new SqlCommand(insertQuery, conn, tran);
+        //                cmd.Parameters.AddWithValue("@PoId", dto.PoId);
+        //                cmd.Parameters.AddWithValue("@Remark", dto.Remark);
+        //                cmd.Parameters.AddWithValue("@Days", dto.Days);
+        //                cmd.Parameters.AddWithValue("@ExtendedDate", dto.ExtendedDate);
+        //                cmd.Parameters.AddWithValue("@PoEndDate", dto.PoEndDate);
+        //                cmd.Parameters.AddWithValue("@LetterDate", dto.LetterDate);
+        //                cmd.Parameters.AddWithValue("@LetterNo", letterNo);
+
+        //                await cmd.ExecuteNonQueryAsync();
+
+        //                // ✅ 2. Update purchase_order
+        //                string updateQuery = @"
+        //        UPDATE purchase_order
+        //        SET extendeddate = @ExtendedDate,
+        //            isldpenality = @IsPenalty
+        //        WHERE po_id = @PoId";
+
+        //                SqlCommand cmd2 = new SqlCommand(updateQuery, conn, tran);
+        //                cmd2.Parameters.AddWithValue("@ExtendedDate", dto.ExtendedDate);
+        //                cmd2.Parameters.AddWithValue("@IsPenalty", dto.IsPenalty ?? "N");
+        //                cmd2.Parameters.AddWithValue("@PoId", dto.PoId);
+
+        //                await cmd2.ExecuteNonQueryAsync();
+
+        //                tran.Commit();
+
+        //                return Ok(new
+        //                {
+        //                    message = "Extension Applied Successfully",
+        //                    letterNo = letterNo
+        //                });
+        //            }
+        //            catch (Exception ex)
+        //            {
+        //                tran.Rollback();
+        //                return StatusCode(500, ex.Message);
+        //            }
+        //        }
+        //    }
+        //}
+
         [HttpPost("apply")]
-        public async Task<IActionResult> ApplyExtension(CreateExtensionDTO dto)
+        public async Task<IActionResult> ApplyExtension([FromForm] CreateExtensionDTO dto)
         {
             if (dto.Days <= 0)
                 return BadRequest("Extension Days must be greater than 0");
@@ -347,6 +418,14 @@ order by posu.PO_date desc";
 
             if (dto.LetterDate == DateTime.MinValue)
                 return BadRequest("Letter Date Required");
+
+            if (dto.File == null || dto.File.Length == 0)
+                return BadRequest("File Required");
+
+            string ext = Path.GetExtension(dto.File.FileName);
+
+            if (ext.ToLower() != ".pdf")
+                return BadRequest("Only PDF file allowed");
 
             string letterNo = $"{new Random().Next(100, 999)}-{new Random().Next(100, 999)}-{dto.PoId}-Extension";
 
@@ -358,10 +437,11 @@ order by posu.PO_date desc";
                 {
                     try
                     {
-                        // ✅ 1. Insert into PO_extension_detail
+                        // ✅ 1. INSERT and get ExtensionId
                         string insertQuery = @"
                 INSERT INTO PO_extension_detail
                 (po_id, remark, days, extended_date, po_end_date, path, letter_date, letter_no, sys_gen_apply_date, status)
+                OUTPUT INSERTED.extensionId
                 VALUES
                 (@PoId, @Remark, @Days, @ExtendedDate, @PoEndDate, 'NA', @LetterDate, @LetterNo, GETDATE(), 'Y')";
 
@@ -374,9 +454,42 @@ order by posu.PO_date desc";
                         cmd.Parameters.AddWithValue("@LetterDate", dto.LetterDate);
                         cmd.Parameters.AddWithValue("@LetterNo", letterNo);
 
-                        await cmd.ExecuteNonQueryAsync();
+                        int extensionId = (int)await cmd.ExecuteScalarAsync(); // ✅ ID मिल गया
 
-                        // ✅ 2. Update purchase_order
+                        // ✅ 2. Folder path
+                        string folderPath = Path.Combine(Directory.GetCurrentDirectory(), "PO_Ext_Docs");
+
+                        // ✅ Auto create folder
+                        if (!Directory.Exists(folderPath))
+                        {
+                            Directory.CreateDirectory(folderPath);
+                        }
+
+                        // ✅ File name using ExtensionId
+                        string fileName = $"POExtension_{extensionId}{ext}";
+                        string fullPath = Path.Combine(folderPath, fileName);
+
+                        // ✅ Save file
+                        using (var stream = new FileStream(fullPath, FileMode.Create))
+                        {
+                            await dto.File.CopyToAsync(stream);
+                        }
+
+                        // ✅ 3. Update file path in DB
+                        string relativePath = $"PO_Ext_Docs/{fileName}";
+
+                        string updatePathQuery = @"
+                UPDATE PO_extension_detail 
+                SET path = @Path 
+                WHERE extensionId = @Id";
+
+                        SqlCommand cmdPath = new SqlCommand(updatePathQuery, conn, tran);
+                        cmdPath.Parameters.AddWithValue("@Path", relativePath);
+                        cmdPath.Parameters.AddWithValue("@Id", extensionId);
+
+                        await cmdPath.ExecuteNonQueryAsync();
+
+                        // ✅ 4. Update purchase_order
                         string updateQuery = @"
                 UPDATE purchase_order
                 SET extendeddate = @ExtendedDate,
@@ -395,6 +508,7 @@ order by posu.PO_date desc";
                         return Ok(new
                         {
                             message = "Extension Applied Successfully",
+                            fileName = fileName,
                             letterNo = letterNo
                         });
                     }
@@ -406,5 +520,8 @@ order by posu.PO_date desc";
                 }
             }
         }
+
+
+
     }
 }

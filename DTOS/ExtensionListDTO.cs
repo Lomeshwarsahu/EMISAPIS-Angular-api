@@ -35,5 +35,13 @@
         public DateTime PoEndDate { get; set; }
         public DateTime LetterDate { get; set; }
         public string IsPenalty { get; set; } // Y / N
+
+        public IFormFile File { get; set; }
     }
+    public class FileUploadDto
+    {
+        public int ExtensionId { get; set; }
+        public IFormFile File { get; set; }
+    }
+  
 }
