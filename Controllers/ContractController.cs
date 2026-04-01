@@ -1541,7 +1541,81 @@ order by p.AIDDATE desc";
 
 
 
+        [HttpGet("get-tenders")]
+        public IActionResult GetTenders(string yearId, string status, string searchType, string searchText)
+        {
+            List<TenderDto> list = new List<TenderDto>();
 
+            using (SqlConnection con = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+            {
+                string query = @"SELECT A.TENDER_ID, A.TENDER_NO,
+            Convert(varchar(10),A.TENDER_DATE,103) AS TENDER_DATE,
+            A.TENDER_DESCRIPTION,
+            s.cStatus,
+            isnull(t.totali,0) as totali,
+            isnull(fnd.found,0) as found,
+            isnull(n.nosNotFound,0) as nosNotFound,
+            isnull(p.PriceEntry,0) as PriceEntry,
+            isnull(ac.accept,0) as accept,
+            isnull(r.reject,0) as reject
+            FROM TENDERS A
+            LEFT JOIN mascoverstatus s on s.csid=a.csid
+            LEFT JOIN (select COUNT(*) totali,tender_id from tender_items group by tender_id) t on t.tender_id=A.tender_id
+            LEFT JOIN (select COUNT(*) nosNotFound,tender_id from tender_items where priceflag='N' and rejectdate is null group by tender_id) n on n.tender_id=A.tender_id
+            LEFT JOIN (select COUNT(distinct ti.item_id) found,ti.tender_id from tender_items ti inner join live_tender_price l on l.tender_item_id=ti.tender_item_id where ti.priceflag is null group by ti.tender_id) fnd on fnd.tender_id=A.tender_id
+            LEFT JOIN (select count(distinct ti.item_id) PriceEntry,t.tender_id from tender_items ti inner join tenders t on t.tender_id=ti.tender_id inner join live_tender_price l on l.tender_item_id=ti.tender_item_id where l.basicrate is not null group by t.tender_id) p on p.tender_id=A.tender_id
+            LEFT JOIN (select count(distinct ti.item_id) accept,t.tender_id from tender_items ti inner join tenders t on t.tender_id=ti.tender_id inner join live_tender_price l on l.tender_item_id=ti.tender_item_id where l.basicrate is not null and l.isaccept='Y' group by t.tender_id) ac on ac.tender_id=A.tender_id
+            LEFT JOIN (select COUNT(*) reject,tender_id from tender_items where rejectdate is not null group by tender_id) r on r.tender_id=A.tender_id
+            WHERE 1=1 ";
+
+                SqlCommand cmd = new SqlCommand();
+                cmd.Connection = con;
+
+                // Filters
+                if (!string.IsNullOrEmpty(yearId))
+                {
+                    query += " AND A.financial_year_id = @yearId";
+                    cmd.Parameters.AddWithValue("@yearId", yearId);
+                }
+
+                if (!string.IsNullOrEmpty(status))
+                {
+                    query += " AND s.csid = @status";
+                    cmd.Parameters.AddWithValue("@status", status);
+                }
+
+                if (searchType == "T" && !string.IsNullOrEmpty(searchText))
+                {
+                    query += " AND A.TENDER_NO LIKE @search";
+                    cmd.Parameters.AddWithValue("@search", "%" + searchText + "%");
+                }
+
+                cmd.CommandText = query;
+
+                con.Open();
+                SqlDataReader dr = cmd.ExecuteReader();
+
+                while (dr.Read())
+                {
+                    list.Add(new TenderDto
+                    {
+                        TenderId = Convert.ToInt32(dr["TENDER_ID"]),
+                        TenderNo = dr["TENDER_NO"].ToString(),
+                        TenderDate = dr["TENDER_DATE"].ToString(),
+                        TenderDescription = dr["TENDER_DESCRIPTION"].ToString(),
+                        TotalItems = Convert.ToInt32(dr["totali"]),
+                        Found = Convert.ToInt32(dr["found"]),
+                        NotFound = Convert.ToInt32(dr["nosNotFound"]),
+                        PriceEntry = Convert.ToInt32(dr["PriceEntry"]),
+                        Accept = Convert.ToInt32(dr["accept"]),
+                        Reject = Convert.ToInt32(dr["reject"]),
+                        Status = dr["cStatus"].ToString()
+                    });
+                }
+            }
+
+            return Ok(list);
+        }
 
 
 
