@@ -302,4 +302,19 @@
         public int IndentFundId { get; set; }
         public int PoId { get; set; }
     }
+    public class TenderDto
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; }
+        public string TenderDate { get; set; }
+        public string TenderDescription { get; set; }
+        public int TotalItems { get; set; }
+        public int Found { get; set; }
+        public int NotFound { get; set; }
+        public int PriceEntry { get; set; }
+        public int Accept { get; set; }
+        public int Reject { get; set; }
+        public string Status { get; set; }
+    }
+
 }
