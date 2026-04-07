@@ -988,8 +988,8 @@ order by PDate desc";
         [HttpGet("FinanceRep/PaymentUnionReport")]
         public async Task<IActionResult> GetPaymentUnionReport(
               [FromQuery] string potype,
-    [FromQuery] string fromDate,
-    [FromQuery] string toDate)
+              [FromQuery] string fromDate,
+              [FromQuery] string toDate)
         {
             List<PaymentUnionDTO> list = new List<PaymentUnionDTO>();
 
@@ -1151,8 +1151,8 @@ order by AidDate desc";
         [HttpGet("FinanceRep/ChequePaymentReport")]
         public async Task<IActionResult> GetChequePaymentReport(
      string potype,
-     [FromQuery] string fromDate,
-     [FromQuery] string toDate)
+     [FromQuery] string? fromDate = null, // string fromDate,
+     [FromQuery] string? toDate = null )// string toDate)
         {
             List<SupplierPaymentSummaryDTO> list = new List<SupplierPaymentSummaryDTO>();
 
@@ -1672,24 +1672,54 @@ left outer join mascoverstatus s on s.csid=a.csid and  A.TENDER_NO LIKE @search"
 
                 con.Open();
                 SqlDataReader dr = cmd.ExecuteReader();
-
                 while (dr.Read())
                 {
                     list.Add(new TenderDto
                     {
-                        TenderId = Convert.ToInt32(dr["TENDER_ID"]),
-                        TenderNo = dr["TENDER_NO"].ToString(),
-                        TenderDate = dr["TENDER_DATE"].ToString(),
-                        TenderDescription = dr["TENDER_DESCRIPTION"].ToString(),
-                        TotalItems = Convert.ToInt32(dr["totali"]),
-                        Found = Convert.ToInt32(dr["found"]),
-                        NotFound = Convert.ToInt32(dr["nosNotFound"]),
-                        PriceEntry = Convert.ToInt32(dr["PriceEntry"]),
-                        Accept = Convert.ToInt32(dr["accept"]),
-                        Reject = Convert.ToInt32(dr["reject"]),
-                        Status = dr["cStatus"].ToString()
+                        TenderId = dr["TENDER_ID"] != DBNull.Value ? Convert.ToInt32(dr["TENDER_ID"]) : 0,
+                        TenderNo = Convert.ToString(dr["TENDER_NO"]),
+                        TenderDate = Convert.ToString(dr["TENDER_DATE"]),
+                        TenderDescription = Convert.ToString(dr["TENDER_DESCRIPTION"]),
+
+                        Flag = Convert.ToString(dr["FLAG"]),
+                        FinancialYearId = dr["financial_year_id"] != DBNull.Value ? Convert.ToInt32(dr["financial_year_id"]) : 0,
+                        WarrantyYear = dr["warranty_year"] != DBNull.Value ? Convert.ToInt32(dr["warranty_year"]) : 0,
+                        ImportDays = dr["import_days"] != DBNull.Value ? Convert.ToInt32(dr["import_days"]) : 0,
+                        DomesticDays = dr["domestic_days"] != DBNull.Value ? Convert.ToInt32(dr["domestic_days"]) : 0,
+
+                        CoverA = Convert.ToString(dr["cover_a"]),
+                        CoverB = Convert.ToString(dr["cover_b"]),
+                        CoverDemo = Convert.ToString(dr["cover_Demo"]),
+                        CoverC = Convert.ToString(dr["cover_c"]),
+
+                        Status = Convert.ToString(dr["cStatus"]),
+                        CsId = dr["csid"] != DBNull.Value ? Convert.ToInt32(dr["csid"]) : 0,
+
+                        TotalItems = dr["totali"] != DBNull.Value ? Convert.ToInt32(dr["totali"]) : 0,
+                        Found = dr["found"] != DBNull.Value ? Convert.ToInt32(dr["found"]) : 0,
+                        NotFound = dr["nosNotFound"] != DBNull.Value ? Convert.ToInt32(dr["nosNotFound"]) : 0,
+                        PriceEntry = dr["PriceEntry"] != DBNull.Value ? Convert.ToInt32(dr["PriceEntry"]) : 0,
+                        Accept = dr["accept"] != DBNull.Value ? Convert.ToInt32(dr["accept"]) : 0,
+                        Reject = dr["reject"] != DBNull.Value ? Convert.ToInt32(dr["reject"]) : 0
                     });
                 }
+                //while (dr.Read())
+                //{
+                //    list.Add(new TenderDto
+                //    {
+                //        TenderId = Convert.ToInt32(dr["TENDER_ID"]),
+                //        TenderNo = dr["TENDER_NO"].ToString(),
+                //        TenderDate = dr["TENDER_DATE"].ToString(),
+                //        TenderDescription = dr["TENDER_DESCRIPTION"].ToString(),
+                //        TotalItems = Convert.ToInt32(dr["totali"]),
+                //        Found = Convert.ToInt32(dr["found"]),
+                //        NotFound = Convert.ToInt32(dr["nosNotFound"]),
+                //        PriceEntry = Convert.ToInt32(dr["PriceEntry"]),
+                //        Accept = Convert.ToInt32(dr["accept"]),
+                //        Reject = Convert.ToInt32(dr["reject"]),
+                //        Status = dr["cStatus"].ToString()
+                //    });
+                //}
             }
 
             return Ok(list);
