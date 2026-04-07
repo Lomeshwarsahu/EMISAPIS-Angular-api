@@ -302,8 +302,24 @@
         public int IndentFundId { get; set; }
         public int PoId { get; set; }
     }
+    //public class TenderDto
+    //{
+    //    public int TenderId { get; set; }
+    //    public string TenderNo { get; set; }
+    //    public string TenderDate { get; set; }
+    //    public string TenderDescription { get; set; }
+    //    public int TotalItems { get; set; }
+    //    public int Found { get; set; }
+    //    public int NotFound { get; set; }
+    //    public int PriceEntry { get; set; }
+    //    public int Accept { get; set; }
+    //    public int Reject { get; set; }
+    //    public string Status { get; set; }
+    //}
+
     public class TenderDto
     {
+        // आपके पुराने फ़ील्ड्स
         public int TenderId { get; set; }
         public string TenderNo { get; set; }
         public string TenderDate { get; set; }
@@ -315,6 +331,17 @@
         public int Accept { get; set; }
         public int Reject { get; set; }
         public string Status { get; set; }
-    }
 
+        // SQL Query से जोड़े गए नए फ़ील्ड्स
+        public string Flag { get; set; }
+        public int FinancialYearId { get; set; }
+        public int WarrantyYear { get; set; }
+        public int ImportDays { get; set; }
+        public int DomesticDays { get; set; }
+        public string CoverA { get; set; }
+        public string CoverB { get; set; }
+        public string CoverDemo { get; set; }
+        public string CoverC { get; set; }
+        public int CsId { get; set; }
+    }
 }
