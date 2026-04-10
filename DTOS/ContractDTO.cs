@@ -1,4 +1,6 @@
-﻿namespace EMISAPIS.DTOS
+﻿using System.Text.Json.Serialization;
+
+namespace EMISAPIS.DTOS
 {
     public class ContractDTO
     {
@@ -247,6 +249,11 @@
         public int ItemId { get; set; }
         public string ItemName { get; set; }
     }
+    public class ALLItemListsDTO
+    {
+        public int item_id { get; set; }
+        public string item_name { get; set; }
+    }
 
     public class IndentItemSummaryDTO
     {
@@ -342,6 +349,48 @@
         public string CoverB { get; set; }
         public string CoverDemo { get; set; }
         public string CoverC { get; set; }
+        public int CsId { get; set; }
+    }
+
+    public class PODto1
+    {
+        public int PoId { get; set; }
+        public string TenderNo { get; set; }
+        public string Year { get; set; }
+        public string OutwardNo { get; set; }
+        public string po_no { get; set; }
+        public string Pono { get; set; }
+
+
+
+        public string PoDate { get; set; }
+        public string FacilityAutName { get; set; }
+        public string EQPTyp { get; set; }
+        public string item_code_as_per_tender { get; set; }
+        public string ItemName { get; set; }
+        public string Supplier { get; set; }
+        public decimal POQty { get; set; }
+        public decimal SupplyQty { get; set; }
+        public decimal ReceiptQty { get; set; }
+        public string LastRDate { get; set; }
+        public decimal InsQty { get; set; }
+        public string PoType { get; set; }
+        public int CancellationDays { get; set; }
+        public int DaysTakenToSupply { get; set; }
+        public string LastSupplyDate { get; set; }
+        public int Todays { get; set; }
+    }
+
+    public class TenderAllItemStatusDTO
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; }
+        public string ItemCodeAsPerTender { get; set; }
+        public string ItemName { get; set; }
+        public string TenderDate { get; set; }
+        public DateTime? EndDate { get; set; } // EndDate आमतौर पर DateTime होता है
+        public string FinalStatus { get; set; }
+        public int ItemId { get; set; }
         public int CsId { get; set; }
     }
 }
