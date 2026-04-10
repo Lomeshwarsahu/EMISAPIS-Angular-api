@@ -1,6 +1,7 @@
 ﻿using EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using System.Text.Json.Serialization;
 
 namespace EMISAPIS.Controllers
 {
@@ -1726,11 +1727,524 @@ left outer join mascoverstatus s on s.csid=a.csid and  A.TENDER_NO LIKE @search"
         }
 
 
+        [HttpGet("get-po-details")]
+        public IActionResult GetPODetails(
+    string directorateId,
+    string financialYearId,
+    bool isNonReceipt = false,
+    bool isMoreThanCancelDays = false)
+        {
+            List<PODto1> list = new List<PODto1>();
 
+            using (SqlConnection con = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+            {
+                string whNonReceipt = "";
+                string whNonReceiptCanceldays = "";
+
+                //if (isNonReceipt)
+                //{
+                //    whNonReceipt = " and pi.quantity > isnull(re.receiptQTY,0) ";
+                //}
+
+                //if (isMoreThanCancelDays)
+                //{
+                //    whNonReceiptCanceldays = @" and (DATEDIFF(day, p.po_date, getdate())) > t.cancellationdays 
+                //                       and pi.quantity > isnull(re.receiptQTY,0) ";
+                //}
+                //m.item_code_as_per_tender,
+                if (isNonReceipt && !isMoreThanCancelDays)
+                {
+                    whNonReceipt = " and pi.quantity > isnull(re.receiptQTY,0) ";
+                }
+
+                if (isMoreThanCancelDays)
+                {
+                    whNonReceiptCanceldays = @" 
+                and p.po_date < DATEADD(day, -t.cancellationdays, GETDATE())
+                and pi.quantity > isnull(re.receiptQTY,0) ";
+                }
+                string query = @"select  p.po_id,t.tender_no,f.year,p.outward_no,p.po_no,
+        p.outward_no + '/' + p.po_no as pono,
+        convert (varchar,p.po_date,105) as po_date,
+        dir.facility_aut_name,
+        case when m.categoryId = 2 then 'Re-Agent' else 'Equipment' end as EQPTyp,
+        m.item_code_as_per_tender,
+        m.item_name,
+        sp.name as Supplier,
+        pi.quantity as POQTY,
+        Supplyqty,
+        re.receiptQTY,
+        convert (varchar,red.LastRDate ,105) as LastRDate,
+        ins.insqty,
+        case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype,
+        t.cancellationdays,
+        DATEDIFF(day, p.po_date,red.LastRDate) as DaystakentoSupply,
+        convert (varchar,DATEADD(dd, 120, p.po_date),105) as lstsupplydt,
+        DATEDIFF(day, p.po_date,getdate()) as todays
+
+        from purchase_order p 
+        inner join massuppliers sp on sp.supplier_id=p.supplier_id
+        inner join mas_financial_year f on f.financial_year_id=p.financial_year_id
+
+        left outer join (
+            select sum(pi.quantity) as quantity,pi.po_id,pi.item_id  
+            from po_items pi 
+            group by pi.po_id,pi.item_id
+        ) pi on pi.po_id=p.po_id
+
+        inner join tenders t on t.tender_id=p.tender_id
+        inner join masitems m on m.item_id=pi.item_id
+        inner join facility_aut dir on dir.facility_aut_id=p.directorate_id
+
+        left outer join (
+            select po_id,isnull(sum(Supplyqty),0) as Supplyqty  
+            from SupplierDispatch d
+            inner join Issue_item_details i on d.Issue_id=i.Issue_id
+            inner join maslocations u on u.location_id=d.location_id
+            where d.status='C'  
+            group by po_id
+        ) sup on sup.po_id=pi.po_id 
+
+        left outer join (
+            select isnull(sum(r.receipt_qty),0) as receiptQTY ,r.po_id 
+            from receipts r
+            where r.recieved_date is not null and r.status in ('C','Received') 
+            group by po_id
+        ) re on re.po_id=pi.po_id 
+
+        left outer join (
+            select sum(ri.received_qty) as insqty,r.po_id 
+            from receipts r
+            left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+            where r.recieved_date is not null and r.status in ('C') 
+            group by r.po_id
+        ) ins on ins.po_id=pi.po_id 
+
+        left outer join (
+            select max(r.recieved_date) LastRDate,r.po_id 
+            from receipts r
+            left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+            where r.recieved_date is not null and r.status in ('C','Received') 
+            group by r.po_id
+        ) red on red.po_id=pi.po_id 
+
+        where 1=1 "
+        + whNonReceipt + " "
+        + whNonReceiptCanceldays + @"
+        and p.status in ('Order Placed') ";
+
+                SqlCommand cmd = new SqlCommand();
+                cmd.Connection = con;
+
+                if (!string.IsNullOrEmpty(directorateId))
+                {
+                    query += " and p.directorate_id = @directorateId";
+                    cmd.Parameters.AddWithValue("@directorateId", directorateId);
+                }
+
+                if (!string.IsNullOrEmpty(financialYearId))
+                {
+                    query += " and f.financial_year_id = @financialYearId";
+                    cmd.Parameters.AddWithValue("@financialYearId", financialYearId);
+                }
+
+                query += " order by p.po_date";
+
+                cmd.CommandText = query;
+                cmd.CommandTimeout = 300;
+                con.Open();
+                SqlDataReader dr = cmd.ExecuteReader();
+
+                while (dr.Read())
+                {
+                    list.Add(new PODto1
+                    {
+                        PoId = dr["po_id"] != DBNull.Value ? Convert.ToInt32(dr["po_id"]) : 0,
+                        TenderNo = Convert.ToString(dr["tender_no"]),
+                        Year = Convert.ToString(dr["year"]),
+                        OutwardNo = Convert.ToString(dr["outward_no"]),
+                        po_no = Convert.ToString(dr["po_no"]),
+                        Pono = Convert.ToString(dr["pono"]),
+
+                        PoDate = Convert.ToString(dr["po_date"]),
+                        FacilityAutName = Convert.ToString(dr["facility_aut_name"]),
+                        EQPTyp = Convert.ToString(dr["EQPTyp"]),
+                        item_code_as_per_tender = dr["item_code_as_per_tender"].ToString(),
+                        //ItemCode = Convert.ToString(dr["itemCode"]),
+                        //ItemCode = Convert.ToString(dr["item_code_as_per_tender"]),
+                        //ItemCode = Convert.ToString(dr["item_code_as_per_tender"]),
+                        ItemName = Convert.ToString(dr["item_name"]),
+                        Supplier = Convert.ToString(dr["Supplier"]),
+                        POQty = dr["POQTY"] != DBNull.Value ? Convert.ToDecimal(dr["POQTY"]) : 0,
+                        SupplyQty = dr["Supplyqty"] != DBNull.Value ? Convert.ToDecimal(dr["Supplyqty"]) : 0,
+                        ReceiptQty = dr["receiptQTY"] != DBNull.Value ? Convert.ToDecimal(dr["receiptQTY"]) : 0,
+                        LastRDate = Convert.ToString(dr["LastRDate"]),
+                        InsQty = dr["insqty"] != DBNull.Value ? Convert.ToDecimal(dr["insqty"]) : 0,
+                        PoType = Convert.ToString(dr["potype"]),
+                        CancellationDays = dr["cancellationdays"] != DBNull.Value ? Convert.ToInt32(dr["cancellationdays"]) : 0,
+                        DaysTakenToSupply = dr["DaystakentoSupply"] != DBNull.Value ? Convert.ToInt32(dr["DaystakentoSupply"]) : 0,
+                        LastSupplyDate = Convert.ToString(dr["lstsupplydt"]),
+                        Todays = dr["todays"] != DBNull.Value ? Convert.ToInt32(dr["todays"]) : 0
+                    });
+                }
+            }
+
+            return Ok(list);
+        }
+
+        //Getitemlist
+        [HttpGet("Report/GetALLItemsList")]
+        public async Task<IActionResult> GetALLItemsList()
+        {
+            var list = new List<ALLItemListsDTO>();
+
+            try
+            {
+                string query = @"select distinct item_name,item_id
+from 
+(
+
+select t.tender_id,t.tender_no,m.item_code_as_per_tender,m.item_name,t.tender_date,t.ENDDate,
+
+ (case when t.csid=1 then 'Live '+(case when isnull(ti.item_id,0)=0 then ',Tendered Items Pending'else '' end) 
+               else case when t.csid=2 and isnull(nositemsA,0)=0 then 'COVER-A Item Entry Pending,(Opened Date '+convert(varchar,t.cover_a,105)+')' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and scT.nosTEch>0 and isnull(scF.nosFIN,0)=0  then 'COVER-A Technical Evaluation Pending' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)>0 and isnull(scF.nosFIN,0)>0  then 'COVER-A Technical and Finalcial Evaluation Pending' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)=0 and isnull(scF.nosFIN,0)>0  then 'COVER-A Finalcial Evaluation Pending' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)=0 and isnull(scF.nosFIN,0)=0 and isnull(nosPrep,0)>0   then 'COVER-A Final Summary Sheet Upload Pending' 
+               else case when t.csid=7 and getdate()<t.ObjCEndDT  then 'COVER-A Claim Objection Time Valid' 
+               else case when t.csid=7 and getdate()>t.ObjCEndDT  then 'COVER-A Claim Objection Closed' 
+               else case when t.csid=3 and t.cover_b is not null  then 'COVER-B' 
+               else case when t.csid=5 and t.cover_c is not null and isnull(pr.nosPriceOpened,0)=0  then 'COVER-C,Price Entry Pending'          
+	
+               else ''
+               end end end end end end end end end end)    as FinalStatus
+			   ,ti.item_id,t.csid,t.CancelledDT
+			   
+ from  tenders t
+inner join tender_items ti on ti.tender_id=t.tender_id
+inner join masitems m on m.item_id=ti.item_id
+inner join MasCoverStatus c on c.CSID=t.csid
+ left outer join 
+               (
+               select sc.SCHEMEID,ti.item_id,count(distinct sc.SUPPLIERID) as nossupplier,count(distinct sch.ITEMID) nositemsA from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+			   inner join tender_items ti on ti.tender_id=t.tender_id
+               group by sc.SCHEMEID,ti.item_id
+               ) sc on sc.SCHEMEID=t.tender_id and sc.item_id= m.item_id
+
+			      left outer join 
+               (
+               select sc.SCHEMEID,ti.item_id,count(distinct sch.ITEMID) nosTEch from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+			   	   inner join tender_items ti on ti.tender_id=t.tender_id
+               where 1=1 and sc.ISCovTechEli is null
+               group by sc.SCHEMEID,ti.item_id
+               ) scT on scT.SCHEMEID=t.tender_id and scT.item_id= m.item_id
+
+			    left outer join 
+               (
+               select sc.SCHEMEID,ti.item_id,count(distinct sch.ITEMID) nosFIN from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+			     inner join tender_items ti on ti.tender_id=t.tender_id
+               where 1=1 and sc.IsCOVFinEli is null
+               group by sc.SCHEMEID,ti.item_id
+               ) scF on scF.SCHEMEID=t.tender_id and scF.item_id= m.item_id
+
+			        left outer join 
+               (
+               select sc.SCHEMEID,ti.item_id,count(distinct sch.ITEMID) nosPrep from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+			       inner join tender_items ti on ti.tender_id=t.tender_id
+               where 1=1 and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null and t.ObjCEndDT is null
+               group by sc.SCHEMEID,ti.item_id
+               ) scP on scP.SCHEMEID=t.tender_id and scP.item_id= m.item_id
+
+			      left outer join 
+			   (
+			   select sch.SCHEMEID,ti.item_id,count(distinct tp.item_id) nosPriceOpened  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			     inner join tender_items ti on ti.tender_id=t.tender_id
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y'
+				 and tp.isaccept is null
+				 group by sch.SCHEMEID,ti.item_id
+			   ) pr on pr.SCHEMEID=t.tender_id   and pr.item_id= m.item_id
+
+
+			    left outer join 
+			   (
+			   select sch.SCHEMEID,ti.item_id,count(distinct tp.item_id) nosAccepted  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			    inner join tender_items ti on ti.tender_id=t.tender_id
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y'
+				 and tp.isaccept is not null and tp.fdate is not null
+				 group by sch.SCHEMEID,ti.item_id
+			   ) acc on acc.SCHEMEID=t.tender_id  and acc.item_id= m.item_id
+			       left outer join 
+			   (
+			    select sch.SCHEMEID,ti.item_id,count(distinct tp.item_id) nosRejected  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			   inner join tender_items ti on ti.tender_id=t.tender_id
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y'
+				 and tp.isaccept='N' and ti.rejectdate is not null
+				 group by sch.SCHEMEID,ti.item_id
+				) rj on rj.SCHEMEID=t.tender_id  and rj.item_id= m.item_id
+
+
+			   left outer join 
+			   (
+			   select ci.item_id,c.tender_id,ci.contract_item_id from award_of_contract c
+			   inner join contract_items ci on ci.award_of_contract_id=c.award_of_contract_id
+			   where c.status='C'
+			   ) rc on rc.tender_id=t.tender_id and  rc.item_id= m.item_id
+			
+			where 1=1 and t.tender_date>'01-Apr-2021'  and rc.contract_item_id is null --and m.item_code_as_per_tender='EQP0651'
+
+			)a order by item_name";
+
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                list.Add(new ALLItemListsDTO
+                                {
+                                    item_id = reader["item_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["item_id"]),
+                                    item_name = reader["item_name"] == DBNull.Value ? "" : reader["item_name"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
+
+
+        [HttpGet("Report/GetItemsWiseDetails")]
+        public async Task<IActionResult> GetItemsWiseDetails([FromQuery] int Item_id)
+        {
+            List<TenderAllItemStatusDTO> list = new List<TenderAllItemStatusDTO>();
+
+            try
+            {
+                string query = @"select tender_id,tender_no,item_code_as_per_tender,item_name,convert(varchar,tender_date,103) as tender_date,ENDDate,case when csid=6 then 'Cancelled on '+convert(varchar,CancelledDT,103)   else case when csid=4 then 'Under Demo' else FinalStatus end end as FinalStatus    ,item_id,csid
+from 
+(
+
+select t.tender_id,t.tender_no,m.item_code_as_per_tender,m.item_name,t.tender_date,t.ENDDate,
+
+ (case when t.csid=1 then 'Live '+(case when isnull(ti.item_id,0)=0 then ',Tendered Items Pending'else '' end) 
+               else case when t.csid=2 and isnull(nositemsA,0)=0 then 'COVER-A Item Entry Pending,(Opened Date '+convert(varchar,t.cover_a,105)+')' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and scT.nosTEch>0 and isnull(scF.nosFIN,0)=0  then 'COVER-A Technical Evaluation Pending' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)>0 and isnull(scF.nosFIN,0)>0  then 'COVER-A Technical and Finalcial Evaluation Pending' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)=0 and isnull(scF.nosFIN,0)>0  then 'COVER-A Finalcial Evaluation Pending' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)=0 and isnull(scF.nosFIN,0)=0 and isnull(nosPrep,0)>0   then 'COVER-A Final Summary Sheet Upload Pending' 
+               else case when t.csid=7 and getdate()<t.ObjCEndDT  then 'COVER-A Claim Objection Time Valid' 
+               else case when t.csid=7 and getdate()>t.ObjCEndDT  then 'COVER-A Claim Objection Closed' 
+               else case when t.csid=3 and t.cover_b is not null  then 'COVER-B' 
+               else case when t.csid=5 and t.cover_c is not null and isnull(pr.nosPriceOpened,0)=0  then 'COVER-C,Price Entry Pending'          
+	
+               else ''
+               end end end end end end end end end end)    as FinalStatus
+			   ,ti.item_id,t.csid,t.CancelledDT
+			   
+ from  tenders t
+inner join tender_items ti on ti.tender_id=t.tender_id
+inner join masitems m on m.item_id=ti.item_id
+inner join MasCoverStatus c on c.CSID=t.csid
+ left outer join 
+               (
+               select sc.SCHEMEID,ti.item_id,count(distinct sc.SUPPLIERID) as nossupplier,count(distinct sch.ITEMID) nositemsA from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+			   inner join tender_items ti on ti.tender_id=t.tender_id
+               group by sc.SCHEMEID,ti.item_id
+               ) sc on sc.SCHEMEID=t.tender_id and sc.item_id= m.item_id
+
+			      left outer join 
+               (
+               select sc.SCHEMEID,ti.item_id,count(distinct sch.ITEMID) nosTEch from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+			   	   inner join tender_items ti on ti.tender_id=t.tender_id
+               where 1=1 and sc.ISCovTechEli is null
+               group by sc.SCHEMEID,ti.item_id
+               ) scT on scT.SCHEMEID=t.tender_id and scT.item_id= m.item_id
+
+			    left outer join 
+               (
+               select sc.SCHEMEID,ti.item_id,count(distinct sch.ITEMID) nosFIN from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+			     inner join tender_items ti on ti.tender_id=t.tender_id
+               where 1=1 and sc.IsCOVFinEli is null
+               group by sc.SCHEMEID,ti.item_id
+               ) scF on scF.SCHEMEID=t.tender_id and scF.item_id= m.item_id
+
+			        left outer join 
+               (
+               select sc.SCHEMEID,ti.item_id,count(distinct sch.ITEMID) nosPrep from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+			       inner join tender_items ti on ti.tender_id=t.tender_id
+               where 1=1 and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null and t.ObjCEndDT is null
+               group by sc.SCHEMEID,ti.item_id
+               ) scP on scP.SCHEMEID=t.tender_id and scP.item_id= m.item_id
+
+			      left outer join 
+			   (
+			   select sch.SCHEMEID,ti.item_id,count(distinct tp.item_id) nosPriceOpened  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			     inner join tender_items ti on ti.tender_id=t.tender_id
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y'
+				 and tp.isaccept is null
+				 group by sch.SCHEMEID,ti.item_id
+			   ) pr on pr.SCHEMEID=t.tender_id   and pr.item_id= m.item_id
+
+
+			    left outer join 
+			   (
+			   select sch.SCHEMEID,ti.item_id,count(distinct tp.item_id) nosAccepted  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			    inner join tender_items ti on ti.tender_id=t.tender_id
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y'
+				 and tp.isaccept is not null and tp.fdate is not null
+				 group by sch.SCHEMEID,ti.item_id
+			   ) acc on acc.SCHEMEID=t.tender_id  and acc.item_id= m.item_id
+			       left outer join 
+			   (
+			    select sch.SCHEMEID,ti.item_id,count(distinct tp.item_id) nosRejected  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			   inner join tender_items ti on ti.tender_id=t.tender_id
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y'
+				 and tp.isaccept='N' and ti.rejectdate is not null
+				 group by sch.SCHEMEID,ti.item_id
+				) rj on rj.SCHEMEID=t.tender_id  and rj.item_id= m.item_id
+
+
+			   left outer join 
+			   (
+			   select ci.item_id,c.tender_id,ci.contract_item_id from award_of_contract c
+			   inner join contract_items ci on ci.award_of_contract_id=c.award_of_contract_id
+			   where c.status='C'
+			   ) rc on rc.tender_id=t.tender_id and  rc.item_id= m.item_id
+			
+			where 1=1 and t.tender_date>'01-Apr-2021'  and rc.contract_item_id is null and m.item_id=  @Item_id
+			)a";
+                //        string query = @"
+                //select  
+                //    facility_aut_id,
+                //    facility_aut_name,
+                //    POtype,
+                //    count(distinct PO_ID) as nospo,
+                //    count(distinct CODE) as nositem,
+                //    round((sum(totalPOvalue)/10000000),2) as totalPOvalueCr,
+                //    CAST(sum(totalPOvalue) AS DECIMAL(15, 2)) as PValue
+                //from 
+                //(
+                //    select 
+                //        R.ITEM_CODE_AS_PER_TENDER as CODE,
+                //        p.OUTWARD_NO,
+                //        pi.quantity,
+                //        c.single_unit_price,
+                //        c.single_unit_price*pi.quantity as totalPOvalue,
+                //        p.PO_ID,
+                //        aut.facility_aut_name,
+                //        aut.facility_aut_id,
+                //        case when p.Potype ='CP' then 'COVID19 PO' else 'Normal PO' end as POtype
+                //    from po_items pi 
+                //    inner join MASITEMS R on R.ITEM_ID = pi.item_id
+                //    inner join purchase_order p on pi.po_id = p.po_id
+                //    inner join facility_aut aut on aut.facility_aut_id = p.directorate_id
+                //    left join 
+                //    (
+                //        select a.supplier_id,a.tender_id,ci.item_id,ci.single_unit_price
+                //        from award_of_contract a 
+                //        inner join contract_items ci on ci.award_of_contract_id=a.award_of_contract_id
+                //    ) c on c.item_id=pi.item_id 
+                //       and c.tender_id=p.tender_id 
+                //       and c.supplier_id=p.supplier_id
+                //    where p.financial_year_id = @financial_year_id
+                //    and p.status not in ('Incomplete','Waiting For Approval','Cancelled')
+                //) a
+                //group by facility_aut_name, POtype, facility_aut_id
+                //order by facility_aut_id";
+
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                using (SqlCommand cmd = new SqlCommand(query, conn))
+                {
+                    cmd.Parameters.AddWithValue("@Item_id", Item_id);
+
+                    await conn.OpenAsync();
+
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            list.Add(new TenderAllItemStatusDTO
+                            {
+                                TenderId = reader["tender_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["tender_id"]),
+
+                                TenderNo = reader["tender_no"] == DBNull.Value ? string.Empty : reader["tender_no"].ToString(),
+
+                                ItemCodeAsPerTender = reader["item_code_as_per_tender"] == DBNull.Value ? string.Empty : reader["item_code_as_per_tender"].ToString(),
+
+                                ItemName = reader["item_name"] == DBNull.Value ? string.Empty : reader["item_name"].ToString(),
+
+                                TenderDate = reader["tender_date"] == DBNull.Value ? string.Empty : reader["tender_date"].ToString(),
+
+                                EndDate = reader["ENDDate"] == DBNull.Value ? (DateTime?)null : Convert.ToDateTime(reader["ENDDate"]),
+
+                                FinalStatus = reader["FinalStatus"] == DBNull.Value ? string.Empty : reader["FinalStatus"].ToString(),
+
+                                ItemId = reader["item_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["item_id"]),
+
+                                CsId = reader["csid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["csid"])
+                            });
+                        }
+                    }
+                }
+
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
 
 
 
     }
+
+
 
 }
 
