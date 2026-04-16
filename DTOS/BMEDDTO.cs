@@ -112,4 +112,100 @@ namespace EMISAPIS.DTOS
         [MaxLength(500, ErrorMessage = "The limit of Address is 500 characters.")]
         public string Address { get; set; }
     }
+    public class CategoryDTO
+    {
+        public int categoryId { get; set; }
+        public string categoryName { get; set; }
+    }
+
+    public class EquipmentItemDTO
+    {
+        public int? ContractItemId { get; set; }
+        public string ItemName { get; set; }
+        public int ItemId { get; set; }
+        public string ItemCodeAsPerTender { get; set; }
+        public decimal? EstimatedCost { get; set; }
+        public string AMC { get; set; }
+        public string PM { get; set; }
+        public string PmMonth { get; set; }
+        public string RCValid { get; set; }
+        public decimal? BasicRate { get; set; }
+        public decimal? Percentage { get; set; }
+        public string TenderNo { get; set; }
+        public string Category { get; set; }
+        public int? CategoryId { get; set; }
+    }
+
+    public class EquipmentCreateDTO
+    {
+        [Required(ErrorMessage = "Equipment Code is required.")]
+        public string ItemCode { get; set; }
+
+        [Required(ErrorMessage = "Equipment Name is required.")]
+        public string ItemName { get; set; }
+
+        [Required(ErrorMessage = "Please Select Category.")]
+        public int CategoryId { get; set; }
+
+        public decimal? Price { get; set; }
+
+        public int? PreventivePeriod { get; set; }
+
+        // ये 't' (true) या 'f' (false) की वैल्यूज़ लेंगी
+        public string Warranty { get; set; } = "f";
+        public string AMC { get; set; } = "f";
+        public string PrevMaint { get; set; } = "f";
+        public string Installation { get; set; } = "f";
+    }
+
+    public class ItemMappingDTO
+    {
+        [Required(ErrorMessage = "Main Item Type is required.")]
+        public string MainItemType { get; set; }
+
+        public string AmcRequired { get; set; } = "Y";
+        public string EntryType { get; set; } = "S";
+        public string ProgressRequired { get; set; } = "Y";
+        public string IsElectrical { get; set; } = "Y";
+        public List<int> SelectedItemIds { get; set; } = new List<int>();
+    }
+
+    public class UnmappedItemDTO
+    {
+        public string ItemCodeAsPerTender { get; set; }
+        public string ItemName { get; set; }
+        public int ItemId { get; set; }
+
+        
+        public int? Pid { get; set; }
+
+        public string PItemName { get; set; }
+    }
+    public class mappedItemDTO
+    {
+        public int? PID { get; set; }
+
+        public string PItemName { get; set; }
+    }
+
+    public class MapExistingItemDTO
+    {
+        [Required(ErrorMessage = "Please Select Main Item Type")]
+        public int MainItemTypeId { get; set; }
+
+        public List<int> SelectedItemIds { get; set; } = new List<int>();
+    }
+    public class mappedItemsReportDTO
+    {
+        public string PItemName { get; set; }
+        public string ItemCode { get; set; }
+        public string ItemName { get; set; }
+        public string IsElectrical { get; set; }
+        public string ProgReq { get; set; }
+        public string SRorBulkEntry { get; set; }
+        public string AmcReq { get; set; }
+        public int ItemId { get; set; }
+    }
+
+
 }
