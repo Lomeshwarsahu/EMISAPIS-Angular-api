@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.Security.Cryptography.Pkcs;
 namespace EMISAPIS.DTOS
 {
     public class BMEDDTO
@@ -206,6 +207,187 @@ namespace EMISAPIS.DTOS
         public string AmcReq { get; set; }
         public int ItemId { get; set; }
     }
+    public class tenderlistDTO
+    {
+        public int Tenderid { get; set; }
+        public string Tenderno { get; set; }
+    }
+    public class TenderSupplierrDTO
+    {
+        public int sId { get; set; }
+        public string sName { get; set; } = string.Empty;
+    }
+    public class ContractFilterDTO
+    {
+        public int FinancialYearId { get; set; } // 0 मतलब "All"
+        public int TenderId { get; set; }        // 0 मतलब "All"
+        public int SupplierId { get; set; }      // 0 मतलब "All"
+        public string Status { get; set; } = string.Empty; // "" मतलब "All"
+    }
+    public class AwardOfContractDTO
+    {
+        public string ContractNumber { get; set; } = string.Empty;
+        public string ContractDate { get; set; } = string.Empty;
+        public int SupplierId { get; set; }
+        public string SupplierName { get; set; } = string.Empty;
+        public string ContractType { get; set; } = string.Empty;
+        public string ContractDescription { get; set; } = string.Empty;
+        public string TenderNo { get; set; } = string.Empty;
+        public string TenderDate { get; set; } = string.Empty;
+        public int TenderId { get; set; }
+        public string ContractDuration { get; set; } = string.Empty;
+        public string ContractSignDate { get; set; } = string.Empty;
+        public string ContractEndDate { get; set; } = string.Empty;
+        public int DocumentType { get; set; }
+        public string DocumentNumber { get; set; } = string.Empty;
+        public string DocumentDate { get; set; } = string.Empty;
+        public string DocumentExpiryDate { get; set; } = string.Empty;
+        public int FinancialYearId { get; set; }
+        public string Year { get; set; } = string.Empty;
+        public decimal DocumentValue { get; set; }
+        public int AwardOfContractId { get; set; }
+        public string Status { get; set; } = string.Empty;
+    }
 
 
+    // 1. Contract Header बनाने के लिए (Angular से डेटा लेने के लिए)
+    public class GenerateContractDTO
+    {
+        public int TenderId { get; set; }
+        public int SupplierId { get; set; }
+        public int FinancialYearId { get; set; }
+        public string ContractDate { get; set; } = string.Empty; // "yyyy-MM-dd" format
+    }
+
+    public class GetTaxDTO
+    {
+        public int TaxId { get; set; }
+        public string Taxname { get; set; } = string.Empty;
+    }
+    public class ItemRateDetailDTO
+    {
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+
+        // पैसों (Rates/Tax) के लिए decimal का इस्तेमाल करना सबसे अच्छा है
+        public decimal BasicRate { get; set; }
+        public decimal Gst { get; set; }
+
+        public int SupplierId { get; set; }
+        public int TenderId { get; set; }
+    }
+    public class TenderItemDTO
+    {
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+    }
+    // 2. नया आइटम जोड़ने के लिए (Add Equipments)
+    public class AddContractItemDTO
+    {
+        public int AwardOfContractId { get; set; }
+        public int ItemId { get; set; }
+        public int NoOfDaysForSupply { get; set; }
+        public decimal BasicRate { get; set; }
+        public int TaxTypeId { get; set; }
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public string LicenceNumber { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string DomesticImported { get; set; } = string.Empty; // 0 or 1
+    }
+
+    public class ContractItemDetailsDTO
+    {
+        public int AwardOfContractId { get; set; }
+        public string ContractNumber { get; set; } = string.Empty;
+        public int ContractItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+        public int NoOfDaysForSupply { get; set; }
+        public decimal BasicRate { get; set; }
+        public string TaxTypeName { get; set; } = string.Empty;
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public string LicenceNumber { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public int ItemId { get; set; }
+        public int TaxTypeId { get; set; }
+        public string SupplyCategory { get; set; } = string.Empty;
+        public string ContractDate { get; set; } = string.Empty;
+        public int SupplierId { get; set; }
+        public int FinancialYearId { get; set; }
+        public int TenderId { get; set; }
+    }
+
+    public class UpdateContractItemsDTO
+    {
+        public int ContractItemId { get; set; }
+        public int NoOfDaysForSupply { get; set; }
+        public decimal BasicRate { get; set; }
+        public int TaxTypeId { get; set; }
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public string LicenceNumber { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+    }
+
+    public class FinalizeContractDTO
+    {
+        public int AwardOfContractId { get; set; }
+        public int ContractDuration { get; set; } // महीनों (Months) में
+        public string ContractSignDate { get; set; } = string.Empty; // फॉर्मेट: "yyyy-MM-dd"
+    }
+    // 3. Grid/Table में डेटा भेजने के लिए (Response DTO)
+    public class ContractItemGridResponseDTO
+    {
+        public int ContractItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+        public int NoOfDaysForSupply { get; set; }
+        public decimal BasicRate { get; set; }
+        public string TaxTypeName { get; set; } = string.Empty;
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public string LicenceNumber { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string SupplyCategory { get; set; } = string.Empty; // Domestic/Imported
+    }
+
+    //public class FinYearListDTO
+    //{
+    //    public int finyear_id { get; set; }
+    //    public string year { get; set; } = string.Empty;
+    //}
+    public class TenderDashboardReportDTO
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+        public string TenderDate { get; set; } = string.Empty;
+        public string TenderDescription { get; set; } = string.Empty;
+        public string Flag { get; set; } = string.Empty;
+        public int FinancialYearId { get; set; }
+        public int WarrantyYear { get; set; }
+        public int ImportDays { get; set; }
+        public int DomesticDays { get; set; }
+        public string CoverA { get; set; } = string.Empty;
+        public string CoverB { get; set; } = string.Empty;
+        public string CoverDemo { get; set; } = string.Empty;
+        public string CoverC { get; set; } = string.Empty;
+        public string CStatus { get; set; } = string.Empty;
+        public int CsId { get; set; }
+
+        // काउंट्स और कैलकुलेशंस
+        public int TotalItems { get; set; }
+        public int FoundItems { get; set; }
+        public int NosNotFound { get; set; }
+        public int PriceEntry { get; set; }
+        public int Accept { get; set; }
+        public int Reject { get; set; }
+        public int NosBidder { get; set; }
+        public int NosItemsBid { get; set; }
+        public decimal TotalValue { get; set; }
+        public string TenderType { get; set; } = string.Empty;
+    }
 }
