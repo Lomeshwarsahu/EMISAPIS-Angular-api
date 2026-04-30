@@ -1,7 +1,9 @@
 ﻿using EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver.Core.Configuration;
+using System.Data;
 using System.Diagnostics.Eventing.Reader;
 using System.Net.NetworkInformation;
 using System.Text.Json.Serialization;
@@ -1733,13 +1735,757 @@ inner join masitemP p on p.PID=m.pid
             }
         }
 
+      
+        [HttpGet("GetTenderDetailsById/{tenderId}")]
+        public async Task<IActionResult> GetTenderDetailsById(int tenderId)
+        {
+            //if (tenderId <= 0)
+            //{
+            //    return BadRequest(new { message = "Please provide a valid Tender ID." });
+            //}
+
+            List<TenderStatusDto> list = new List<TenderStatusDto>();
+
+            string query = @"SELECT A.TENDER_NO, B.YEAR AS FINANCIAL_YEAR, A.domestic_days, A.import_days, A.warranty_year,
+                            convert(varchar, A.TENDER_DATE, 103) as TENDER_DATE, A.TENDER_DESCRIPTION, A.FLAG, A.FINANCIAL_YEAR_ID, A.tender_id,
+                            Convert(varchar, A.cover_a, 103) AS cover_a, Convert(varchar, A.cover_b, 103) AS cover_b, 
+                            Convert(varchar, A.cover_Demo, 103) AS cover_Demo, Convert(varchar, A.cover_c, 103) AS cover_c, 
+                            s.cStatus, s.csid, A.FLAG, Convert(varchar, A.cover_Demo2, 103) AS cover_Demo2, 
+                            Convert(varchar, A.cover_Demo3, 103) AS cover_Demo3, TenderRemarks,
+                            webSiteUploadID, eprocID, Convert(varchar, A.ENDDate, 103) AS ENDDate 
+                            FROM TENDERS A
+                            LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON (A.FINANCIAL_YEAR_ID=B.FINANCIAL_YEAR_ID)
+                            LEFT OUTER JOIN mascoverstatus s ON s.csid=A.csid
+                            WHERE A.TENDER_ID=@TenderID";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@TenderId", tenderId);
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                TenderStatusDto data = new TenderStatusDto
+                                {
+                                    TENDER_NO = reader["TENDER_NO"]?.ToString(),
+                                    FINANCIAL_YEAR = reader["FINANCIAL_YEAR"]?.ToString(),
+                                    domestic_days = Convert.ToInt32(reader["domestic_days"]),
+                                    import_days = Convert.ToInt32(reader["import_days"]),
+                                    warranty_year = Convert.ToInt32(reader["warranty_year"]),
+                                    TENDER_DATE = reader["TENDER_DATE"]?.ToString(),
+                                    TENDER_DESCRIPTION = reader["TENDER_DESCRIPTION"]?.ToString(),
+                                    FLAG = reader["FLAG"]?.ToString(),
+                                    FINANCIAL_YEAR_ID = Convert.ToInt32(reader["FINANCIAL_YEAR_ID"]),
+                                    tender_id = Convert.ToInt32(reader["tender_id"]),
+                                    cover_a = reader["cover_a"]?.ToString(),
+                                    cover_b = reader["cover_b"]?.ToString(),
+                                    cover_Demo = reader["cover_Demo"]?.ToString(),
+                                    cover_c = reader["cover_c"]?.ToString(),
+                                    cStatus = reader["cStatus"]?.ToString(),
+                                    csid = Convert.ToInt32(reader["csid"]),
+                                    cover_Demo2 = reader["cover_Demo2"]?.ToString(),
+                                    cover_Demo3 = reader["cover_Demo3"]?.ToString(),
+                                    TenderRemarks = reader["TenderRemarks"]?.ToString(),
+                                    webSiteUploadID = reader["webSiteUploadID"]?.ToString(),
+                                    eprocID = reader["eprocID"]?.ToString(),
+                                    ENDDate = reader["ENDDate"]?.ToString()
+                                };
+                                list.Add(data);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching suppliers for the given tender", error = ex.Message });
+            }
+        }
+
+
+        
+
+
+        [HttpGet("GetCoverStatusList")]
+        public async Task<IActionResult> GetCoverStatusList()
+        {
+            List<CoverStatusDTO> list = new List<CoverStatusDTO>();
+
+            // Nayi query jo aapne di hai
+            string query = @"select csid, cstatus from mascoverstatus where CSID not in (3,5,7)";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    await conn.OpenAsync();
+
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            CoverStatusDTO data = new CoverStatusDTO
+                            {
+                                // Null check ke saath mapping
+                                csid = reader["csid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["csid"]),
+                                cstatus = reader["cstatus"] == DBNull.Value ? null : reader["cstatus"].ToString()
+                            };
+
+                            list.Add(data);
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                // Error handling ke liye
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        [HttpPost("UpdateTenderUploadIds")]
+        public async Task<IActionResult> UpdateTenderUploadIds([FromBody] UpdateTenderNoDto dto)
+        {
+            if (string.IsNullOrEmpty(dto.webSiteUploadID) && string.IsNullOrEmpty(dto.eprocID))
+            {
+                return BadRequest(new { message = "Both IDs cannot be empty" });
+            }
+
+            string query = @"UPDATE TENDERS 
+                     SET webSiteUploadID = @webSiteUploadID, 
+                         eprocID = @eprocID 
+                     WHERE tender_id = @tender_id";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+
+                    //cmd.Parameters.AddWithValue("@webSiteUploadID", dto.webSiteUploadID ?? (object)DBNull.Value);
+                    //cmd.Parameters.AddWithValue("@eprocID", dto.eprocID ?? (object)DBNull.Value);
+                    //cmd.Parameters.AddWithValue("@tender_id", dto.tender_id);
+
+                    cmd.Parameters.Add("@webSiteUploadID", SqlDbType.VarChar, 100).Value = dto.webSiteUploadID ?? (object)DBNull.Value;
+                    cmd.Parameters.Add("@eprocID", SqlDbType.VarChar, 100).Value = dto.eprocID ?? (object)DBNull.Value;
+                    cmd.Parameters.Add("@tender_id", SqlDbType.Int).Value = dto.tender_id;
+
+                    await conn.OpenAsync();
+                    int rowsAffected = await cmd.ExecuteNonQueryAsync();
+
+                    if (rowsAffected > 0)
+                    {
+                        return Ok(new { message = "Updated Successfully" });
+                    }
+                    else
+                    {
+                        return NotFound(new { message = "Tender ID not found" });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal server error", error = ex.Message });
+            }
+        }
+
+
+        //[HttpPost("UpdateTenderFullDetails")]
+        //public async Task<IActionResult> UpdateTenderFullDetails([FromBody] TenderUpdateDto dto)
+        //{
+        //    try
+        //    {
+        //        using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+        //        {
+        //            await conn.OpenAsync();
+
+        //            // --- CONDITION 1: Check Items First (Agar Status Live [1] nahi hai) ---
+        //            if (dto.Csid != 1)
+        //            {
+        //                string itemCheckQuery = "SELECT COUNT(*) FROM TENDER_ITEMS WHERE TENDER_ID = @Tid";
+        //                int itemCount = (int)new SqlCommand(itemCheckQuery, conn).ExecuteScalar();
+        //                if (itemCount == 0) return BadRequest(new { message = "Please Add Items First" });
+        //            }
+
+        //            // --- CONDITION 2: checkEarlierCovEntry (Status 3, 4, 5 ke liye Bidders check) ---
+        //            if (dto.Csid == 3 || dto.Csid == 4 || dto.Csid == 5)
+        //            {
+        //                // Isme Bidder Participation aur Item Linking dono check honi chahiye
+        //                string bidderCheck = "SELECT COUNT(*) FROM BIDDER_PARTICIPATION WHERE TENDER_ID = @Tid";
+        //                int bidderCount = (int)new SqlCommand(bidderCheck, conn).ExecuteScalar();
+        //                if (bidderCount == 0) return BadRequest(new { message = "Please Add Bidder in Cover A Section & Link all Items" });
+        //            }
+
+        //            // --- CONDITION 3: CheckCurrentCov (Status vs Date Logic) ---
+        //            if (dto.Csid == 1 && (!string.IsNullOrEmpty(dto.CoverA) || !string.IsNullOrEmpty(dto.CoverB)))
+        //                return BadRequest(new { message = "Status Should not be Live if Dates are entered" });
+
+        //            // --- CONDITION 4: Date Comparisons (A >= End, B >= A, etc.) ---
+        //            DateTime endDT = DateTime.Parse(dto.EndDate);
+        //            if (!string.IsNullOrEmpty(dto.CoverA))
+        //            {
+        //                DateTime covA = DateTime.Parse(dto.CoverA);
+        //                if (covA < endDT) return BadRequest(new { message = "Cover A Date Should be Greater/Equal to Tender End Date" });
+        //            }
+        //            // ... (Isi tarah B >= A aur Demo >= B ki conditions bhi lagengi)
+
+        //            // --- CONDITION 5: CheckDTGreaterthanToday (Future date check) ---
+        //            if (!string.IsNullOrEmpty(dto.CoverA) && DateTime.Parse(dto.CoverA) > DateTime.Now)
+        //                return BadRequest(new { message = "Cover A Should Not be Greater than today" });
+
+        //            // --- FINAL UPDATE QUERY ---
+        //            string updateQuery = @"UPDATE TENDERS SET 
+        //                            TENDER_NO = @TenderNo, 
+        //                            warranty_year = @Warranty, 
+        //                            domestic_days = @DomDays, 
+        //                            import_days = @ImpDays, 
+        //                            csid = @Csid, 
+        //                            TenderRemarks = @Remarks, 
+        //                            tender_description = @Desc,
+        //                            ENDDate = @EndDate,
+        //                            cover_a = @CoverA,
+        //                            cover_b = @CoverB,
+        //                            cover_c = @CoverC,
+        //                            cover_Demo = @CoverDemo,
+        //                            flag = @Flag
+        //                            WHERE TENDER_ID = @TenderId";
+
+        //            SqlCommand cmd = new SqlCommand(updateQuery, conn);
+        //            cmd.Parameters.AddWithValue("@Tid", dto.TenderId);
+        //            cmd.Parameters.AddWithValue("@TenderNo", dto.TenderNo);
+        //            cmd.Parameters.AddWithValue("@Warranty", dto.WarrantyYear);
+        //            cmd.Parameters.AddWithValue("@DomDays", dto.DomesticDays);
+        //            cmd.Parameters.AddWithValue("@ImpDays", dto.ImportDays);
+        //            cmd.Parameters.AddWithValue("@Csid", dto.Csid);
+        //            cmd.Parameters.AddWithValue("@Remarks", dto.TenderRemarks ?? "");
+        //            cmd.Parameters.AddWithValue("@Desc", dto.TenderDescription ?? "");
+        //            cmd.Parameters.AddWithValue("@Flag", dto.Csid == 5 ? "T" : "F");
+
+        //            // Dates mapping (Null handling ke sath)
+        //            cmd.Parameters.AddWithValue("@EndDate", dto.EndDate);
+        //            cmd.Parameters.AddWithValue("@CoverA", (object)dto.CoverA ?? DBNull.Value);
+        //            cmd.Parameters.AddWithValue("@CoverB", (object)dto.CoverB ?? DBNull.Value);
+        //            cmd.Parameters.AddWithValue("@CoverC", (object)dto.CoverC ?? DBNull.Value);
+        //            cmd.Parameters.AddWithValue("@CoverDemo", (object)dto.CoverDemo ?? DBNull.Value);
+
+        //            int rows = await cmd.ExecuteNonQueryAsync();
+        //            return Ok(new { message = "Update Successfully" });
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, new { message = ex.Message });
+        //    }
+        //}
+
+        //[HttpPost("UpdateTenderFullDetails")]
+        //public async Task<IActionResult> UpdateTenderFullDetails([FromBody] TenderUpdateDto dto)
+        //{
+        //    // 1. Basic Validations (Jaisa aapke code mein tha)
+        //    if (dto.Csid == 0) return BadRequest(new { message = "Select Tender Status" });
+        //    if (string.IsNullOrEmpty(dto.EndDate)) return BadRequest(new { message = "Enter Tender End Date" });
+
+        //    // 2. Query Building (Parameterized for Security)
+        //    string query = @"UPDATE TENDERS SET 
+        //                TENDER_NO = @TenderNo, 
+        //                warranty_year = @WarrantyYear, 
+        //                domestic_days = @DomesticDays, 
+        //                import_days = @ImportDays, 
+        //                csid = @Csid, 
+        //                TenderRemarks = @Remarks, 
+        //                tender_description = @Desc, 
+        //                flag = @Flag";
+
+        //    // Date fields ko update string mein add karna
+        //    if (!string.IsNullOrEmpty(dto.TenderDate)) query += ", tender_date = @TenderDate";
+        //    if (!string.IsNullOrEmpty(dto.EndDate)) query += ", ENDDate = @EndDate";
+        //    if (!string.IsNullOrEmpty(dto.ExtendDt)) query += ", extenddt = @ExtendDt";
+        //    if (!string.IsNullOrEmpty(dto.CoverA)) query += ", cover_a = @CoverA";
+        //    if (!string.IsNullOrEmpty(dto.CoverB)) query += ", cover_b = @CoverB";
+        //    if (!string.IsNullOrEmpty(dto.CoverC)) query += ", cover_c = @CoverC";
+        //    if (!string.IsNullOrEmpty(dto.CoverDemo)) query += ", cover_Demo = @CoverDemo";
+        //    if (!string.IsNullOrEmpty(dto.CoverDemo2)) query += ", cover_Demo2 = @CoverDemo2";
+        //    if (!string.IsNullOrEmpty(dto.CoverDemo3)) query += ", cover_Demo3 = @CoverDemo3";
+        //    if (dto.Csid == 6 && !string.IsNullOrEmpty(dto.CancelledDt)) query += ", CancelledDT = @CancelledDt";
+
+        //    query += " WHERE TENDER_ID = @TenderId";
+
+        //    try
+        //    {
+        //        using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+        //        {
+        //            SqlCommand cmd = new SqlCommand(query, conn);
+
+        //            // Parameters
+        //            cmd.Parameters.AddWithValue("@TenderId", dto.TenderId);
+        //            cmd.Parameters.AddWithValue("@TenderNo", dto.TenderNo ?? "");
+        //            cmd.Parameters.AddWithValue("@WarrantyYear", dto.WarrantyYear);
+        //            cmd.Parameters.AddWithValue("@DomesticDays", dto.DomesticDays);
+        //            cmd.Parameters.AddWithValue("@ImportDays", dto.ImportDays);
+        //            cmd.Parameters.AddWithValue("@Csid", dto.Csid);
+        //            cmd.Parameters.AddWithValue("@Remarks", dto.TenderRemarks ?? "");
+        //            cmd.Parameters.AddWithValue("@Desc", dto.TenderDescription ?? "");
+        //            cmd.Parameters.AddWithValue("@Flag", dto.Csid == 5 ? "T" : "F");
+
+        //            // Date Parameters with Null Checks (Converting string to DateTime)
+        //            cmd.Parameters.AddWithValue("@TenderDate", string.IsNullOrEmpty(dto.TenderDate) ? DBNull.Value : DateTime.ParseExact(dto.TenderDate, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@EndDate", string.IsNullOrEmpty(dto.EndDate) ? DBNull.Value : DateTime.ParseExact(dto.EndDate, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@ExtendDt", string.IsNullOrEmpty(dto.ExtendDt) ? DBNull.Value : DateTime.ParseExact(dto.ExtendDt, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@CoverA", string.IsNullOrEmpty(dto.CoverA) ? DBNull.Value : DateTime.ParseExact(dto.CoverA, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@CoverB", string.IsNullOrEmpty(dto.CoverB) ? DBNull.Value : DateTime.ParseExact(dto.CoverB, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@CoverC", string.IsNullOrEmpty(dto.CoverC) ? DBNull.Value : DateTime.ParseExact(dto.CoverC, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@CoverDemo", string.IsNullOrEmpty(dto.CoverDemo) ? DBNull.Value : DateTime.ParseExact(dto.CoverDemo, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@CoverDemo2", string.IsNullOrEmpty(dto.CoverDemo2) ? DBNull.Value : DateTime.ParseExact(dto.CoverDemo2, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@CoverDemo3", string.IsNullOrEmpty(dto.CoverDemo3) ? DBNull.Value : DateTime.ParseExact(dto.CoverDemo3, "yyyy-MM-dd", null));
+        //            cmd.Parameters.AddWithValue("@CancelledDt", string.IsNullOrEmpty(dto.CancelledDt) ? DBNull.Value : DateTime.ParseExact(dto.CancelledDt, "yyyy-MM-dd", null));
+
+        //            await conn.OpenAsync();
+        //            int rows = await cmd.ExecuteNonQueryAsync();
+
+        //            if (rows > 0) return Ok(new { message = "Update Successfully" });
+        //            return NotFound(new { message = "Tender not found" });
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, new { message = "Error: " + ex.Message });
+        //    }
+        //}
+
+        [HttpPost("UpdateTenderFullDetails")]
+        public async Task<IActionResult> UpdateTenderFullDetails([FromBody] TenderFullUpdateDto dto)
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    await conn.OpenAsync();
+
+                    // --- CONDITION 1: if (ddlStatus.SelectedValue != "1") ChechkItemsInTender ---
+                    if (dto.Csid != 1)
+                    {
+                        string sql = "SELECT COUNT(*) FROM TENDER_ITEMS WHERE TENDER_ID = @Tid";
+                        int itemCount = (int)new SqlCommand(sql, conn) { Parameters = { new SqlParameter("@Tid", dto.TenderId) } }.ExecuteScalar();
+                        if (itemCount == 0) return BadRequest(new { message = "Please Add Items First" });
+                    }
+
+                    // --- CONDITION 2: checkEarlierCovEntry (Status 3, 4, 5) ---
+                    if (dto.Csid == 3 || dto.Csid == 4 || dto.Csid == 5)
+                    {
+                        // checkSupplierParticipation
+                        string sqlSup = "SELECT COUNT(*) FROM BIDDER_PARTICIPATION WHERE TENDER_ID = @Tid";
+                        int supCount = (int)new SqlCommand(sqlSup, conn) { Parameters = { new SqlParameter("@Tid", dto.TenderId) } }.ExecuteScalar();
+
+                        // checkSupplierParticipationItems
+                        string sqlSupItem = "SELECT COUNT(*) FROM BIDDER_PARTICIPATION_ITEMS WHERE TENDER_ID = @Tid";
+                        int supItemCount = (int)new SqlCommand(sqlSupItem, conn) { Parameters = { new SqlParameter("@Tid", dto.TenderId) } }.ExecuteScalar();
+
+                        if (supCount == 0 || supItemCount == 0)
+                            return BadRequest(new { message = "Please Add Bidder in Cover A Section & Link all the Participated Items first" });
+                    }
+
+                    // --- CONDITION 3: CheckCurrentCov (Logic vs Dates) ---
+                    if (dto.Csid == 1 && (!string.IsNullOrEmpty(dto.CoverB) || !string.IsNullOrEmpty(dto.CoverA) || !string.IsNullOrEmpty(dto.CoverC) || !string.IsNullOrEmpty(dto.CoverDemo)
+                       || !string.IsNullOrEmpty(dto.CancelledDt))) 
+                        return BadRequest(new { message = "Status Should not be Live" });
+                    if (dto.Csid == 2 && (!string.IsNullOrEmpty(dto.CoverB) || !string.IsNullOrEmpty(dto.CoverC) || !string.IsNullOrEmpty(dto.CoverDemo)
+                      || !string.IsNullOrEmpty(dto.CancelledDt)))
+                        return BadRequest(new { message = "Status Should not be Cover A" });
+                    if (dto.Csid == 3 && (!string.IsNullOrEmpty(dto.CoverC) || !string.IsNullOrEmpty(dto.CoverDemo) || !string.IsNullOrEmpty(dto.CancelledDt)))
+                        return BadRequest(new { message = "Status Should not be Cover B" });
+                    if (dto.Csid == 4 && (!string.IsNullOrEmpty(dto.CoverC) || !string.IsNullOrEmpty(dto.CancelledDt)))
+                        return BadRequest(new { message = "Status Should not be Demo" });
+                    if (dto.Csid == 5 && (!string.IsNullOrEmpty(dto.CancelledDt)))
+                        return BadRequest(new { message = "Status Should not be Cover C" });
+
+                    // --- CONDITION 4: CheckCoverStatus (Mandatory Date check) ---
+                    if (dto.Csid == 1 && string.IsNullOrEmpty(dto.EndDate)) return BadRequest(new { message = "Please Enter End Date of Tender" });
+
+                    if (dto.Csid == 2 && string.IsNullOrEmpty(dto.CoverA)) return BadRequest(new { message = "Please Enter Cover A Date" });
+                    if (dto.Csid == 3 && string.IsNullOrEmpty(dto.CoverB)) return BadRequest(new { message = "Please Enter Cover B Date" });
+                    if (dto.Csid == 4 && string.IsNullOrEmpty(dto.CoverDemo)) return BadRequest(new { message = "Please Enter Demo Date" });
+
+                    if (dto.Csid == 5 && string.IsNullOrEmpty(dto.CoverC)) return BadRequest(new { message = "Please Enter Cover C Date" });
+                    if (dto.Csid == 6 && string.IsNullOrEmpty(dto.CancelledDt)) return BadRequest(new { message = "Please Enter Cancelled Date" });
+
+
+                    // --- CONDITION 5: CheckDTGreaterthanToday (Future date check) ---
+                    if (dto.Csid == 2)
+                    {
+                        if (!string.IsNullOrEmpty(dto.CoverA) && DateTime.Parse(dto.CoverA) > DateTime.Now)
+                            return BadRequest(new { message = "Cover A Should Not be Greater than today" });
+
+                    }
+                    if (dto.Csid == 3)
+                    {
+                        if (!string.IsNullOrEmpty(dto.CoverB) && DateTime.Parse(dto.CoverB) > DateTime.Now)
+                            return BadRequest(new { message = "Cover B Should Not be Greater than today" });
+
+                    }
+                    if (dto.Csid == 5)
+                    {
+                        if (!string.IsNullOrEmpty(dto.CoverC) && DateTime.Parse(dto.CoverC) > DateTime.Now)
+                            return BadRequest(new { message = "Cover C Should Not be Greater than today" });
+
+                    }
+                    if (dto.Csid == 6)
+                    {
+                        if (!string.IsNullOrEmpty(dto.CancelledDt) && DateTime.Parse(dto.CancelledDt) > DateTime.Now)
+                            return BadRequest(new { message = "Cancelled Date Should Not be Greater than today" });
+
+                    }
+                    // 1. Warranty Year Check (Agar int hai toh 0 se check karein, agar string toh IsNullOrEmpty)
+                    if (dto.WarrantyYear <= 0)
+                        return BadRequest(new { message = "Enter Items Warranty In Years" });
+
+                    // 2. Domestic Days Check
+                    if (dto.DomesticDays <= 0)
+                        return BadRequest(new { message = "Enter Supply Days for Domestic Equipments" });
+
+                  
+                    // Agar ImportDays integer hai, toh aise check karein:
+                    if (dto.ImportDays <= 0)
+                    {
+                        return BadRequest(new { message = "Enter Supply Days for International Equipments" });
+                    }
+                    // 4. Status (CSID) Check
+                    if (dto.Csid == 0)
+                        return BadRequest(new { message = "Select Tender Status" });
+
+                    // 5. End Date Check
+                    if (string.IsNullOrEmpty(dto.EndDate))
+                        return BadRequest(new { message = "Enter Tender End Date" });
+
+                    //if (string.IsNullOrEmpty(dto.WarrantyYear)) return BadRequest(new { message = "Please Enter Warranty In Years" });
+                    //if (string.IsNullOrEmpty(dto.DomesticDays)) return BadRequest(new { message = "Please Enter Supply Days for Domestic Equipments" });
+                    //if (string.IsNullOrEmpty(dto.ImportDays)) return BadRequest(new { message = "Please Enter Supply Days for International Equipments" });
+                    //if (dto.Csid == 0 return { message = "Please Enter End Date of Tender" });
+                    //if (dto.EndDate == "" && string.IsNullOrEmpty(dto.EndDate)) return BadRequest(new { message = "Please Enter tender End Date" });
+                    // --- FLAG LOGIC ---
+                    string flag = (dto.Csid == 5) ? "T" : "F";
+
+                    // --- FINAL UPDATE QUERY ---
+                    string updateSql = @"UPDATE TENDERS SET 
+                                TENDER_NO = @TenderNo, 
+                                warranty_year = @Warranty, 
+                                domestic_days = @DomDays, 
+                                import_days = @ImpDays, 
+                                csid = @Csid, 
+                                TenderRemarks = @Remarks, 
+                                tender_description = @Desc, 
+                                flag = @Flag,
+                                tender_date = @TDate,
+                                ENDDate = @EDate,
+                                extenddt = @ExDate,
+                                cover_a = @CA,
+                                cover_b = @CB,
+                                cover_c = @CC,
+                                cover_Demo = @D1,
+                                cover_Demo2 = @D2,
+                                cover_Demo3 = @D3,
+                                CancelledDT = @CanDt
+                                WHERE TENDER_ID = @Tid";
+
+                    SqlCommand cmd = new SqlCommand(updateSql, conn);
+                    cmd.Parameters.AddWithValue("@Tid", dto.TenderId);
+                    cmd.Parameters.AddWithValue("@TenderNo", dto.TenderNo ?? "");
+                    cmd.Parameters.AddWithValue("@Warranty", dto.WarrantyYear);
+                    cmd.Parameters.AddWithValue("@DomDays", dto.DomesticDays);
+                    cmd.Parameters.AddWithValue("@ImpDays", dto.ImportDays);
+                    cmd.Parameters.AddWithValue("@Csid", dto.Csid);
+                    cmd.Parameters.AddWithValue("@Remarks", dto.TenderRemarks ?? "");
+                    cmd.Parameters.AddWithValue("@Desc", dto.TenderDescription ?? "");
+                    cmd.Parameters.AddWithValue("@Flag", flag);
+
+                    // Date Parameters
+                    cmd.Parameters.AddWithValue("@TDate", string.IsNullOrEmpty(dto.TenderDate) ? DBNull.Value : (object)dto.TenderDate);
+                    cmd.Parameters.AddWithValue("@EDate", string.IsNullOrEmpty(dto.EndDate) ? DBNull.Value : (object)dto.EndDate);
+                    cmd.Parameters.AddWithValue("@ExDate", string.IsNullOrEmpty(dto.ExtendDt) ? DBNull.Value : (object)dto.ExtendDt);
+                    cmd.Parameters.AddWithValue("@CA", string.IsNullOrEmpty(dto.CoverA) ? DBNull.Value : (object)dto.CoverA);
+                    cmd.Parameters.AddWithValue("@CB", string.IsNullOrEmpty(dto.CoverB) ? DBNull.Value : (object)dto.CoverB);
+                    cmd.Parameters.AddWithValue("@CC", string.IsNullOrEmpty(dto.CoverC) ? DBNull.Value : (object)dto.CoverC);
+                    cmd.Parameters.AddWithValue("@D1", string.IsNullOrEmpty(dto.CoverDemo) ? DBNull.Value : (object)dto.CoverDemo);
+                    cmd.Parameters.AddWithValue("@D2", string.IsNullOrEmpty(dto.CoverDemo2) ? DBNull.Value : (object)dto.CoverDemo2);
+                    cmd.Parameters.AddWithValue("@D3", string.IsNullOrEmpty(dto.CoverDemo3) ? DBNull.Value : (object)dto.CoverDemo3);
+                    cmd.Parameters.AddWithValue("@CanDt", (dto.Csid == 6 && !string.IsNullOrEmpty(dto.CancelledDt)) ? (object)dto.CancelledDt : DBNull.Value);
+
+                    await cmd.ExecuteNonQueryAsync();
+                    return Ok(new { message = "Update Successfully" });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
 
 
 
+        [HttpGet("GetSelectableItems")]
+        public async Task<IActionResult> GetSelectableItems()
+        {
+            List<TenderItemSelectionDto> list = new List<TenderItemSelectionDto>();
+
+            // Exact Query as provided
+            string query = @"
+    select item_id, Eqtype, item_code_as_per_tender, item_name + '(' + item_code_as_per_tender + ')RC:' + RCStatus as item_name,
+           RCStatus, daysRCValid, Titemid, tender_no, categoryId
+    from (
+        select m.item_id, 
+               case when m.categoryId is null or m.categoryId=1 then 'Equipment' else 'Reagent' end as Eqtype,
+               m.item_code_as_per_tender, m.item_name, t.Titemid, t.tender_no, rcitemd, nitemid, m.categoryId,
+               case when rcitemd is not null then 'RC Valid' else 'RC Not Valid' end as RCStatus,
+               isnull(daysRCValid, 0) as daysRCValid
+        from masitems m
+        left outer join (
+            select distinct t.item_id as Titemid, tm.tender_no from tender_items t
+            inner join tenders tm on tm.tender_id = t.tender_id
+            where tm.financial_year_id >= 14
+        ) t on t.Titemid = m.item_id
+        left outer join (
+            select distinct m.item_id as rcitemd, DATEDIFF(day, getdate(), max(ac.contract_end_date)) as daysRCValid 
+            from contract_items c
+            inner join masitems m on m.item_id = c.item_id
+            inner join award_of_contract ac on ac.award_of_contract_id = c.award_of_contract_id
+            where ac.contract_end_date >= GETDATE()
+            group by m.item_id
+        ) as rc on rc.rcitemd = m.item_id
+        left outer join (
+            select distinct t.item_id as nitemid from masitems t where CreatedOn > '2022-12-01'
+        ) n on n.nitemid = m.item_id
+    ) a 
+    where (case when Titemid is not null then 1 
+                else case when rcitemd is not null then 1 
+                else case when nitemid is not null then 1 else 0 end end end ) = 1";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    await conn.OpenAsync();
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            list.Add(new TenderItemSelectionDto
+                            {
+                                item_id = Convert.ToInt32(reader["item_id"]),
+                                Eqtype = reader["Eqtype"]?.ToString(),
+                                item_code_as_per_tender = reader["item_code_as_per_tender"]?.ToString(),
+                                item_name = reader["item_name"]?.ToString(),
+                                RCStatus = reader["RCStatus"]?.ToString(),
+                                daysRCValid = Convert.ToInt32(reader["daysRCValid"]),
+                                Titemid = reader["Titemid"]?.ToString(),
+                                tender_no = reader["tender_no"]?.ToString(),
+                                categoryId = reader["categoryId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["categoryId"])
+                            });
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error", details = ex.Message });
+            }
+        }
 
 
+        [HttpGet("GetItemEligibility/{itemid}")]
+        public async Task<IActionResult> GetItemEligibility(int itemid)
+        {
+            List<TenderItemDetailDto> result = new List<TenderItemDetailDto>();
+
+            // Exact Query with @itemid parameter
+            string query = @"
+    select item_id, Eqtype, item_code_as_per_tender, item_name, 
+           isnull(RCStatus,'RC Not Valid') as RCStatus, 
+           isnull(daysRCValid,0) as daysRCValid, 
+           Titemid, tender_no, categoryId
+    from (
+        select m.item_id, 
+               case when m.categoryId is null or m.categoryId=1 then 'Equipment' else 'Reagent' end as Eqtype,
+               m.item_code_as_per_tender, m.item_name, t.Titemid, t.tender_no, rcitemd, m.categoryId,
+               case when rcitemd is not null then 'RC Valid' else 'RC Not Valid' end as RCStatus, 
+               daysRCValid,
+               case when rcitemd is not null and daysRCValid > 180 then '1' 
+                    else case when rcitemd is null and t.Titemid is null then '0'
+                    else '0' end 
+               end as TEligible
+        from masitems m
+        left outer join (
+            select t.item_id as Titemid, tm.tender_no from tender_items t
+            inner join tenders tm on tm.tender_id = t.tender_id
+            where tm.csid not in (1,2,3,4,5) and tm.financial_year_id >= 16
+        ) t on t.Titemid = m.item_id
+        left outer join (
+            select distinct m.item_id as rcitemd, DATEDIFF(day, getdate(), max(ac.contract_end_date)) as daysRCValid 
+            from contract_items c
+            inner join masitems m on m.item_id = c.item_id
+            inner join award_of_contract ac on ac.award_of_contract_id = c.award_of_contract_id
+            where ac.contract_end_date >= GETDATE()
+            group by m.item_id
+        ) as rc on rc.rcitemd = m.item_id
+    ) a 
+    where a.TEligible = '0' and a.item_id = @itemid
+    order by a.item_name";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    // Parameterization for Security
+                    cmd.Parameters.AddWithValue("@itemid", itemid);
+
+                    await conn.OpenAsync();
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            result.Add(new TenderItemDetailDto
+                            {
+                                item_id = Convert.ToInt32(reader["item_id"]),
+                                Eqtype = reader["Eqtype"].ToString(),
+                                item_code_as_per_tender = reader["item_code_as_per_tender"]?.ToString(),
+                                item_name = reader["item_name"].ToString(),
+                                RCStatus = reader["RCStatus"].ToString(),
+                                daysRCValid = Convert.ToInt32(reader["daysRCValid"]),
+                                Titemid = reader["Titemid"]?.ToString(),
+                                tender_no = reader["tender_no"]?.ToString(),
+                                categoryId = reader["categoryId"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["categoryId"])
+                            });
+                        }
+                    }
+                }
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Database Error", error = ex.Message });
+            }
+        }
+
+        [HttpPost("AddItemToTender")]
+        public async Task<IActionResult> AddItemToTender([FromBody] AddTenderItemDto dto)
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    await conn.OpenAsync();
+
+                    // --- 1. Validation Logic: EMD Amount Check ---
+                    if (dto.EmdAmount <= 0)
+                    {
+                        return BadRequest(new { message = "Please Enter EMD" });
+                    }
+
+                    // --- 2. Validation Logic: Tender Quantity Check ---
+                    if (dto.TenderQuantity <= 0)
+                    {
+                        return BadRequest(new { message = "Please Enter Tender QTY" });
+                    }
+
+                    // --- 3. Duplicate Check: CheckTenderIdAndItemIdExistance ---
+                    //string checkQuery = "SELECT COUNT(*) FROM TENDER_ITEMS WHERE TENDER_ID = @Tid AND ITEM_ID = @Iid";
+                    string checkQuery = "SELECT COUNT(*) FROM tender_items WHERE tender_id = @Tid AND item_id = @Iid";
+                    //string checkQuery = " select * from tender_items where tender_id = @Tid and item_id = @Iid";
+                    SqlCommand checkCmd = new SqlCommand(checkQuery, conn);
+                    checkCmd.Parameters.AddWithValue("@Tid", dto.TenderId);
+                    checkCmd.Parameters.AddWithValue("@Iid", dto.ItemId);
+
+                    int existCount = (int)await checkCmd.ExecuteScalarAsync();
+                    if (existCount > 0)
+                    {
+                        return BadRequest(new { message = "Item is Already Linked to this Tender" });
+                    }
+
+                    // --- 4. Final Insert Logic (Exactly as per your SQL) ---
+                    // Values: FLAG='T', status='B', bid_status='1' (As per your code)
+                    string insertSql = @"INSERT INTO TENDER_ITEMS 
+                                (TENDER_ID, ITEM_ID, TENDER_QUANTITY, EMD_AMOUNT, FLAG, status, bid_status) 
+                                VALUES (@Tid, @Iid, @Qty, @Emd, 'T', 'B', '1')";
+
+                    SqlCommand insertCmd = new SqlCommand(insertSql, conn);
+                    insertCmd.Parameters.AddWithValue("@Tid", dto.TenderId);
+                    insertCmd.Parameters.AddWithValue("@Iid", dto.ItemId);
+                    insertCmd.Parameters.AddWithValue("@Qty", dto.TenderQuantity);
+                    insertCmd.Parameters.AddWithValue("@Emd", dto.EmdAmount);
+
+                    await insertCmd.ExecuteNonQueryAsync();
+
+                    return Ok(new { message = "Saved Successfully" });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error occurred", error = ex.Message });
+            }
+        }
 
 
+        [HttpGet("GetLinkedItemsByTender/{tenderId}")]
+        public async Task<IActionResult> GetLinkedItemsByTender(int tenderId)
+        {
+            List<TenderLinkedItemDto> list = new List<TenderLinkedItemDto>();
+
+            string query = @"
+        SELECT 0 as SlNo, m.ITEM_ID, ti.tender_item_id, t.tender_id, m.item_name, 
+               m.item_code_as_per_tender, m.item_code, ti.emd_amount, ti.tender_quantity
+        FROM tenders t
+        INNER JOIN tender_items ti ON ti.tender_id = t.tender_id
+        INNER JOIN masitems m ON m.item_id = ti.item_id
+        WHERE t.tender_id = @Tid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    cmd.Parameters.AddWithValue("@Tid", tenderId);
+                    await conn.OpenAsync();
+
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            // Object initializer ka sahi upyog
+                            list.Add(new TenderLinkedItemDto
+                            {
+                                SlNo = reader["SlNo"] != DBNull.Value ? Convert.ToInt32(reader["SlNo"]) : 0,
+                                ItemId = reader["ITEM_ID"] != DBNull.Value ? Convert.ToInt32(reader["ITEM_ID"]) : 0,
+                                TenderItemId = reader["tender_item_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_item_id"]) : 0,
+                                TenderId = reader["tender_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_id"]) : 0,
+                                ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                                ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? string.Empty,
+                                ItemCode = reader["item_code"]?.ToString() ?? string.Empty,
+                                EmdAmount = reader["emd_amount"] != DBNull.Value ? Convert.ToDecimal(reader["emd_amount"]) : 0m,
+                                TenderQuantity = reader["tender_quantity"] != DBNull.Value ? Convert.ToDecimal(reader["tender_quantity"]) : 0m
+                            });
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                // Debugging ke liye error message return kar rahe hain
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
 
 
 

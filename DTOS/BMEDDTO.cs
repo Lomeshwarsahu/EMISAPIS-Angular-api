@@ -390,4 +390,130 @@ namespace EMISAPIS.DTOS
         public decimal TotalValue { get; set; }
         public string TenderType { get; set; } = string.Empty;
     }
+
+
+    public class TenderStatusDto
+    {
+        public string TENDER_NO { get; set; }
+        public string FINANCIAL_YEAR { get; set; }
+        public int domestic_days { get; set; }
+        public int import_days { get; set; }
+        public int warranty_year { get; set; }
+        public string TENDER_DATE { get; set; }
+        public string TENDER_DESCRIPTION { get; set; }
+        public string FLAG { get; set; }
+        public int FINANCIAL_YEAR_ID { get; set; }
+        public int tender_id { get; set; }
+        public string cover_a { get; set; }
+        public string cover_b { get; set; }
+        public string cover_Demo { get; set; }
+        public string cover_c { get; set; }
+        public string cStatus { get; set; }
+        public int csid { get; set; }
+        public string cover_Demo2 { get; set; }
+        public string cover_Demo3 { get; set; }
+        public string TenderRemarks { get; set; }
+        public string webSiteUploadID { get; set; }
+        public string eprocID { get; set; }
+        public string ENDDate { get; set; }
+    }
+
+    public class CoverStatusDTO
+    {
+        public int csid { get; set; }
+        public string cstatus { get; set; }
+    }
+
+    public class UpdateTenderNoDto
+    {
+        public int tender_id { get; set; }
+        public string webSiteUploadID { get; set; }
+        public string eprocID { get; set; }
+    }
+   
+
+
+    public class TenderFullUpdateDto
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; }
+        public int WarrantyYear { get; set; }
+        public int DomesticDays { get; set; }
+        public int ImportDays { get; set; }
+        public int Csid { get; set; } // ddlStatus.SelectedValue
+        public string TenderRemarks { get; set; }
+        public string TenderDescription { get; set; }
+        public string TenderDate { get; set; } // txtlivedate
+        public string EndDate { get; set; } // txtENDdate
+        public string ExtendDt { get; set; } // txtextenddt
+        public string CoverA { get; set; } // txtADate
+        public string CoverB { get; set; } // txtBDate
+        public string CoverC { get; set; } // txtCDate
+        public string CoverDemo { get; set; } // txtDDate
+        public string CoverDemo2 { get; set; } // txtDemo2
+        public string CoverDemo3 { get; set; } // txtDemo3
+        public string CancelledDt { get; set; } // txtCancelledDT
+    }
+    public class TenderItemSelectionDto
+    {
+        public int item_id { get; set; }
+        public string Eqtype { get; set; }
+        public string item_code_as_per_tender { get; set; }
+        public string item_name { get; set; } // Map: name + code + RC status
+        public string RCStatus { get; set; }
+        public int daysRCValid { get; set; }
+        public string Titemid { get; set; }
+        public string tender_no { get; set; }
+        public int? categoryId { get; set; }
+    }
+
+    public class TenderItemDetailDto
+    {
+        public int item_id { get; set; }
+        public string Eqtype { get; set; }
+        public string item_code_as_per_tender { get; set; }
+        public string item_name { get; set; }
+        public string RCStatus { get; set; }
+        public int daysRCValid { get; set; }
+        public string Titemid { get; set; }
+        public string tender_no { get; set; }
+        public int? categoryId { get; set; }
+    }
+    public class AddTenderItemDto
+    {
+        public int TenderId { get; set; }
+        public int ItemId { get; set; }
+        public decimal TenderQuantity { get; set; }
+        public decimal EmdAmount { get; set; }
+    }
+
+    public class TenderLinkedItemDto
+    {
+        // SQL: 0 as SlNo (Frontend par auto-generate karne ke liye)
+        public int SlNo { get; set; }
+
+        // SQL: m.ITEM_ID
+        public int ItemId { get; set; }
+
+        // SQL: ti.tender_item_id
+        public int TenderItemId { get; set; }
+
+        // SQL: t.tender_id
+        public int TenderId { get; set; }
+
+        // SQL: m.item_name
+        public string ItemName { get; set; }
+
+        // SQL: m.item_code_as_per_tender
+        public string ItemCodeAsPerTender { get; set; }
+
+        // SQL: m.item_code
+        public string ItemCode { get; set; }
+
+        // SQL: ti.emd_amount
+        public decimal EmdAmount { get; set; }
+
+        // SQL: ti.tender_quantity
+        public decimal TenderQuantity { get; set; }
+    }
 }
