@@ -88,7 +88,7 @@ namespace EMISAPIS.Controllers
                     query = @"SELECT user_id, user_name FROM users WHERE IsCGMSCUser='Y' ORDER BY user_id";
                     break;
                 case 4:
-                    query = @"SELECT user_id, user_name FROM users WHERE authority = 12 AND user_id != 12 ORDER BY user_id";
+                    query = @"SELECT user_id, user_name, e_mail_id FROM users WHERE authority = 12 AND user_id != 12 ORDER BY user_id";
                     break;
                 case 5:
                     query = @"select u.user_id,u.e_mail_id,u.location_id,u.designation,u.user_name,u.passcommon,u.password from users u inner join maslocations l on l.location_id=u.location_id where facility_type_id=3";
@@ -118,7 +118,8 @@ namespace EMISAPIS.Controllers
                     user_id = reader["user_id"] != DBNull.Value
                                                       ? Convert.ToInt32(reader["user_id"]) : 0,
                     user_name = reader["user_name"] != DBNull.Value
-                                                        ? reader["user_name"].ToString() : string.Empty
+                                                        ? reader["user_name"].ToString() : string.Empty,
+                    e_mail_id = TryReadOptionalString(reader, "e_mail_id")
                 };
 
 
@@ -133,7 +134,48 @@ namespace EMISAPIS.Controllers
             return Ok(usersList);
         }
 
+        /// <summary>
+        /// Login dropdown (DME etc.): resolve email / username for selected user_id.
+        /// </summary>
+        [HttpGet("GetUserEmail/{userId:int}")]
+        public async Task<IActionResult> GetUserEmail(int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
 
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+
+            const string query = @"SELECT e_mail_id, user_name FROM dbo.users WHERE user_id = @UserId";
+            using SqlCommand cmd = new SqlCommand(query, con);
+            cmd.Parameters.AddWithValue("@UserId", userId);
+
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return NotFound(new { message = "User not found." });
+
+            string email = reader["e_mail_id"] == DBNull.Value
+                ? string.Empty
+                : reader["e_mail_id"].ToString() ?? string.Empty;
+            string userName = reader["user_name"] == DBNull.Value
+                ? string.Empty
+                : reader["user_name"].ToString() ?? string.Empty;
+
+            return Ok(new { Email = email, UserName = userName });
+        }
+
+        private static string? TryReadOptionalString(SqlDataReader reader, string columnName)
+        {
+            try
+            {
+                int ord = reader.GetOrdinal(columnName);
+                return reader.IsDBNull(ord) ? null : reader.GetString(ord);
+            }
+            catch (IndexOutOfRangeException)
+            {
+                return null;
+            }
+        }
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] UserLoginDTO loginUser)
