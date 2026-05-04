@@ -24,14 +24,13 @@ namespace EMISAPIS.Controllers
 
 
         [HttpGet("GetSupplierlist")]
+      
         public async Task<IActionResult> GetSupplierlist()
         {
             List<BMEDDTO> list = new List<BMEDDTO>();
-
-            string query = @"SELECT supplier_id,is_contractor,name,email_id,ph_no,address,supplier_code,module_code,mobile_no,
-                          GST_no,type,class,is_register,service_engineer_name,service_engineer_number,tin_no
-                          FROM massuppliers";
-
+             string query = @"SELECT supplier_id,is_contractor,name,email_id,ph_no,address,supplier_code,module_code,mobile_no,
+                               GST_no,type,class,is_register,service_engineer_name,service_engineer_number,tin_no
+                               FROM massuppliers";
             using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
             {
                 SqlCommand cmd = new SqlCommand(query, conn);
@@ -2436,19 +2435,40 @@ inner join masitemP p on p.PID=m.pid
             }
         }
 
-
-        [HttpGet("GetLinkedItemsByTender/{tenderId}")]
-        public async Task<IActionResult> GetLinkedItemsByTender(int tenderId)
+      
+       
+        [HttpGet("GetLinkedItemsByTender/{tenderId}/{flag}")]
+        public async Task<IActionResult> GetLinkedItemsByTender(int tenderId, string flag)
         {
             List<TenderLinkedItemDto> list = new List<TenderLinkedItemDto>();
+            string query = ""; 
 
-            string query = @"
-        SELECT 0 as SlNo, m.ITEM_ID, ti.tender_item_id, t.tender_id, m.item_name, 
-               m.item_code_as_per_tender, m.item_code, ti.emd_amount, ti.tender_quantity
-        FROM tenders t
-        INNER JOIN tender_items ti ON ti.tender_id = t.tender_id
-        INNER JOIN masitems m ON m.item_id = ti.item_id
-        WHERE t.tender_id = @Tid";
+            // 1. Flag wise Query Selection (Use == for comparison)
+            if (flag == "A") // 'A' for All/Linked Items
+            {
+                query = @"
+            SELECT 0 as SlNo, m.ITEM_ID, ti.tender_item_id, t.tender_id, m.item_name, 
+                   m.item_code_as_per_tender, m.item_code, ti.emd_amount, ti.tender_quantity
+            FROM tenders t
+            INNER JOIN tender_items ti ON ti.tender_id = t.tender_id
+            INNER JOIN masitems m ON m.item_id = ti.item_id
+            WHERE t.tender_id = @Tid";
+            }
+            else if (flag == "E") // 'E' for Extended/Detailed view
+            {
+                // Yahan maine hardcoded '680' ko hata kar @Tid parameter use kiya hai
+                query = @"
+            select ti.item_id,item_code_as_per_tender as item_code,item_name,item_desc, case when item_name is null then item_desc else item_name end as itemName1, c.categoryName 
+,isnull(ti.emd_amount,0) as emd_amount,isnull(ti.tender_quantity,0) as tender_quantity  from masitems m
+left outer join masCategory c on c.categoryId = m.categoryid 
+inner join tender_items ti on ti.item_id = m.item_id
+inner join tenders t on t.tender_id = ti.tender_id
+where 1=1 and t.tender_id = @Tid";
+            }
+            else
+            {
+                return BadRequest(new { message = "Invalid Flag. Use 'A' or 'E'." });
+            }
 
             try
             {
@@ -2463,17 +2483,45 @@ inner join masitemP p on p.PID=m.pid
                         while (await reader.ReadAsync())
                         {
                             // Object initializer ka sahi upyog
+                            //list.Add(new TenderLinkedItemDto
+                            //{
+                            //    SlNo = reader["SlNo"] != DBNull.Value ? Convert.ToInt32(reader["SlNo"]) : 0,
+                            //    ItemId = reader["ITEM_ID"] != DBNull.Value ? Convert.ToInt32(reader["ITEM_ID"]) : 0,
+                            //    TenderItemId = reader["tender_item_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_item_id"]) : 0,
+                            //    TenderId = reader["tender_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_id"]) : 0,
+                            //    ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                            //    ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? string.Empty,
+                            //    ItemCode = reader["item_code"]?.ToString() ?? string.Empty,
+                            //    EmdAmount = reader["emd_amount"] != DBNull.Value ? Convert.ToDecimal(reader["emd_amount"]) : 0m,
+                            //    TenderQuantity = reader["tender_quantity"] != DBNull.Value ? Convert.ToDecimal(reader["tender_quantity"]) : 0m
+                            //});
                             list.Add(new TenderLinkedItemDto
                             {
-                                SlNo = reader["SlNo"] != DBNull.Value ? Convert.ToInt32(reader["SlNo"]) : 0,
-                                ItemId = reader["ITEM_ID"] != DBNull.Value ? Convert.ToInt32(reader["ITEM_ID"]) : 0,
-                                TenderItemId = reader["tender_item_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_item_id"]) : 0,
-                                TenderId = reader["tender_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_id"]) : 0,
-                                ItemName = reader["item_name"]?.ToString() ?? string.Empty,
-                                ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? string.Empty,
-                                ItemCode = reader["item_code"]?.ToString() ?? string.Empty,
-                                EmdAmount = reader["emd_amount"] != DBNull.Value ? Convert.ToDecimal(reader["emd_amount"]) : 0m,
-                                TenderQuantity = reader["tender_quantity"] != DBNull.Value ? Convert.ToDecimal(reader["tender_quantity"]) : 0m
+                                // Common Fields
+                                SlNo = ColumnExists(reader, "SlNo") ? Convert.ToInt32(reader["SlNo"]) : 0,
+
+                                // ItemId logic (ItemId ya ITEM_ID dono handle karega)
+                                ItemId = ColumnExists(reader, "item_id") ? Convert.ToInt32(reader["item_id"]) :
+                                (ColumnExists(reader, "ITEM_ID") ? Convert.ToInt32(reader["ITEM_ID"]) : 0),
+
+                                TenderItemId = ColumnExists(reader, "tender_item_id") ? Convert.ToInt32(reader["tender_item_id"]) : 0,
+                                TenderId = ColumnExists(reader, "tender_id") ? Convert.ToInt32(reader["tender_id"]) : 0,
+
+                                // Item Name logic (itemName1 ya item_name dono handle karega)
+                                ItemName = ColumnExists(reader, "itemName1") ? reader["itemName1"].ToString() :
+                                (ColumnExists(reader, "item_name") ? reader["item_name"].ToString() : string.Empty),
+
+                                ItemCodeAsPerTender = ColumnExists(reader, "item_code_as_per_tender") ? reader["item_code_as_per_tender"].ToString() : string.Empty,
+
+                                ItemCode = ColumnExists(reader, "item_code") ? reader["item_code"].ToString() : string.Empty,
+
+                                EmdAmount = ColumnExists(reader, "emd_amount") ? Convert.ToDecimal(reader["emd_amount"]) : 0m,
+
+                                TenderQuantity = ColumnExists(reader, "tender_quantity") ? Convert.ToDecimal(reader["tender_quantity"]) : 0m,
+
+                                // New Fields Mapping
+                                CategoryName = ColumnExists(reader, "categoryName") ? reader["categoryName"].ToString() : string.Empty,
+                                ItemDesc = ColumnExists(reader, "item_desc") ? reader["item_desc"].ToString() : string.Empty
                             });
                         }
                     }
@@ -2485,7 +2533,170 @@ inner join masitemP p on p.PID=m.pid
                 // Debugging ke liye error message return kar rahe hain
                 return StatusCode(500, new { message = ex.Message });
             }
+        
         }
+
+        private bool ColumnExists(SqlDataReader reader, string columnName)
+        {
+            for (int i = 0; i < reader.FieldCount; i++)
+            {
+                if (reader.GetName(i).Equals(columnName, StringComparison.InvariantCultureIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        [HttpPost("AddItemToTender1")]
+        public async Task<IActionResult> AddItemToTender1([FromBody] AddTenderItemDto dto)
+        {
+            // DTO null check to prevent NullReferenceException
+            if (dto == null) return BadRequest(new { message = "Invalid data" });
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    await conn.OpenAsync();
+
+                    // 1. EMD Validation (if (emd == "0" || emd == ""))
+                    if (dto.EmdAmount <= 0)
+                    {
+                        return BadRequest(new { message = "Please Enter EMD" });
+                    }
+
+                    // 2. Quantity Validation (if (aqty == ""))
+                    if (dto.TenderQuantity <= 0)
+                    {
+                        return BadRequest(new { message = "Please Enter Tender QTY" });
+                    }
+
+                    // 3. Duplicate Check (CheckTenderIdAndItemIdExistance)
+                    // Note: COUNT(*) use karein taaki ExecuteScalar safely integer return kare
+                    string checkQuery = "SELECT COUNT(*) FROM TENDER_ITEMS WHERE TENDER_ID = @Tid AND ITEM_ID = @Iid";
+                    using (SqlCommand checkCmd = new SqlCommand(checkQuery, conn))
+                    {
+                        checkCmd.Parameters.AddWithValue("@Tid", dto.TenderId);
+                        checkCmd.Parameters.AddWithValue("@Iid", dto.ItemId);
+
+                        int existCount = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
+                        if (existCount > 0)
+                        {
+                            return BadRequest(new { message = "Item is Already Linked to this Tender" });
+                        }
+                    }
+
+                    // 4. Insert Logic (Exactly as per your SQL strSQL)
+                    // Values: FLAG='T', status='B', bid_status='1'
+                    string insertSql = @"INSERT INTO TENDER_ITEMS 
+                                (TENDER_ID, ITEM_ID, TENDER_QUANTITY, EMD_AMOUNT, FLAG, status, bid_status) 
+                                VALUES (@Tid, @Iid, @Qty, @Emd, 'T', 'B', '1')";
+
+                    using (SqlCommand insertCmd = new SqlCommand(insertSql, conn))
+                    {
+                        insertCmd.Parameters.AddWithValue("@Tid", dto.TenderId);
+                        insertCmd.Parameters.AddWithValue("@Iid", dto.ItemId);
+                        insertCmd.Parameters.AddWithValue("@Qty", dto.TenderQuantity);
+                        insertCmd.Parameters.AddWithValue("@Emd", dto.EmdAmount);
+
+                        await insertCmd.ExecuteNonQueryAsync();
+                    }
+
+                    return Ok(new { message = "Saved Successfully" });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error occurred", error = ex.Message });
+            }
+        }
+
+
+
+//        [HttpGet("GetTenderHeaderDetails/{tenderId}")]
+//        public async Task<IActionResult> GetTenderHeaderDetails(int tenderId)
+//        {
+//            List<TenderDetailDto> list = new List<TenderDetailDto>();
+
+//            string query = @"
+//        SELECT A.TENDER_NO, B.YEAR AS FINANCIAL_YEAR, A.domestic_days, A.import_days, A.warranty_year,
+//               CONVERT(VARCHAR, A.TENDER_DATE, 103) AS TENDER_DATE, A.TENDER_DESCRIPTION, A.FLAG, 
+//               A.FINANCIAL_YEAR_ID, A.tender_id,
+//               CONVERT(VARCHAR, A.cover_a, 103) AS cover_a, CONVERT(VARCHAR, A.cover_b, 103) AS cover_b, 
+//               CONVERT(VARCHAR, A.cover_Demo, 103) AS cover_Demo, CONVERT(VARCHAR, A.cover_c, 103) AS cover_c, 
+//               s.cStatus, s.csid, CONVERT(VARCHAR, A.cover_Demo2, 103) AS cover_Demo2, 
+//               CONVERT(VARCHAR, A.cover_Demo3, 103) AS cover_Demo3, TenderRemarks,
+//               webSiteUploadID, eprocID	
+//        FROM TENDERS A
+//        LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON (A.FINANCIAL_YEAR_ID = B.FINANCIAL_YEAR_ID)
+//        LEFT OUTER JOIN mascoverstatus s ON s.csid = A.csid
+//        WHERE A.TENDER_ID = @Tid";
+
+
+////            SELECT A.TENDER_NO,B.YEAR AS FINANCIAL_YEAR,A.domestic_days,A.import_days,A.warranty_year,
+////				convert(varchar, A.TENDER_DATE, 103) as TENDER_DATE,A.TENDER_DESCRIPTION,A.FLAG,A.FINANCIAL_YEAR_ID,A.tender_id
+////                ,Convert(varchar, A.cover_a, 103) AS cover_a, Convert(varchar, A.cover_b, 103) AS cover_b, Convert(varchar, A.cover_Demo, 103) AS cover_Demo
+////, Convert(varchar, A.cover_c, 103) AS cover_c, s.cStatus,s.csid,A.FLAG,Convert(varchar, A.cover_Demo2, 103) AS cover_Demo2, Convert(varchar, A.cover_Demo3, 103) AS cover_Demo3, TenderRemarks
+////            , webSiteUploadID, eprocID    FROM TENDERS A
+////                LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON(A.FINANCIAL_YEAR_ID = B.FINANCIAL_YEAR_ID)
+////                left outer join mascoverstatus s on s.csid = A.csid
+
+////                WHERE A.TENDER_ID = 680
+
+//            try
+//            {
+//                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+//                {
+//                    SqlCommand cmd = new SqlCommand(query, conn);
+//                    // Parameterization for Security
+//                    cmd.Parameters.AddWithValue("@Tid", tenderId);
+
+//                    await conn.OpenAsync();
+//                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+//                    {
+//                        while (await reader.ReadAsync())
+//                        {
+//                            list.Add(new TenderDetailDto
+//                            {
+//                                TenderNo = reader["TENDER_NO"]?.ToString(),
+//                                FinancialYear = reader["FINANCIAL_YEAR"]?.ToString(),
+//                                DomesticDays = reader["domestic_days"] != DBNull.Value ? Convert.ToInt32(reader["domestic_days"]) : (int?)null,
+//                                ImportDays = reader["import_days"] != DBNull.Value ? Convert.ToInt32(reader["import_days"]) : (int?)null,
+//                                WarrantyYear = reader["warranty_year"] != DBNull.Value ? Convert.ToInt32(reader["warranty_year"]) : (int?)null,
+//                                TenderDate = reader["TENDER_DATE"]?.ToString(),
+//                                TenderDescription = reader["TENDER_DESCRIPTION"]?.ToString(),
+//                                Flag = reader["FLAG"]?.ToString(),
+//                                FinancialYearId = reader["FINANCIAL_YEAR_ID"] != DBNull.Value ? Convert.ToInt32(reader["FINANCIAL_YEAR_ID"]) : (int?)null,
+//                                TenderId = Convert.ToInt32(reader["tender_id"]),
+//                                CoverA = reader["cover_a"]?.ToString(),
+//                                CoverB = reader["cover_b"]?.ToString(),
+//                                CoverDemo = reader["cover_demo"]?.ToString(),
+//                                CoverC = reader["cover_c"]?.ToString(),
+//                                CStatus = reader["cStatus"]?.ToString(),
+//                                Csid = reader["csid"] != DBNull.Value ? Convert.ToInt32(reader["csid"]) : (int?)null,
+//                                CoverDemo2 = reader["cover_Demo2"]?.ToString(),
+//                                CoverDemo3 = reader["cover_Demo3"]?.ToString(),
+//                                TenderRemarks = reader["TenderRemarks"]?.ToString(),
+//                                WebSiteUploadId = reader["webSiteUploadID"]?.ToString(),
+//                                EprocId = reader["eprocID"]?.ToString()
+//                            });
+//                        }
+//                    }
+//                }
+//                return Ok(list);
+//            }
+//            catch (Exception ex)
+//            {
+//                return StatusCode(500, new { message = "Database Error", error = ex.Message });
+//            }
+//        }
+
+
+
+
+
+
 
 
 
