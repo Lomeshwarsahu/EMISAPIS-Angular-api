@@ -479,6 +479,62 @@ namespace EMISAPIS.DTOS
         public string tender_no { get; set; }
         public int? categoryId { get; set; }
     }
+
+    public class TenderLinkedItemDto
+    {
+        public int SlNo { get; set; }
+        public int ItemId { get; set; }
+        public int? TenderItemId { get; set; } // Query 2 mein shayad na ho isliye nullable
+        public int? TenderId { get; set; }
+        public string ItemName { get; set; }
+        public string ItemCodeAsPerTender { get; set; }
+        public string ItemCode { get; set; }
+        public decimal EmdAmount { get; set; }
+        public decimal TenderQuantity { get; set; }
+
+        // Extra fields from Query 2
+        public string CategoryName { get; set; }
+        public string ItemDesc { get; set; }
+    }
+
+
+    //public class TenderLinkedItemDto
+    //{
+    //    // SQL: 0 as SlNo (Frontend par auto-generate karne ke liye)
+    //    public int SlNo { get; set; }
+
+    //    // SQL: m.ITEM_ID
+    //    public int ItemId { get; set; }
+
+    //    // SQL: ti.tender_item_id
+    //    public int TenderItemId { get; set; }
+
+    //    // SQL: t.tender_id
+    //    public int TenderId { get; set; }
+
+    //    // SQL: m.item_name
+    //    public string ItemName { get; set; }
+
+    //    // SQL: m.item_code_as_per_tender
+    //    public string ItemCodeAsPerTender { get; set; }
+
+    //    // SQL: m.item_code
+    //    public string ItemCode { get; set; }
+
+    //    // SQL: ti.emd_amount
+    //    public decimal EmdAmount { get; set; }
+
+    //    // SQL: ti.tender_quantity
+    //    public decimal TenderQuantity { get; set; }
+    //}
+
+    //public class AddTenderItemDto
+    //{
+    //    public int TenderId { get; set; }
+    //    public int ItemId { get; set; }
+    //    public decimal TenderQuantity { get; set; }
+    //    public decimal EmdAmount { get; set; }
+    //}
     public class AddTenderItemDto
     {
         public int TenderId { get; set; }
@@ -487,33 +543,6 @@ namespace EMISAPIS.DTOS
         public decimal EmdAmount { get; set; }
     }
 
-    public class TenderLinkedItemDto
-    {
-        // SQL: 0 as SlNo (Frontend par auto-generate karne ke liye)
-        public int SlNo { get; set; }
 
-        // SQL: m.ITEM_ID
-        public int ItemId { get; set; }
-
-        // SQL: ti.tender_item_id
-        public int TenderItemId { get; set; }
-
-        // SQL: t.tender_id
-        public int TenderId { get; set; }
-
-        // SQL: m.item_name
-        public string ItemName { get; set; }
-
-        // SQL: m.item_code_as_per_tender
-        public string ItemCodeAsPerTender { get; set; }
-
-        // SQL: m.item_code
-        public string ItemCode { get; set; }
-
-        // SQL: ti.emd_amount
-        public decimal EmdAmount { get; set; }
-
-        // SQL: ti.tender_quantity
-        public decimal TenderQuantity { get; set; }
-    }
+   
 }
