@@ -543,6 +543,153 @@ namespace EMISAPIS.DTOS
         public decimal EmdAmount { get; set; }
     }
 
+    //select dtypeid, dtypename from MASDOCUMENTTYPE
+    public class MASDOCUMENTTYPEDTO
+    {
+        public int dtypeid { get; set; }
+        public string dtypename { get; set; }
+    }
 
-   
+    public class TenderSupplierParticipationDto
+    {
+        public int SlNo { get; set; }
+        public int SchStatusDid { get; set; }
+        public int TenderId { get; set; }
+        public string SupplierName { get; set; }
+        public decimal Emd { get; set; }
+        public decimal TpAmount { get; set; }
+        public string EmdDocType { get; set; }
+        public string EmdPath { get; set; }
+        public string EmdFileName { get; set; }
+        public string TpFileName { get; set; }
+        public string TpPath { get; set; }
+        public string EmdDocNo { get; set; }
+        public int SupplierId { get; set; }
+        public string Remark { get; set; }
+        public int PItems { get; set; } // isnull(piitem.cntparticipated,0)
+        public string IsEligibleB { get; set; }
+    }
+
+    public class SupplierParticipationDto
+    {
+        public int TenderId { get; set; } // schemeid
+        public int SupplierId { get; set; }
+        public decimal EmdAmount { get; set; } // txtEMD
+        public decimal TenderProFee { get; set; } // txtTenderProFee
+        public int DocTypeId { get; set; } // ddlDocType
+        public string EmdDocNo { get; set; } // txtEMDdocNo
+        public string Remarks { get; set; } // txtRemark
+    }
+
+    public class TenderStatusDetailsDto
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; }
+        public int FinancialYearId { get; set; }
+        public string Status { get; set; }
+        public string TenderDate { get; set; }
+        public int SchStatusDid { get; set; }
+        public string EndDate { get; set; }
+    }
+
+    public class TenderItemDetailsDto
+    {
+        public int SlNo { get; set; }
+        public int TenderId { get; set; }
+        public int FinancialYearId { get; set; }
+        public int ItemId { get; set; }
+        public string ItemCodeAsPerTender { get; set; }
+        public string ItemName { get; set; }
+    }
+
+    public class BulkParticipationRequest
+    {
+        public int SupplierId { get; set; }
+        public int SchemeId { get; set; }
+        public int SchStatusDid { get; set; }
+        public List<int> ItemIds { get; set; } // GridView mein jo checkboxes select hue hain unki IDs
+    }
+    public class TenderSaveRequest11
+    {
+        public string TenderNo { get; set; }
+        public string TenderDescription { get; set; }
+        public string TenderDate { get; set; } // Format: YYYY-MM-DD
+        public string FinancialYearId { get; set; }
+        public bool IsGemTender { get; set; }
+        public string GemBidNo { get; set; }
+        public decimal TenderValue { get; set; }
+    }
+
+    public class ParticipationItemDTO
+    {
+        public int SlNo { get; set; }
+        public int SchemeId { get; set; }
+        public string ItemCode { get; set; }
+        public string ItemName { get; set; }
+        public decimal EmdAmount { get; set; }
+        public int ItemId { get; set; }
+    }
+    public class DeleteParticipationRequest
+    {
+        public int SupplierId { get; set; }
+        public int SchemeId { get; set; }
+        public List<int> ItemIds { get; set; } 
+    }
+    public class UpdateLevyRequest
+    {
+        public string TenderId { get; set; }
+        public int CancellationDays { get; set; }
+        public decimal CancellationPercentage { get; set; }
+        public decimal PenaltyPercent120 { get; set; } // Penalty for 121-180 days
+        public decimal PenaltyPercent { get; set; }    // Penalty for >60 & <120
+        public string PenaltyType { get; set; }        // Days or Week
+        public string ReleaseType { get; set; }        // Month, Week, NR
+        public string PerformanceReq { get; set; }     // Yes, No, NA
+        public decimal ReleaseValue { get; set; }      // Release Duration
+        public decimal LogoCharges { get; set; }
+        public decimal LogoChargesUpper { get; set; }
+        public string LeavyEntryDt { get; set; }       // For condition check
+        public string PerfEntryDt { get; set; }        // For condition check
+    }
+
+    public class AddTenderStatusDTO
+    {
+        public int FinancialYearId { get; set; }
+        public string TenderNo { get; set; }
+        public string LiveDT { get; set; }
+        public string TLast { get; set; }
+        public int NoSitems { get; set; }
+        public string FinalStatus { get; set; }
+        public string NosItemsA { get; set; }
+        public string AItemsSupplier { get; set; }
+        public string CoverA { get; set; }
+        public int COVA_LastDays { get; set; }
+        public string NositemsDA { get; set; }
+        public string ADAItemsSupplier { get; set; }
+        public string ObjClaimLastDate { get; set; }
+        public string ObjCStartDT { get; set; }
+        public string COVBDT { get; set; }
+        public string COVCDT { get; set; }
+        public int NoofPriceFound { get; set; }
+        public int NosAccepted { get; set; }
+        public int NosRejected { get; set; }
+        public int DaysTakenFromLiveDT { get; set; }
+        public int COVAToObjStartDays { get; set; }
+        public int OBJDays { get; set; }
+        public int ClaimEndToBDays { get; set; }
+        public int CovBToCovCDays { get; set; }
+        public int Csid { get; set; }
+        public int TenderId { get; set; }
+        public int DaysClosed { get; set; }
+        public int Show { get; set; }
+        public int NosRC { get; set; }
+    }
+
+    public class FacilityAuthDTOnew
+    {
+        public int FacilityAutId { get; set; }
+        public string FacilityAutName { get; set; }
+        public string FacilityAutCode { get; set; }
+    }
+
 }

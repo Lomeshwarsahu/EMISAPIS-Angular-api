@@ -2614,89 +2614,936 @@ where 1=1 and t.tender_id = @Tid";
 
 
 
-//        [HttpGet("GetTenderHeaderDetails/{tenderId}")]
-//        public async Task<IActionResult> GetTenderHeaderDetails(int tenderId)
-//        {
-//            List<TenderDetailDto> list = new List<TenderDetailDto>();
+        //        [HttpGet("GetTenderHeaderDetails/{tenderId}")]
+        //        public async Task<IActionResult> GetTenderHeaderDetails(int tenderId)
+        //        {
+        //            List<TenderDetailDto> list = new List<TenderDetailDto>();
 
-//            string query = @"
-//        SELECT A.TENDER_NO, B.YEAR AS FINANCIAL_YEAR, A.domestic_days, A.import_days, A.warranty_year,
-//               CONVERT(VARCHAR, A.TENDER_DATE, 103) AS TENDER_DATE, A.TENDER_DESCRIPTION, A.FLAG, 
-//               A.FINANCIAL_YEAR_ID, A.tender_id,
-//               CONVERT(VARCHAR, A.cover_a, 103) AS cover_a, CONVERT(VARCHAR, A.cover_b, 103) AS cover_b, 
-//               CONVERT(VARCHAR, A.cover_Demo, 103) AS cover_Demo, CONVERT(VARCHAR, A.cover_c, 103) AS cover_c, 
-//               s.cStatus, s.csid, CONVERT(VARCHAR, A.cover_Demo2, 103) AS cover_Demo2, 
-//               CONVERT(VARCHAR, A.cover_Demo3, 103) AS cover_Demo3, TenderRemarks,
-//               webSiteUploadID, eprocID	
-//        FROM TENDERS A
-//        LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON (A.FINANCIAL_YEAR_ID = B.FINANCIAL_YEAR_ID)
-//        LEFT OUTER JOIN mascoverstatus s ON s.csid = A.csid
-//        WHERE A.TENDER_ID = @Tid";
-
-
-////            SELECT A.TENDER_NO,B.YEAR AS FINANCIAL_YEAR,A.domestic_days,A.import_days,A.warranty_year,
-////				convert(varchar, A.TENDER_DATE, 103) as TENDER_DATE,A.TENDER_DESCRIPTION,A.FLAG,A.FINANCIAL_YEAR_ID,A.tender_id
-////                ,Convert(varchar, A.cover_a, 103) AS cover_a, Convert(varchar, A.cover_b, 103) AS cover_b, Convert(varchar, A.cover_Demo, 103) AS cover_Demo
-////, Convert(varchar, A.cover_c, 103) AS cover_c, s.cStatus,s.csid,A.FLAG,Convert(varchar, A.cover_Demo2, 103) AS cover_Demo2, Convert(varchar, A.cover_Demo3, 103) AS cover_Demo3, TenderRemarks
-////            , webSiteUploadID, eprocID    FROM TENDERS A
-////                LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON(A.FINANCIAL_YEAR_ID = B.FINANCIAL_YEAR_ID)
-////                left outer join mascoverstatus s on s.csid = A.csid
-
-////                WHERE A.TENDER_ID = 680
-
-//            try
-//            {
-//                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
-//                {
-//                    SqlCommand cmd = new SqlCommand(query, conn);
-//                    // Parameterization for Security
-//                    cmd.Parameters.AddWithValue("@Tid", tenderId);
-
-//                    await conn.OpenAsync();
-//                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
-//                    {
-//                        while (await reader.ReadAsync())
-//                        {
-//                            list.Add(new TenderDetailDto
-//                            {
-//                                TenderNo = reader["TENDER_NO"]?.ToString(),
-//                                FinancialYear = reader["FINANCIAL_YEAR"]?.ToString(),
-//                                DomesticDays = reader["domestic_days"] != DBNull.Value ? Convert.ToInt32(reader["domestic_days"]) : (int?)null,
-//                                ImportDays = reader["import_days"] != DBNull.Value ? Convert.ToInt32(reader["import_days"]) : (int?)null,
-//                                WarrantyYear = reader["warranty_year"] != DBNull.Value ? Convert.ToInt32(reader["warranty_year"]) : (int?)null,
-//                                TenderDate = reader["TENDER_DATE"]?.ToString(),
-//                                TenderDescription = reader["TENDER_DESCRIPTION"]?.ToString(),
-//                                Flag = reader["FLAG"]?.ToString(),
-//                                FinancialYearId = reader["FINANCIAL_YEAR_ID"] != DBNull.Value ? Convert.ToInt32(reader["FINANCIAL_YEAR_ID"]) : (int?)null,
-//                                TenderId = Convert.ToInt32(reader["tender_id"]),
-//                                CoverA = reader["cover_a"]?.ToString(),
-//                                CoverB = reader["cover_b"]?.ToString(),
-//                                CoverDemo = reader["cover_demo"]?.ToString(),
-//                                CoverC = reader["cover_c"]?.ToString(),
-//                                CStatus = reader["cStatus"]?.ToString(),
-//                                Csid = reader["csid"] != DBNull.Value ? Convert.ToInt32(reader["csid"]) : (int?)null,
-//                                CoverDemo2 = reader["cover_Demo2"]?.ToString(),
-//                                CoverDemo3 = reader["cover_Demo3"]?.ToString(),
-//                                TenderRemarks = reader["TenderRemarks"]?.ToString(),
-//                                WebSiteUploadId = reader["webSiteUploadID"]?.ToString(),
-//                                EprocId = reader["eprocID"]?.ToString()
-//                            });
-//                        }
-//                    }
-//                }
-//                return Ok(list);
-//            }
-//            catch (Exception ex)
-//            {
-//                return StatusCode(500, new { message = "Database Error", error = ex.Message });
-//            }
-//        }
+        //            string query = @"
+        //        SELECT A.TENDER_NO, B.YEAR AS FINANCIAL_YEAR, A.domestic_days, A.import_days, A.warranty_year,
+        //               CONVERT(VARCHAR, A.TENDER_DATE, 103) AS TENDER_DATE, A.TENDER_DESCRIPTION, A.FLAG, 
+        //               A.FINANCIAL_YEAR_ID, A.tender_id,
+        //               CONVERT(VARCHAR, A.cover_a, 103) AS cover_a, CONVERT(VARCHAR, A.cover_b, 103) AS cover_b, 
+        //               CONVERT(VARCHAR, A.cover_Demo, 103) AS cover_Demo, CONVERT(VARCHAR, A.cover_c, 103) AS cover_c, 
+        //               s.cStatus, s.csid, CONVERT(VARCHAR, A.cover_Demo2, 103) AS cover_Demo2, 
+        //               CONVERT(VARCHAR, A.cover_Demo3, 103) AS cover_Demo3, TenderRemarks,
+        //               webSiteUploadID, eprocID	
+        //        FROM TENDERS A
+        //        LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON (A.FINANCIAL_YEAR_ID = B.FINANCIAL_YEAR_ID)
+        //        LEFT OUTER JOIN mascoverstatus s ON s.csid = A.csid
+        //        WHERE A.TENDER_ID = @Tid";
 
 
+        ////            SELECT A.TENDER_NO,B.YEAR AS FINANCIAL_YEAR,A.domestic_days,A.import_days,A.warranty_year,
+        ////				convert(varchar, A.TENDER_DATE, 103) as TENDER_DATE,A.TENDER_DESCRIPTION,A.FLAG,A.FINANCIAL_YEAR_ID,A.tender_id
+        ////                ,Convert(varchar, A.cover_a, 103) AS cover_a, Convert(varchar, A.cover_b, 103) AS cover_b, Convert(varchar, A.cover_Demo, 103) AS cover_Demo
+        ////, Convert(varchar, A.cover_c, 103) AS cover_c, s.cStatus,s.csid,A.FLAG,Convert(varchar, A.cover_Demo2, 103) AS cover_Demo2, Convert(varchar, A.cover_Demo3, 103) AS cover_Demo3, TenderRemarks
+        ////            , webSiteUploadID, eprocID    FROM TENDERS A
+        ////                LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON(A.FINANCIAL_YEAR_ID = B.FINANCIAL_YEAR_ID)
+        ////                left outer join mascoverstatus s on s.csid = A.csid
+
+        ////                WHERE A.TENDER_ID = 680
+
+        //            try
+        //            {
+        //                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+        //                {
+        //                    SqlCommand cmd = new SqlCommand(query, conn);
+        //                    // Parameterization for Security
+        //                    cmd.Parameters.AddWithValue("@Tid", tenderId);
+
+        //                    await conn.OpenAsync();
+        //                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+        //                    {
+        //                        while (await reader.ReadAsync())
+        //                        {
+        //                            list.Add(new TenderDetailDto
+        //                            {
+        //                                TenderNo = reader["TENDER_NO"]?.ToString(),
+        //                                FinancialYear = reader["FINANCIAL_YEAR"]?.ToString(),
+        //                                DomesticDays = reader["domestic_days"] != DBNull.Value ? Convert.ToInt32(reader["domestic_days"]) : (int?)null,
+        //                                ImportDays = reader["import_days"] != DBNull.Value ? Convert.ToInt32(reader["import_days"]) : (int?)null,
+        //                                WarrantyYear = reader["warranty_year"] != DBNull.Value ? Convert.ToInt32(reader["warranty_year"]) : (int?)null,
+        //                                TenderDate = reader["TENDER_DATE"]?.ToString(),
+        //                                TenderDescription = reader["TENDER_DESCRIPTION"]?.ToString(),
+        //                                Flag = reader["FLAG"]?.ToString(),
+        //                                FinancialYearId = reader["FINANCIAL_YEAR_ID"] != DBNull.Value ? Convert.ToInt32(reader["FINANCIAL_YEAR_ID"]) : (int?)null,
+        //                                TenderId = Convert.ToInt32(reader["tender_id"]),
+        //                                CoverA = reader["cover_a"]?.ToString(),
+        //                                CoverB = reader["cover_b"]?.ToString(),
+        //                                CoverDemo = reader["cover_demo"]?.ToString(),
+        //                                CoverC = reader["cover_c"]?.ToString(),
+        //                                CStatus = reader["cStatus"]?.ToString(),
+        //                                Csid = reader["csid"] != DBNull.Value ? Convert.ToInt32(reader["csid"]) : (int?)null,
+        //                                CoverDemo2 = reader["cover_Demo2"]?.ToString(),
+        //                                CoverDemo3 = reader["cover_Demo3"]?.ToString(),
+        //                                TenderRemarks = reader["TenderRemarks"]?.ToString(),
+        //                                WebSiteUploadId = reader["webSiteUploadID"]?.ToString(),
+        //                                EprocId = reader["eprocID"]?.ToString()
+        //                            });
+        //                        }
+        //                    }
+        //                }
+        //                return Ok(list);
+        //            }
+        //            catch (Exception ex)
+        //            {
+        //                return StatusCode(500, new { message = "Database Error", error = ex.Message });
+        //            }
+        //        }
+
+        //select dtypeid, dtypename from MASDOCUMENTTYPE
+        //public class MASDOCUMENTTYPEDTO
 
 
 
+        [HttpGet("GETMASDOCUMENTTYPEList")]
+        public async Task<IActionResult> GETMASDOCUMENTTYPEList()
+        {
+            List<MASDOCUMENTTYPEDTO> list = new List<MASDOCUMENTTYPEDTO>();
 
+            // Exact Query as provided
+            string query = @"select dtypeid, dtypename from MASDOCUMENTTYPE";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    await conn.OpenAsync();
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            list.Add(new MASDOCUMENTTYPEDTO
+                            {
+                                dtypeid = Convert.ToInt32(reader["dtypeid"]),
+                                dtypename = reader["dtypename"]?.ToString(),
+                             
+                            });
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error", details = ex.Message });
+            }
+        }
+
+        [HttpGet("GetSupplierParticipationDetails/{tenderId}")]
+        public async Task<IActionResult> GetSupplierParticipationDetails(int tenderId)
+        {
+            List<TenderSupplierParticipationDto> list = new List<TenderSupplierParticipationDto>();
+
+            string query = @"
+        SELECT 0 as slno, ms.SCHSTATUSDID, t.tender_id, mas.name, ms.EMD, ms.TPAMOUNT, 
+               ms.EMDDOCTYPE, ms.EMDPATH, ms.EMDFILENAME, ms.TPFILENAME, ms.TPPATH, 
+               ms.EMDDOCNO, mas.supplier_id, ms.REMARK, isnull(piitem.cntparticipated, 0) as pitems, 
+               ms.ISELIGIBLE_B 
+        FROM tenders t
+        INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
+        INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
+        LEFT OUTER JOIN (
+            SELECT count(ch.ITEMID) as cntparticipated, sc.SCHEMEID, sc.SUPPLIERID 
+            FROM SCHEMESTATUSDETAILSCHILD ch
+            INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+            GROUP BY sc.SCHEMEID, sc.SUPPLIERID
+        ) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
+        WHERE t.tender_id = @Tid
+        ORDER BY mas.name";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    cmd.Parameters.AddWithValue("@Tid", tenderId);
+                    await conn.OpenAsync();
+
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        int counter = 1;
+                        while (await reader.ReadAsync())
+                        {
+                            list.Add(new TenderSupplierParticipationDto
+                            {
+                                SlNo = counter++, // Row index for frontend
+                                SchStatusDid = reader["SCHSTATUSDID"] != DBNull.Value ? Convert.ToInt32(reader["SCHSTATUSDID"]) : 0,
+                                TenderId = reader["tender_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_id"]) : 0,
+                                SupplierName = reader["name"]?.ToString() ?? string.Empty,
+                                Emd = reader["EMD"] != DBNull.Value ? Convert.ToDecimal(reader["EMD"]) : 0m,
+                                TpAmount = reader["TPAMOUNT"] != DBNull.Value ? Convert.ToDecimal(reader["TPAMOUNT"]) : 0m,
+                                EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? string.Empty,
+                                EmdPath = reader["EMDPATH"]?.ToString() ?? string.Empty,
+                                EmdFileName = reader["EMDFILENAME"]?.ToString() ?? string.Empty,
+                                TpFileName = reader["TPFILENAME"]?.ToString() ?? string.Empty,
+                                TpPath = reader["TPPATH"]?.ToString() ?? string.Empty,
+                                EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? string.Empty,
+                                SupplierId = reader["supplier_id"] != DBNull.Value ? Convert.ToInt32(reader["supplier_id"]) : 0,
+                                Remark = reader["REMARK"]?.ToString() ?? string.Empty,
+                                PItems = reader["pitems"] != DBNull.Value ? Convert.ToInt32(reader["pitems"]) : 0,
+                                IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? string.Empty
+                            });
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching supplier data", error = ex.Message });
+            }
+        }
+
+        [HttpPost("SaveSupplierParticipation")]
+        public async Task<IActionResult> SaveSupplierParticipation([FromBody] SupplierParticipationDto dto)
+        {
+            if (dto == null) return BadRequest(new { message = "Invalid Data" });
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    await conn.OpenAsync();
+
+                    // 1. Validation: Check Already Inserted (Duplicate Check)
+                    string checkQuery = "SELECT COUNT(*) FROM masschemesstatusdetails WHERE schemeid = @Tid AND SUPPLIERID = @Sid";
+                    using (SqlCommand checkCmd = new SqlCommand(checkQuery, conn))
+                    {
+                        checkCmd.Parameters.AddWithValue("@Tid", dto.TenderId);
+                        checkCmd.Parameters.AddWithValue("@Sid", dto.SupplierId);
+                        int existCount = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
+
+                        if (existCount > 0)
+                        {
+                            return BadRequest(new { message = "Already Saved Selected Supplier for Participation" });
+                        }
+                    }
+
+                    // 2. Final Insert Logic
+                    string insertSql = @"
+                INSERT INTO masschemesstatusdetails
+                (schemeid, Status, SUPPLIERID, EMD, EMDDOCTYPE, TPAMOUNT, remark, emddocno) 
+                VALUES 
+                (@Tid, 2, @Sid, @Emd, @DocType, @Fee, @Remark, @DocNo)";
+
+                    using (SqlCommand insertCmd = new SqlCommand(insertSql, conn))
+                    {
+                        insertCmd.Parameters.AddWithValue("@Tid", dto.TenderId);
+                        insertCmd.Parameters.AddWithValue("@Sid", dto.SupplierId);
+                        insertCmd.Parameters.AddWithValue("@Emd", dto.EmdAmount);
+                        insertCmd.Parameters.AddWithValue("@DocType", dto.DocTypeId);
+                        insertCmd.Parameters.AddWithValue("@Fee", dto.TenderProFee);
+                        insertCmd.Parameters.AddWithValue("@Remark", (object)dto.Remarks ?? DBNull.Value);
+                        insertCmd.Parameters.AddWithValue("@DocNo", dto.EmdDocNo);
+
+                        await insertCmd.ExecuteNonQueryAsync();
+                    }
+
+                    return Ok(new { message = "Successfully Saved Supplier Participation" });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error occurred", error = ex.Message });
+            }
+        }
+
+
+
+        [HttpGet("GetTenderStatus/{tenderId}")]
+        public async Task<IActionResult> GetTenderStatus(int tenderId)
+        {
+            TenderStatusDetailsDto result = null;
+            string query = @"
+        SELECT ms.tender_id, ms.tender_no, ms.financial_year_id,
+        (CASE WHEN ms.csid='1' THEN 'Tender Live'
+              WHEN ms.csid='2' THEN 'Cover A Opened' 
+              WHEN ms.csid='3' THEN 'Cover B Opened' 
+              WHEN ms.csid='4' THEN 'Under Demonstration' 
+              WHEN ms.csid='5' THEN 'Price Bid Opened' 
+              ELSE 'Cancelled' END) as Status,
+        CONVERT(VARCHAR, tender_date, 103) as tender_date, 
+        mas.SCHSTATUSDID, 
+        CONVERT(VARCHAR, ENDDate, 103) as ENDDate
+        FROM tenders ms 
+        INNER JOIN masschemesstatusdetails mas ON mas.SCHEMEID = ms.tender_id  
+        WHERE ms.tender_id = @Tid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    cmd.Parameters.AddWithValue("@Tid", tenderId);
+                    await conn.OpenAsync();
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        if (await reader.ReadAsync())
+                        {
+                            result = new TenderStatusDetailsDto
+                            {
+                                TenderId = Convert.ToInt32(reader["tender_id"]),
+                                TenderNo = reader["tender_no"].ToString(),
+                                FinancialYearId = Convert.ToInt32(reader["financial_year_id"]),
+                                Status = reader["Status"].ToString(),
+                                TenderDate = reader["tender_date"].ToString(),
+                                SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]),
+                                EndDate = reader["ENDDate"].ToString()
+                            };
+                        }
+                    }
+                }
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
+
+        [HttpGet("GetTenderItems/{tenderId}")]
+        public async Task<IActionResult> GetTenderItems(int tenderId)
+        {
+            List<TenderItemDetailsDto> list = new List<TenderItemDetailsDto>();
+            string query = @"
+        SELECT 0 as SlNo, ms.tender_id, ms.financial_year_id, mi.item_id, 
+               mi.item_code_as_per_tender, mi.item_name
+        FROM tenders ms 
+        LEFT OUTER JOIN tender_items a ON a.tender_id = ms.tender_id
+        LEFT OUTER JOIN masitems mi ON mi.item_id = a.item_id  
+        WHERE ms.tender_id = @Tid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    cmd.Parameters.AddWithValue("@Tid", tenderId);
+                    await conn.OpenAsync();
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        int count = 1;
+                        while (await reader.ReadAsync())
+                        {
+                            list.Add(new TenderItemDetailsDto
+                            {
+                                SlNo = count++,
+                                TenderId = Convert.ToInt32(reader["tender_id"]),
+                                FinancialYearId = Convert.ToInt32(reader["financial_year_id"]),
+                                ItemId = reader["item_id"] != DBNull.Value ? Convert.ToInt32(reader["item_id"]) : 0,
+                                ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? "",
+                                ItemName = reader["item_name"]?.ToString() ?? ""
+                            });
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
+
+        [HttpPost("SaveBulkEquipmentParticipation")]
+        public async Task<IActionResult> SaveBulkEquipmentParticipation([FromBody] BulkParticipationRequest request)
+        {
+            if (request == null || request.ItemIds == null || request.ItemIds.Count == 0)
+                return BadRequest(new { message = "No items selected." });
+
+            int flag = 0;
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    foreach (var itemId in request.ItemIds)
+                    {
+                        // 1. Check If Already Inserted
+                        bool exists = false;
+                        string checkQuery = @"SELECT COUNT(*) FROM schemestatusdetailschild 
+                                      WHERE supplierId = @Sid AND schemeid = @SchemeId 
+                                      AND itemId = @Iid AND schstatusdid = @Sdid";
+
+                        using (SqlCommand checkCmd = new SqlCommand(checkQuery, conn))
+                        {
+                            checkCmd.Parameters.AddWithValue("@Sid", request.SupplierId);
+                            checkCmd.Parameters.AddWithValue("@SchemeId", request.SchemeId);
+                            checkCmd.Parameters.AddWithValue("@Iid", itemId);
+                            checkCmd.Parameters.AddWithValue("@Sdid", request.SchStatusDid);
+
+                            exists = (int)await checkCmd.ExecuteScalarAsync() > 0;
+                        }
+
+                        // 2. If Not Exists, then Insert
+                        if (!exists)
+                        {
+                            string insertQuery = @"INSERT INTO schemestatusdetailschild (supplierid, schemeid, itemid, schstatusdid, flagcoa)
+                                           VALUES (@Sid, @SchemeId, @Iid, @Sdid, 'Y')";
+
+                            using (SqlCommand insertCmd = new SqlCommand(insertQuery, conn))
+                            {
+                                insertCmd.Parameters.AddWithValue("@Sid", request.SupplierId);
+                                insertCmd.Parameters.AddWithValue("@SchemeId", request.SchemeId);
+                                insertCmd.Parameters.AddWithValue("@Iid", itemId);
+                                insertCmd.Parameters.AddWithValue("@Sdid", request.SchStatusDid);
+
+                                await insertCmd.ExecuteNonQueryAsync();
+                                flag++;
+                            }
+                        }
+                    }
+                }
+
+                return Ok(new { message = $"{flag} No of Equipment Participated by Bidder, Successfully Saved" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Database Error", details = ex.Message });
+            }
+        }
+
+
+     
+
+            [HttpPost("SaveTender")]
+            public async Task<IActionResult> SaveTender([FromBody] TenderSaveRequest11 request)
+            {
+                // 1. Validations (Exactly as your logic)
+                if (string.IsNullOrEmpty(request.TenderNo))
+                    return BadRequest(new { message = "Enter Tender Number" });
+
+                if (IsTenderExisted1(request.TenderNo))
+                    return BadRequest(new { message = "Tender has been Already Added" });
+
+                if (string.IsNullOrEmpty(request.TenderDescription))
+                    return BadRequest(new { message = "Enter tender Description" });
+
+                if (string.IsNullOrEmpty(request.FinancialYearId) || request.FinancialYearId == "0")
+                    return BadRequest(new { message = "Select Financial Year" });
+
+                if (string.IsNullOrEmpty(request.TenderDate))
+                    return BadRequest(new { message = "Enter Tender Date" });
+
+                // 2. Logic Check for Financial Year (Placeholder for your CheckYearBasedonTDate)
+                // if (!CheckYearBasedonTDate(request.FinancialYearId, request.TenderDate)) 
+                // { return BadRequest(new { message = "Please Check Financial Year, it must be based on Tender Date" }); }
+
+                try
+                {
+                    using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                    {
+                        string isGemTenderStr = request.IsGemTender ? "Y" : "N";
+
+                        string query = @"INSERT INTO TENDERS 
+                                (TENDER_NO, tender_date, TENDER_DESCRIPTION, FINANCIAL_YEAR_ID, isGemTender, eProcID, tValue) 
+                                VALUES 
+                                (@TNo, @TDate, @TDesc, @FinId, @IsGem, @GemNo, @TVal)";
+
+                        using (SqlCommand cmd = new SqlCommand(query, conn))
+                        {
+                            cmd.Parameters.AddWithValue("@TNo", request.TenderNo.Trim());
+                            cmd.Parameters.AddWithValue("@TDate", DateTime.Parse(request.TenderDate));
+                            cmd.Parameters.AddWithValue("@TDesc", request.TenderDescription.Trim());
+                            cmd.Parameters.AddWithValue("@FinId", request.FinancialYearId);
+                            cmd.Parameters.AddWithValue("@IsGem", isGemTenderStr);
+
+                            // Handle NULL for GemBidNo
+                            cmd.Parameters.AddWithValue("@GemNo", string.IsNullOrEmpty(request.GemBidNo) ? (object)DBNull.Value : request.GemBidNo.Trim());
+                            cmd.Parameters.AddWithValue("@TVal", request.TenderValue);
+
+                            await conn.OpenAsync();
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                    }
+
+                    return Ok(new
+                    {
+                        message = $"Saved Successfully with Tender No {request.TenderNo}, Please Add Items & Leavy for the Tender"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return StatusCode(500, new { message = ex.Message });
+                }
+            }
+
+            // Existing Check Logic
+            private bool IsTenderExisted1(string tenderNo)
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    string query = "SELECT COUNT(*) FROM TENDERS WHERE TENDER_NO = @TNo";
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    cmd.Parameters.AddWithValue("@TNo", tenderNo);
+                    conn.Open();
+                    int count = (int)cmd.ExecuteScalar();
+                    return count > 0;
+                }
+            }
+
+        [HttpGet("GetParticipationItems")]
+        public async Task<IActionResult> GetParticipationItems(int schemeId, int supplierId)
+        {
+            List<ParticipationItemDTO> items = new List<ParticipationItemDTO>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    // Query with Parameters
+                    string sql = @"SELECT 0 AS SlNo, ms.schemeid, mi.item_code_as_per_tender AS itemcode, 
+                                  mi.item_name AS itemname, ti.emd_amount, mi.item_id AS itemId
+                           FROM masschemesstatusdetails ms 
+                           INNER JOIN schemestatusdetailschild msc ON msc.schemeid = ms.schemeid AND msc.supplierId = ms.supplierId 
+                           INNER JOIN masitems mi ON mi.item_id = msc.itemid 
+                           INNER JOIN tender_items ti ON ti.item_id = mi.item_id AND ti.tender_id = ms.SCHEMEID
+                           WHERE ms.schemeid = @SchemeId AND ms.supplierId = @SupplierId";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SchemeId", schemeId);
+                        cmd.Parameters.AddWithValue("@SupplierId", supplierId);
+
+                        await conn.OpenAsync();
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                items.Add(new ParticipationItemDTO
+                                {
+                                    SlNo = Convert.ToInt32(dr["SlNo"]),
+                                    SchemeId = Convert.ToInt32(dr["schemeid"]),
+                                    ItemCode = dr["itemcode"].ToString(),
+                                    ItemName = dr["itemname"].ToString(),
+                                    EmdAmount = Convert.ToDecimal(dr["emd_amount"]),
+                                    ItemId = Convert.ToInt32(dr["itemId"])
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(items);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching data", details = ex.Message });
+            }
+        }
+       
+        [HttpPost("DeleteParticipationItems")]
+        public async Task<IActionResult> DeleteParticipationItems([FromBody] DeleteParticipationRequest request)
+        {
+            if (request == null || request.ItemIds == null || request.ItemIds.Count == 0)
+                return BadRequest(new { message = "No items selected for deletion." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            int deletedCount = 0;
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    foreach (var itemId in request.ItemIds)
+                    {
+                        // SQL Injection se bachne ke liye Parameters ka use
+                        string sql = @"DELETE FROM schemestatusdetailschild 
+                               WHERE supplierid = @Sid 
+                               AND schemeid = @SchemeId 
+                               AND itemid = @ItemId";
+
+                        using (SqlCommand cmd = new SqlCommand(sql, conn))
+                        {
+                            cmd.Parameters.AddWithValue("@Sid", request.SupplierId);
+                            cmd.Parameters.AddWithValue("@SchemeId", request.SchemeId);
+                            cmd.Parameters.AddWithValue("@ItemId", itemId);
+
+                            int rowsAffected = await cmd.ExecuteNonQueryAsync();
+                            if (rowsAffected > 0) deletedCount++;
+                        }
+                    }
+                }
+
+                return Ok(new { message = $"{deletedCount} Items deleted successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error during deletion", details = ex.Message });
+            }
+        }
+
+        [HttpPost("UpdateTenderLevy")]
+        public async Task<IActionResult> UpdateTenderLevy([FromBody] UpdateLevyRequest request)
+        {
+            // 1. Basic Validations
+            if (request.CancellationDays <= 0) return BadRequest(new { message = "Enter Valid Cancellation Days" });
+            if (request.LogoCharges < 0) return BadRequest(new { message = "Enter Valid Logo Charges" });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+                    string query = "";
+
+                    // 2. Logic: If both dates are empty (First time update)
+                    if (string.IsNullOrEmpty(request.LeavyEntryDt) && string.IsNullOrEmpty(request.PerfEntryDt))
+                    {
+                        query = @"UPDATE TENDERS SET 
+                            cancellationdays = @CDays, 
+                            cancellationpercentage = @CPer, 
+                            penaltypercent120 = @P120, 
+                            penaltypercent = @PPer, 
+                            penaltytype = @PType, 
+                            releasetype = @RType, 
+                            performacereq = @PReq, 
+                            releasevalue = @RVal, 
+                            logocharges = @LChar, 
+                            logochargesUpper = @LUp, 
+                            leavyEntryDt = GETDATE(), 
+                            performanceentrydt = GETDATE() 
+                          WHERE TENDER_ID = @TId";
+                    }
+                    // 3. Logic: If only performance date is empty
+                    else if (string.IsNullOrEmpty(request.PerfEntryDt))
+                    {
+                        query = @"UPDATE TENDERS SET 
+                            releasetype = @RType, 
+                            performacereq = @PReq, 
+                            releasevalue = @RVal, 
+                            performanceentrydt = GETDATE() 
+                          WHERE TENDER_ID = @TId";
+                    }
+                    else
+                    {
+                        // Default Update if both exist (Optional, as per your old logic)
+                        return Ok(new { message = "Data already exists, no update needed." });
+                    }
+
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@TId", request.TenderId);
+                        cmd.Parameters.AddWithValue("@CDays", request.CancellationDays);
+                        cmd.Parameters.AddWithValue("@CPer", request.CancellationPercentage);
+                        cmd.Parameters.AddWithValue("@P120", request.PenaltyPercent120);
+                        cmd.Parameters.AddWithValue("@PPer", request.PenaltyPercent);
+                        cmd.Parameters.AddWithValue("@PType", request.PenaltyType);
+                        cmd.Parameters.AddWithValue("@RType", request.ReleaseType);
+                        cmd.Parameters.AddWithValue("@PReq", request.PerformanceReq);
+                        cmd.Parameters.AddWithValue("@RVal", request.ReleaseValue);
+                        cmd.Parameters.AddWithValue("@LChar", request.LogoCharges);
+                        cmd.Parameters.AddWithValue("@LUp", request.LogoChargesUpper);
+
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+
+                return Ok(new { message = "Levy Successfully Updated" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Database Error", details = ex.Message });
+            }
+        }
+
+        [HttpGet("GetTenderSummary/{tenderId}")]
+        public async Task<IActionResult> GetTenderSummary(int tenderId)
+        {
+            var resultList = new List<AddTenderStatusDTO>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    // Aapki poori query yahan string mein aayegi
+                    // Maine query ko short rakha hai, aap wahi exact query copy karein
+                    string sql = @"select b.financial_year_id,b.tender_no,convert(varchar,b.tender_date,105) as LiveDT,convert(varchar,b.ENDDate,105) as TLast,a.NoSitems,
+case when b.csid=5 and b.cover_c is not null and noofPriceFound>0 and a.noofPriceFound>(nosAccepted+nosRejected)
+then  'Cov-C,Price Entered-Acceptance/Rejection Pending since '+cast(DATEDIFF(DAY,b.cover_c,GETDATE()) as varchar)+' days' 
+else case when b.csid=5 and b.cover_c is not null and noofPriceFound>0 and (nosAccepted+nosRejected)=a.noofPriceFound and (nosAccepted)>a.nosRC and isnull(a.nosRC,0)=0
+then  'Price Accepted,'+cast(a.nosAccepted as varchar)+' Items' 
+else case when b.csid=5 and b.cover_c is not null and noofPriceFound>0 and (nosAccepted)=a.nosRC
+then  'Rate Contract'+cast(a.nosRC as varchar)+' Items'
+
+else case when b.csid=5 and b.cover_c is not null and  (nosAccepted)>a.nosRC
+then  'RC Pending for,'+cast((nosAccepted-a.nosRC) as varchar)+' Items'
+else case when b.csid=6 then 'Cancelled(Dated '+convert(varchar,b.CancelledDT,105)+')' 
+else case when b.csid=4 then 'Under Demo'
+else a.FinalStatus end end end end end end as FinalStatus,
+cast(a.noItemsA as varchar) as nosItemsA,cast(a.NoSupplierA as varchar) as AItemsSupplier,
+convert(varchar,b.cover_a,105) as cover_a ,
+DATEDIFF(DAY,b.ENDDate,b.cover_a) as COVA_LastDays, cast(a.nositemsDA as varchar) nositemsDA ,cast(a.nossupplierDA as varchar) as ADAItemsSupplier
+,convert(varchar,B.ObjCEndDT,105) AS ObjClaimLastDate 
+,convert(varchar,B.ObjCStartDT,105) AS ObjCStartDT 
+
+,convert(varchar,B.cover_b,105) AS COVBDT
+,convert(varchar,B.cover_c,105) AS COVCDT
+ ,a.noofPriceFound,a.nosAccepted,a.nosRejected
+ ,case when b.cover_c is not null and b.CancelledDT is null then DATEDIFF(DAY,b.tender_date,b.cover_c)
+ else case when b.CancelledDT is not null then DATEDIFF(DAY,b.tender_date,b.CancelledDT)
+ else DATEDIFF(DAY,b.tender_date, getdate()) end end  as DaysTakenFromLiveDT
+ ,DATEDIFF(DAY,b.cover_a,b.ObjCStartDT) as COVAToObjStartDays,
+ DATEDIFF(DAY,b.ObjCStartDT,b.ObjCEndDT) as OBJDays
+ ,DATEDIFF(DAY,b.ObjCEndDT,b.cover_b) as ClaimEndToBDays
+ ,DATEDIFF(DAY,b.cover_b,b.cover_c) as CovBToCovCDays
+ ,b.csid
+ ,b.tender_id
+ , case when  getdate()>b.ENDDate then DATEDIFF(DAY,b.ENDDate,getdate()) else 0 end as daysClosed
+ ,case when (nosAccepted)>0  and nosRC=(nosAccepted) then 1 else 0 end  as Show
+ ,nosRC
+from tenders b
+inner join MasCoverStatus sc on sc.CSID=b.csid
+left outer join 
+ (
+select t.tender_id, isnull(nosItems,0) as NoSitems,
+               isnull(nositemsA,0) noItemsA,isnull(nossupplier,0) as NoSupplierA
+               
+               ,isnull(nositemsDA,0) nositemsDA,isnull(nossupplierDA,0) as nossupplierDA 
+			
+               , case when t.csid=1 then (case when getdate()-1>t.ENDDate then 'Cov-A Opening Pending Since '+cast(DATEDIFF(DAY,t.ENDDate,getdate()-1) as varchar)+' days' else 'Live' end)
+               else case when t.csid=2 and isnull(nositemsA,0)=0 then 'Cov-A Item Entry Pending Since '+cast(DATEDIFF(DAY,t.cover_a,GETDATE()) as varchar)+' days' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and scT.nosTEch>0 and isnull(scF.nosFIN,0)=0  then 'Cov-A Technical Evaluation Pending Since '+cast(DATEDIFF(DAY,t.cover_a,GETDATE()) as varchar)+' days' 
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)>0 and isnull(scF.nosFIN,0)>0  then 'Cov-A Technical and Finalcial Evaluation Pending Since '+cast(DATEDIFF(DAY,t.cover_a,GETDATE()) as varchar)+' days'  
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)=0 and isnull(scF.nosFIN,0)>0  then 'Cov-A Finalcial Evaluation Pending Since '+cast(DATEDIFF(DAY,t.cover_a,GETDATE()) as varchar)+' days'  
+               else case when t.csid=2 and isnull(nositemsA,0)>0 and isnull(scT.nosTEch,0)=0 and isnull(scF.nosFIN,0)=0 and isnull(nosPrep,0)>0   then 'Cov-A Final Summary Sheet Upload Pending' 
+               else case when t.csid=7 and getdate()<t.ObjCEndDT  then 'Cov-A Claim Objection Time Valid' 
+               else case when t.csid=7 and getdate()>t.ObjCEndDT  then 'Cov-A Claim Objection Closed Since '+cast(DATEDIFF(DAY,t.ObjCEndDT,GETDATE()) as varchar)+' days'
+               else case when t.csid=3 and t.cover_b is not null  then 'Cov-B Since '+cast(DATEDIFF(DAY,t.cover_b,GETDATE()) as varchar)+' days'
+               else case when t.csid=5 and t.cover_c is not null and isnull(pr.nosPriceOpened,0)=0  then 'Cov-C,Price Entry Pending since  '+cast(DATEDIFF(DAY,t.cover_c,GETDATE()) as varchar)+' days'           
+
+               else ''
+               end end end end end end end end end end   as FinalStatus,
+               isnull(pr.nosPriceOpened,0) noofPriceFound,
+			   isnull(acc.nosAccepted,0) as nosAccepted,
+		        isnull(rj.nosRejected,0) as nosRejected
+			  ,isnull(rc.nosRC,0) as nosRC,
+			   c.CStatus
+                from tenders t
+               left outer join MasCoverStatus c on c.CSID=t.csid
+               left outer join 
+               (
+               select ti.tender_id,count(distinct tender_item_id) as nosItems  from tender_items ti
+               group by ti.tender_id
+               ) ti on ti.tender_id=t.tender_id
+               left outer join 
+               (
+               select sc.SCHEMEID,count(distinct sc.SUPPLIERID) as nossupplier,count(distinct sch.ITEMID) nositemsA from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+               group by sc.SCHEMEID
+               ) sc on sc.SCHEMEID=t.tender_id
+               
+               left outer join 
+               (
+               select sc.SCHEMEID,count(distinct sch.ITEMID) nosTEch from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+               where 1=1 and sc.ISCovTechEli is null
+               group by sc.SCHEMEID
+               ) scT on scT.SCHEMEID=t.tender_id
+               
+               left outer join 
+               (
+               select sc.SCHEMEID,count(distinct sch.ITEMID) nosFIN from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+               where 1=1 and sc.IsCOVFinEli is null
+               group by sc.SCHEMEID
+               ) scF on scF.SCHEMEID=t.tender_id
+               
+               left outer join 
+               (
+               select sc.SCHEMEID,count(distinct sch.ITEMID) nosPrep from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+               where 1=1 and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null and t.ObjCEndDT is null
+               group by sc.SCHEMEID
+               ) scP on scP.SCHEMEID=t.tender_id
+               
+               left outer join 
+               (
+               select sc.SCHEMEID,count(distinct sc.SUPPLIERID) as nossupplierDA,count(distinct sch.ITEMID) nositemsDA from masschemesstatusdetails sc
+               inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+               inner join tenders t on t.tender_id=sc.SCHEMEID
+               where  sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y'
+               group by sc.SCHEMEID
+               ) scB on scB.SCHEMEID=t.tender_id
+
+			   left outer join 
+			   (
+			   select sch.SCHEMEID,count(distinct sch.ITEMID) nosPriceOpened  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y' and FLAGCOC='Y'
+				 group by sch.SCHEMEID
+			   ) pr on pr.SCHEMEID=t.tender_id   
+			   
+			      left outer join 
+			   (
+			   select sch.SCHEMEID,count(distinct sch.ITEMID) nosAccepted  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y' and FLAGCOC='Y'
+				 and tp.isaccept is not null and tp.fdate is not null  
+				
+				 group by sch.SCHEMEID
+			   ) acc on acc.SCHEMEID=t.tender_id  
+			       left outer join 
+			   (
+			    select sch.SCHEMEID,count(distinct sch.ITEMID) nosRejected  from SCHEMESTATUSDETAILSCHILD sch			    
+			   inner join masschemesstatusdetails sc on sc.SCHSTATUSDID=sch.SCHSTATUSDID
+			   inner join tenders t on t.tender_id=sc.SCHEMEID
+			   inner join tender_items ti on ti.tender_id=t.tender_id
+			   left outer join live_tender_price tp on tp.ChildID=sch.ChildID
+			    where t.csid=5 and sch.FLAGCOB='Y' and sc.ISELIGIBLE_B='Y' and FLAGCOC='Y'
+				 and tp.isaccept='N' and ti.rejectdate is not null
+				 group by sch.SCHEMEID
+				) rj on rj.SCHEMEID=t.tender_id  
+
+				   left outer join 
+			   (
+			   select count(distinct ci.item_id) nosRC,c.tender_id from contract_items ci 
+			   inner join award_of_contract c on c.award_of_contract_id=ci.award_of_contract_id
+			   group by c.tender_id
+			   ) rc on rc.tender_id=t.tender_id
+
+              where 1=1  
+			   ) a on a.tender_id=b.tender_id
+    
+ where 1=1   and b.tender_id=@TId ORDER BY sc.OrderID";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@TId", tenderId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                //resultList.Add(new AddTenderStatusDTO
+                                //{
+                                //    FinancialYearId = Convert.ToInt32(dr["financial_year_id"]),
+                                //    TenderNo = dr["tender_no"].ToString(),
+                                //    LiveDT = dr["LiveDT"].ToString(),
+                                //    TLast = dr["TLast"].ToString(),
+                                //    NoSitems = Convert.ToInt32(dr["NoSitems"]),
+                                //    FinalStatus = dr["FinalStatus"].ToString(),
+                                //    NosItemsA = dr["nosItemsA"].ToString(),
+                                //    AItemsSupplier = dr["AItemsSupplier"].ToString(),
+                                //    CoverA = dr["cover_a"].ToString(),
+                                //    COVA_LastDays = Convert.ToInt32(dr["COVA_LastDays"]),
+                                //    NositemsDA = dr["nositemsDA"].ToString(),
+                                //    ADAItemsSupplier = dr["ADAItemsSupplier"].ToString(),
+                                //    ObjClaimLastDate = dr["ObjClaimLastDate"].ToString(),
+                                //    ObjCStartDT = dr["ObjCStartDT"].ToString(),
+                                //    COVBDT = dr["COVBDT"].ToString(),
+                                //    COVCDT = dr["COVCDT"].ToString(),
+                                //    NoofPriceFound = Convert.ToInt32(dr["noofPriceFound"]),
+                                //    NosAccepted = Convert.ToInt32(dr["nosAccepted"]),
+                                //    NosRejected = Convert.ToInt32(dr["nosRejected"]),
+                                //    DaysTakenFromLiveDT = Convert.ToInt32(dr["DaysTakenFromLiveDT"]),
+                                //    COVAToObjStartDays = Convert.ToInt32(dr["COVAToObjStartDays"]),
+                                //    OBJDays = Convert.ToInt32(dr["OBJDays"]),
+                                //    ClaimEndToBDays = Convert.ToInt32(dr["ClaimEndToBDays"]),
+                                //    CovBToCovCDays = Convert.ToInt32(dr["CovBToCovCDays"]),
+                                //    Csid = Convert.ToInt32(dr["csid"]),
+                                //    TenderId = Convert.ToInt32(dr["tender_id"]),
+                                //    DaysClosed = Convert.ToInt32(dr["daysClosed"]),
+                                //    Show = Convert.ToInt32(dr["Show"]),
+                                //    NosRC = Convert.ToInt32(dr["nosRC"])
+                                //});
+                                resultList.Add(new AddTenderStatusDTO
+                                {
+                                    FinancialYearId = dr["financial_year_id"] == DBNull.Value ? 0 : Convert.ToInt32(dr["financial_year_id"]),
+                                    TenderNo = dr["tender_no"]?.ToString() ?? "",
+                                    LiveDT = dr["LiveDT"]?.ToString() ?? "",
+                                    TLast = dr["TLast"]?.ToString() ?? "",
+
+                                    // Numbers ke liye handle karein
+                                    NoSitems = dr["NoSitems"] == DBNull.Value ? 0 : Convert.ToInt32(dr["NoSitems"]),
+                                    FinalStatus = dr["FinalStatus"]?.ToString() ?? "N/A",
+
+                                    // Decimal/Amounts ke liye
+                                    NosAccepted = dr["nosAccepted"] == DBNull.Value ? 0 : Convert.ToInt32(dr["nosAccepted"]),
+                                    NosRejected = dr["nosRejected"] == DBNull.Value ? 0 : Convert.ToInt32(dr["nosRejected"]),
+                                    NoofPriceFound = dr["noofPriceFound"] == DBNull.Value ? 0 : Convert.ToInt32(dr["noofPriceFound"]),
+
+                                    // DATEDIFF wale fields
+                                    DaysTakenFromLiveDT = dr["DaysTakenFromLiveDT"] == DBNull.Value ? 0 : Convert.ToInt32(dr["DaysTakenFromLiveDT"]),
+
+                                    // Baki saare fields ke liye bhi yahi format use karein...
+                                    Csid = dr["csid"] == DBNull.Value ? 0 : Convert.ToInt32(dr["csid"]),
+                                    TenderId = dr["tender_id"] == DBNull.Value ? 0 : Convert.ToInt32(dr["tender_id"]),
+                                    NosRC = dr["nosRC"] == DBNull.Value ? 0 : Convert.ToInt32(dr["nosRC"])
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Query Execution Error", details = ex.Message });
+            }
+        }
+
+
+
+            [HttpGet("GetFacilityList")]
+            public async Task<IActionResult> GetFacilityList()
+            {
+                var facilities = new List<FacilityAuthDTOnew>();
+
+                try
+                {
+                    using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                    {
+                        // Aapki Query: null check aur ordering ke sath
+                        string sql = @"SELECT facility_aut_id, facility_aut_name, facility_aut_code 
+                               FROM facility_aut 
+                               WHERE ordercase IS NOT NULL 
+                               ORDER BY ordercase";
+
+                        using (SqlCommand cmd = new SqlCommand(sql, conn))
+                        {
+                            await conn.OpenAsync();
+                            using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                            {
+                                while (await dr.ReadAsync())
+                                {
+                                    facilities.Add(new FacilityAuthDTOnew
+                                    {
+                                        FacilityAutId = Convert.ToInt32(dr["facility_aut_id"]),
+                                        FacilityAutName = dr["facility_aut_name"]?.ToString() ?? "",
+                                        FacilityAutCode = dr["facility_aut_code"]?.ToString() ?? ""
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    return Ok(facilities);
+                }
+                catch (Exception ex)
+                {
+                    return StatusCode(500, new { message = "Error fetching facilities", details = ex.Message });
+                }
+            }
 
 
 
