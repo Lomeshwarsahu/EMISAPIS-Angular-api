@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver.Core.Configuration;
 using System.Data;
 using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using System.Net.NetworkInformation;
 using System.Text.Json.Serialization;
 using static System.Runtime.InteropServices.JavaScript.JSType;
@@ -728,6 +729,60 @@ inner join masitemP p on p.PID=m.pid
         }
 
 
+        [HttpGet("GetTenderList1/{mode}")]
+        public async Task<IActionResult> GetTenderList1(int mode)
+        {
+            var list = new List<tenderlistDTO>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            string sql = "";
+            if (mode == 1)
+            {
+                sql = @"SELECT tender_id, tender_no + ' ,OpenDT-' + CONVERT(VARCHAR, cover_a, 103) AS name 
+                FROM tenders 
+                WHERE csid = 2 AND financial_year_id >= 15 AND cover_a IS NOT NULL 
+                ORDER BY cover_a DESC";
+            }
+            else if (mode == 2)
+            {
+                sql = @"SELECT tender_id, tender_no 
+                FROM tenders 
+                WHERE FINANCIAL_YEAR_ID = 14 
+                ORDER BY tender_no";
+            }
+            else
+            {
+                return BadRequest(new { message = "Invalid Mode" });
+            }
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        await conn.OpenAsync();
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                list.Add(new tenderlistDTO
+                                {
+                                    Tenderid = Convert.ToInt32(dr["tender_id"]),
+                                    // Mode 1 mein 'name' alias hai, Mode 2 mein 'tender_no'
+                                    Tenderno = mode == 1 ? dr["name"].ToString() : dr["tender_no"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching tenders", details = ex.Message });
+            }
+        }
 
 
 
@@ -2732,12 +2787,46 @@ where 1=1 and t.tender_id = @Tid";
             }
         }
 
-        [HttpGet("GetSupplierParticipationDetails/{tenderId}")]
-        public async Task<IActionResult> GetSupplierParticipationDetails(int tenderId)
+        [HttpGet("GetSupplierParticipationDetails/{tenderId}/{flag}")]
+        public async Task<IActionResult> GetSupplierParticipationDetails(int tenderId, int flag)
         {
             List<TenderSupplierParticipationDto> list = new List<TenderSupplierParticipationDto>();
+            string query = "";
 
-            string query = @"
+            if (flag == 1)
+            {
+                query = @"
+        SELECT 0 slno, ms.SCHSTATUSDID, t.tender_id, mas.name, ms.EMD, isnull(em.ReqEMDAMt,0) as ReqEMDAMt, 
+               isnull(em.submittedEMDAMT,0) as submittedEMDAMT, ms.TPAMOUNT, ms.EMDDOCTYPE, ms.EMDPATH, 
+               ms.EMDFILENAME, ms.TPFILENAME, ms.TPPATH, ms.EMDDOCNO, mas.supplier_id, ms.REMARK, 
+               isnull(piitem.cntparticipated,0) pitems, ms.ISELIGIBLE_B, ms.ISCovTechEli, ms.IsCOVFinEli, 
+               ms.CovATechRemarksBefore_OBClM, ms.CovAFINRemarksBefore_OBClM, dt.dtypename, t.csid
+        FROM tenders t
+        INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
+        INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
+        INNER JOIN MASDOCUMENTTYPE dt ON dt.dtypeid = ms.EMDDOCTYPE
+        LEFT OUTER JOIN (
+            SELECT count(ch.ITEMID) cntparticipated, sc.SCHEMEID, sc.SUPPLIERID 
+            FROM SCHEMESTATUSDETAILSCHILD ch
+            INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+            GROUP BY sc.SCHEMEID, sc.SUPPLIERID
+        ) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
+        LEFT OUTER JOIN (
+            SELECT SUPPLIERID, sum(emd_amount) ReqEMDAMt, emd as submittedEMDAMT, SCHEMEID
+            FROM (
+                SELECT ch.ITEMID, sc.SUPPLIERID, sc.EMD, ti.emd_amount, sc.SCHEMEID 
+                FROM SCHEMESTATUSDETAILSCHILD ch
+                INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+                INNER JOIN tender_items ti ON ti.item_id = ch.ITEMID AND ti.tender_id = sc.SCHEMEID
+                WHERE sc.SCHEMEID = @Tid
+            ) b GROUP BY SUPPLIERID, EMD, SCHEMEID
+        ) em ON em.SCHEMEID = t.tender_id AND em.SUPPLIERID = ms.SUPPLIERID
+        WHERE t.tender_id = @Tid
+        ORDER BY mas.name";
+            }
+            else
+            {
+                query = @"
         SELECT 0 as slno, ms.SCHSTATUSDID, t.tender_id, mas.name, ms.EMD, ms.TPAMOUNT, 
                ms.EMDDOCTYPE, ms.EMDPATH, ms.EMDFILENAME, ms.TPFILENAME, ms.TPPATH, 
                ms.EMDDOCNO, mas.supplier_id, ms.REMARK, isnull(piitem.cntparticipated, 0) as pitems, 
@@ -2753,6 +2842,7 @@ where 1=1 and t.tender_id = @Tid";
         ) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
         WHERE t.tender_id = @Tid
         ORDER BY mas.name";
+            }
 
             try
             {
@@ -2767,25 +2857,40 @@ where 1=1 and t.tender_id = @Tid";
                         int counter = 1;
                         while (await reader.ReadAsync())
                         {
-                            list.Add(new TenderSupplierParticipationDto
+                            var item = new TenderSupplierParticipationDto
                             {
-                                SlNo = counter++, // Row index for frontend
-                                SchStatusDid = reader["SCHSTATUSDID"] != DBNull.Value ? Convert.ToInt32(reader["SCHSTATUSDID"]) : 0,
-                                TenderId = reader["tender_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_id"]) : 0,
-                                SupplierName = reader["name"]?.ToString() ?? string.Empty,
-                                Emd = reader["EMD"] != DBNull.Value ? Convert.ToDecimal(reader["EMD"]) : 0m,
-                                TpAmount = reader["TPAMOUNT"] != DBNull.Value ? Convert.ToDecimal(reader["TPAMOUNT"]) : 0m,
-                                EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? string.Empty,
-                                EmdPath = reader["EMDPATH"]?.ToString() ?? string.Empty,
-                                EmdFileName = reader["EMDFILENAME"]?.ToString() ?? string.Empty,
-                                TpFileName = reader["TPFILENAME"]?.ToString() ?? string.Empty,
-                                TpPath = reader["TPPATH"]?.ToString() ?? string.Empty,
-                                EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? string.Empty,
-                                SupplierId = reader["supplier_id"] != DBNull.Value ? Convert.ToInt32(reader["supplier_id"]) : 0,
-                                Remark = reader["REMARK"]?.ToString() ?? string.Empty,
-                                PItems = reader["pitems"] != DBNull.Value ? Convert.ToInt32(reader["pitems"]) : 0,
-                                IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? string.Empty
-                            });
+                                SlNo = counter++,
+                                SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]),
+                                TenderId = Convert.ToInt32(reader["tender_id"]),
+                                SupplierName = reader["name"]?.ToString() ?? "",
+                                Emd = Convert.ToDecimal(reader["EMD"]),
+                                TpAmount = Convert.ToDecimal(reader["TPAMOUNT"]),
+                                EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? "",
+                                EmdPath = reader["EMDPATH"]?.ToString() ?? "",
+                                EmdFileName = reader["EMDFILENAME"]?.ToString() ?? "",
+                                TpFileName = reader["TPFILENAME"]?.ToString() ?? "",
+                                TpPath = reader["TPPATH"]?.ToString() ?? "",
+                                EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? "",
+                                SupplierId = Convert.ToInt32(reader["supplier_id"]),
+                                Remark = reader["REMARK"]?.ToString() ?? "",
+                                PItems = Convert.ToInt32(reader["pitems"]),
+                                IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? ""
+                            };
+
+                            // Flag 1 ke extra fields handle karein
+                            if (flag == 1)
+                            {
+                                item.ReqEMDAMt = Convert.ToDecimal(reader["ReqEMDAMt"]);
+                                item.SubmittedEMDAMT = Convert.ToDecimal(reader["submittedEMDAMT"]);
+                                item.DTypeName = reader["dtypename"]?.ToString() ?? "";
+                                item.IsCovTechEli = reader["ISCovTechEli"]?.ToString() ?? "";
+                                item.IsCOVFinEli = reader["IsCOVFinEli"]?.ToString() ?? "";
+                                item.CovATechRemarksBefore_OBClM = reader["CovATechRemarksBefore_OBClM"]?.ToString() ?? "";
+                                item.CovAFINRemarksBefore_OBClM = reader["CovAFINRemarksBefore_OBClM"]?.ToString() ?? "";
+                                item.Csid = Convert.ToInt32(reader["csid"]);
+                            }
+
+                            list.Add(item);
                         }
                     }
                 }
@@ -2796,6 +2901,70 @@ where 1=1 and t.tender_id = @Tid";
                 return StatusCode(500, new { message = "Error fetching supplier data", error = ex.Message });
             }
         }
+        //[HttpGet("GetSupplierParticipationDetails/{tenderId}")]
+        //public async Task<IActionResult> GetSupplierParticipationDetails(int tenderId)
+        //{
+        //    List<TenderSupplierParticipationDto> list = new List<TenderSupplierParticipationDto>();
+
+        //    string query = @"
+        //SELECT 0 as slno, ms.SCHSTATUSDID, t.tender_id, mas.name, ms.EMD, ms.TPAMOUNT, 
+        //       ms.EMDDOCTYPE, ms.EMDPATH, ms.EMDFILENAME, ms.TPFILENAME, ms.TPPATH, 
+        //       ms.EMDDOCNO, mas.supplier_id, ms.REMARK, isnull(piitem.cntparticipated, 0) as pitems, 
+        //       ms.ISELIGIBLE_B 
+        //FROM tenders t
+        //INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
+        //INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
+        //LEFT OUTER JOIN (
+        //    SELECT count(ch.ITEMID) as cntparticipated, sc.SCHEMEID, sc.SUPPLIERID 
+        //    FROM SCHEMESTATUSDETAILSCHILD ch
+        //    INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+        //    GROUP BY sc.SCHEMEID, sc.SUPPLIERID
+        //) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
+        //WHERE t.tender_id = @Tid
+        //ORDER BY mas.name";
+
+        //    try
+        //    {
+        //        using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+        //        {
+        //            SqlCommand cmd = new SqlCommand(query, conn);
+        //            cmd.Parameters.AddWithValue("@Tid", tenderId);
+        //            await conn.OpenAsync();
+
+        //            using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+        //            {
+        //                int counter = 1;
+        //                while (await reader.ReadAsync())
+        //                {
+        //                    list.Add(new TenderSupplierParticipationDto
+        //                    {
+        //                        SlNo = counter++, // Row index for frontend
+        //                        SchStatusDid = reader["SCHSTATUSDID"] != DBNull.Value ? Convert.ToInt32(reader["SCHSTATUSDID"]) : 0,
+        //                        TenderId = reader["tender_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_id"]) : 0,
+        //                        SupplierName = reader["name"]?.ToString() ?? string.Empty,
+        //                        Emd = reader["EMD"] != DBNull.Value ? Convert.ToDecimal(reader["EMD"]) : 0m,
+        //                        TpAmount = reader["TPAMOUNT"] != DBNull.Value ? Convert.ToDecimal(reader["TPAMOUNT"]) : 0m,
+        //                        EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? string.Empty,
+        //                        EmdPath = reader["EMDPATH"]?.ToString() ?? string.Empty,
+        //                        EmdFileName = reader["EMDFILENAME"]?.ToString() ?? string.Empty,
+        //                        TpFileName = reader["TPFILENAME"]?.ToString() ?? string.Empty,
+        //                        TpPath = reader["TPPATH"]?.ToString() ?? string.Empty,
+        //                        EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? string.Empty,
+        //                        SupplierId = reader["supplier_id"] != DBNull.Value ? Convert.ToInt32(reader["supplier_id"]) : 0,
+        //                        Remark = reader["REMARK"]?.ToString() ?? string.Empty,
+        //                        PItems = reader["pitems"] != DBNull.Value ? Convert.ToInt32(reader["pitems"]) : 0,
+        //                        IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? string.Empty
+        //                    });
+        //                }
+        //            }
+        //        }
+        //        return Ok(list);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, new { message = "Error fetching supplier data", error = ex.Message });
+        //    }
+        //}
 
         [HttpPost("SaveSupplierParticipation")]
         public async Task<IActionResult> SaveSupplierParticipation([FromBody] SupplierParticipationDto dto)
@@ -3544,6 +3713,405 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
                     return StatusCode(500, new { message = "Error fetching facilities", details = ex.Message });
                 }
             }
+
+        [HttpGet("GetHodConversations/{tenderId}")]
+        public async Task<IActionResult> GetHodConversations(int tenderId)
+        {
+            var conversations = new List<HodConversationDTO>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    string sql = @"SELECT t.tender_id AS SCHEMEID, s.tender_no AS SCHEMENAME, 
+                                  ft.facility_aut_code AS FACILITYTYPECODE, t.letterno, 
+                                  CONVERT(VARCHAR, t.letterdate, 103) AS letterdate,
+                                  t.remarks, CONVERT(VARCHAR, t.senddate, 103) AS senddate, 
+                                  t.entrydate, t.filename, t.filepath, t.convid 
+                           FROM TBHODCONVERSATION t
+                           INNER JOIN tenders s ON s.tender_id = t.tender_id
+                           INNER JOIN facility_aut ft ON ft.facility_aut_id = t.hodid
+                           WHERE s.tender_id = @TId 
+                           ORDER BY t.convid DESC";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@TId", tenderId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                conversations.Add(new HodConversationDTO
+                                {
+                                    SCHEMEID = Convert.ToInt32(dr["SCHEMEID"]),
+                                    SCHEMENAME = dr["SCHEMENAME"]?.ToString(),
+                                    FACILITYTYPECODE = dr["FACILITYTYPECODE"]?.ToString(),
+                                    LetterNo = dr["letterno"]?.ToString(),
+                                    LetterDate = dr["letterdate"]?.ToString(),
+                                    Remarks = dr["remarks"]?.ToString(),
+                                    SendDate = dr["senddate"]?.ToString(),
+                                    EntryDate = dr["entrydate"] == DBNull.Value ? null : Convert.ToDateTime(dr["entrydate"]),
+                                    FileName = dr["filename"]?.ToString(),
+                                    FilePath = dr["filepath"]?.ToString(),
+                                    Convid = Convert.ToInt32(dr["convid"])
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(conversations);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching conversation data", details = ex.Message });
+            }
+        }
+
+
+
+        [HttpPost("SaveHodConversation")]
+        public async Task<IActionResult> SaveHodConversation([FromForm] HodConversationSaveRequest request)
+        {
+            // 1. File Validations
+            if (request.File == null || request.File.Length == 0)
+                return BadRequest(new { message = "Please select a file to be uploaded." });
+
+            string extension = Path.GetExtension(request.File.FileName).ToLower();
+            if (extension != ".pdf")
+                return BadRequest(new { message = "Please upload PDF file only." });
+
+            if (request.File.Length > 2000000) // 2MB Check
+                return BadRequest(new { message = "You can't upload file more than 2MB." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    using (SqlTransaction trans = conn.BeginTransaction())
+                    {
+                        try
+                        {
+                            // 2. Insert Data
+                            // Note: Scope_Identity() ya Output Inserted use karna zyada safe hai MAX() se
+                            string insertSql = @"INSERT INTO TBHODCONVERSATION (tender_id, HODID, sendDate, letterno, letterdate, remarks, entryby, entrydate) 
+                                         VALUES (@Tid, @Hid, @SDate, @LNo, @LDate, @Rem, '01', GETDATE());
+                                         SELECT SCOPE_IDENTITY();";
+
+                            int newConvId;
+                            using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
+                            {
+                                cmd.Parameters.AddWithValue("@Tid", request.TenderId);
+                                cmd.Parameters.AddWithValue("@Hid", request.HodId);
+                                cmd.Parameters.AddWithValue("@SDate", DateTime.Parse(request.SendDate));
+                                cmd.Parameters.AddWithValue("@LNo", request.LetterNo);
+                                cmd.Parameters.AddWithValue("@LDate", DateTime.Parse(request.LetterDate));
+                                cmd.Parameters.AddWithValue("@Rem", request.Remarks);
+
+                                // ExecuteScalar se direct nayi ID mil jayegi
+                                newConvId = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+                            }
+
+                            // 3. File Saving Logic
+                            string fileName = $"Conv{request.TenderId}_{newConvId}.pdf";
+                            string folderPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot/Tender/UploadConv");
+
+                            if (!Directory.Exists(folderPath))
+                                Directory.CreateDirectory(folderPath);
+
+                            string filePath = Path.Combine(folderPath, fileName);
+                            string dbFilePath = "~/Tender/UploadConv/" + fileName;
+
+                            using (var stream = new FileStream(filePath, FileMode.Create))
+                            {
+                                await request.File.CopyToAsync(stream);
+                            }
+
+                            // 4. Update Filename and Path in DB
+                            string updateSql = "UPDATE TBHODCONVERSATION SET filename = @Fname, filepath = @FPath WHERE convID = @Cid";
+                            using (SqlCommand updateCmd = new SqlCommand(updateSql, conn, trans))
+                            {
+                                updateCmd.Parameters.AddWithValue("@Fname", fileName);
+                                updateCmd.Parameters.AddWithValue("@FPath", dbFilePath);
+                                updateCmd.Parameters.AddWithValue("@Cid", newConvId);
+                                await updateCmd.ExecuteNonQueryAsync();
+                            }
+
+                            trans.Commit();
+                            return Ok(new { message = "Save Successfully.", convId = newConvId });
+                        }
+                        catch (Exception ex)
+                        {
+                            trans.Rollback();
+                            return StatusCode(500, new { message = "Transaction Error", details = ex.Message });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Database Connection Error", details = ex.Message });
+            }
+        }
+
+
+        [HttpPost("SaveHodReply")]
+        public async Task<IActionResult> SaveHodReply([FromForm] HodReplyRequest request)
+        {
+            // 1. File Validation
+            if (request.File == null || request.File.Length == 0)
+                return BadRequest(new { message = "Please select a file to be uploaded." });
+
+            string extension = Path.GetExtension(request.File.FileName).ToLower();
+            if (extension != ".pdf")
+                return BadRequest(new { message = "Please upload PDF file only." });
+
+            if (request.File.Length > 2000000) // 2MB check
+                return BadRequest(new { message = "You can't upload file more than 2MB." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+                    using (SqlTransaction trans = conn.BeginTransaction())
+                    {
+                        try
+                        {
+                            DateTime parsedRecvDate = DateTime.ParseExact(request.RecvDate, "yyyy-dd-MM", CultureInfo.InvariantCulture);
+                            DateTime parsedLetterDate = DateTime.ParseExact(request.LetterDt, "yyyy-dd-MM", CultureInfo.InvariantCulture);
+
+                          
+                            // 2. INSERT Logic (TBHODCONVERSATIONREPLY)
+                            string insertSql = @"INSERT INTO TBHODCONVERSATIONREPLY (CONVID, RecvDate, LetterNo, LetterDT, Remarks, entryby, entrydate) 
+                                         VALUES (@Cid, @RDate, @LNo, @LDt, @Rem, '01', GETDATE())";
+
+                            using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
+                            {
+                                cmd.Parameters.AddWithValue("@Cid", request.Convid);
+                                cmd.Parameters.AddWithValue("@RDate", parsedRecvDate);
+                                cmd.Parameters.AddWithValue("@LDt", parsedLetterDate);
+                                //cmd.Parameters.AddWithValue("@RDate", DateTime.Parse(request.RecvDate));
+                                //cmd.Parameters.AddWithValue("@LDt", DateTime.Parse(request.LetterDt));
+                                cmd.Parameters.AddWithValue("@LNo", request.LetterNo);
+                                cmd.Parameters.AddWithValue("@Rem", request.Remarks);
+                                await cmd.ExecuteNonQueryAsync();
+                            }
+                            //cmd.Parameters.AddWithValue("@SDate", DateTime.Parse(request.SendDate));
+                            //cmd.Parameters.AddWithValue("@LNo", request.LetterNo);
+                            //cmd.Parameters.AddWithValue("@LDate", DateTime.Parse(request.LetterDate));
+                            // 3. GetCONVReplyID Logic (Aapki query ke mutabiq)
+                            string maxIdSql = "SELECT ISNULL(MAX(CONRID), 0) FROM TBHODCONVERSATIONREPLY WHERE CONVID = @Cid";
+                            int conRid;
+                            using (SqlCommand cmdMax = new SqlCommand(maxIdSql, conn, trans))
+                            {
+                                cmdMax.Parameters.AddWithValue("@Cid", request.Convid);
+                                conRid = Convert.ToInt32(await cmdMax.ExecuteScalarAsync());
+                            }
+
+                            // 4. File Saving Logic
+                            string fileName = $"ConReply{request.Convid}_{conRid}.pdf";
+                            string folderPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot/Tender/UploadConv");
+
+                            if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
+
+                            string filePath = Path.Combine(folderPath, fileName);
+                            string dbSavePath = "~/Tender/UploadConv/" + fileName;
+
+                            using (var stream = new FileStream(filePath, FileMode.Create))
+                            {
+                                await request.File.CopyToAsync(stream);
+                            }
+
+                            // 5. Update FileName and FilePath in DB
+                            string updateSql = "UPDATE TBHODCONVERSATIONREPLY SET fileName = @Fname, FilePath = @FPath WHERE CONRID = @CRid";
+                            using (SqlCommand cmdUpd = new SqlCommand(updateSql, conn, trans))
+                            {
+                                cmdUpd.Parameters.AddWithValue("@Fname", fileName);
+                                cmdUpd.Parameters.AddWithValue("@FPath", dbSavePath);
+                                cmdUpd.Parameters.AddWithValue("@CRid", conRid);
+                                await cmdUpd.ExecuteNonQueryAsync();
+                            }
+
+                            trans.Commit();
+                            return Ok(new { message = "Save Successfully.", conRid = conRid });
+                        }
+                        catch (Exception ex)
+                        {
+                            trans.Rollback();
+                            return StatusCode(500, new { message = "Error during saving", details = ex.Message });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Database error", details = ex.Message });
+            }
+        }
+
+        [HttpGet("GetHodReplyList/{convId}")]
+        public async Task<IActionResult> GetHodReplyList(int convId)
+        {
+            var replies = new List<HodReplyDTO>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    // Aapki exact query with parameters
+                    string sql = @"SELECT CONRID, CONVID, CONVERT(VARCHAR, RecvDate, 103) AS RecvDate, 
+                                  LetterNo, CONVERT(VARCHAR, LetterDT, 103) AS LetterDT, 
+                                  Remarks, FileName, FilePath, entryby, entrydate 
+                           FROM TBHODCONVERSATIONREPLY 
+                           WHERE CONVID = @CId 
+                           ORDER BY entrydate DESC";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@CId", convId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                replies.Add(new HodReplyDTO
+                                {
+                                    CONRID = Convert.ToInt32(dr["CONRID"]),
+                                    CONVID = Convert.ToInt32(dr["CONVID"]),
+                                    RecvDate = dr["RecvDate"]?.ToString(),
+                                    LetterNo = dr["LetterNo"]?.ToString(),
+                                    LetterDT = dr["LetterDT"]?.ToString(),
+                                    Remarks = dr["Remarks"]?.ToString(),
+                                    FileName = dr["FileName"]?.ToString(),
+                                    FilePath = dr["FilePath"]?.ToString(),
+                                    EntryBy = dr["entryby"]?.ToString(),
+                                    EntryDate = dr["entrydate"] == DBNull.Value ? null : Convert.ToDateTime(dr["entrydate"])
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(replies);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching replies", details = ex.Message });
+            }
+        }
+
+
+        [HttpGet("GetEligiblity")]
+        public async Task<IActionResult> GetEligiblity()
+        {
+            List<EligiblityDTO> list = new List<EligiblityDTO>();
+
+            string query = @"select ID,Eligiblity from masEligiblity order by ID";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    SqlCommand cmd = new SqlCommand(query, conn);
+                    await conn.OpenAsync();
+
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            EligiblityDTO data = new EligiblityDTO
+                            {
+                                id = reader["ID"] == DBNull.Value ? string.Empty : reader["ID"].ToString(),
+
+                                Eligiblity = reader["Eligiblity"] == DBNull.Value ? null : reader["Eligiblity"].ToString()
+                            };
+
+                            list.Add(data);
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        [HttpPost("UpdateEligibility")]
+        public async Task<IActionResult> UpdateEligibility([FromBody] EligibilityUpdateRequest request)
+        {
+            // 1. Validations (Same as WebForms logic)
+            if (request.Eligibility == "0" || string.IsNullOrEmpty(request.Eligibility))
+                return BadRequest(new { message = "Please select a valid eligibility status." });
+
+            if (request.Eligibility == "N" && string.IsNullOrEmpty(request.Remarks))
+                return BadRequest(new { message = "Please Enter Rejection Remark for Not Eligible." });
+
+            if (request.Eligibility == "C" && string.IsNullOrEmpty(request.Remarks))
+                return BadRequest(new { message = "Please Enter Clarification Remarks." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    // 2. Role based Dynamic Column Logic
+                    string techFinEval = "";
+                    if (request.RoleId == "22" || request.RoleId == "12")
+                    {
+                        techFinEval = @"ISCovTechEli = @Eli, 
+                                CovATechRemarksBefore_OBClM = @Remarks, 
+                                TechCOVAEntryDT = GETDATE(), 
+                                TechUserid = @UId";
+                    }
+                    else
+                    {
+                        techFinEval = @"IsCOVFinEli = @Eli, 
+                                CovAFINRemarksBefore_OBClM = @Remarks, 
+                                FINCOVAEntryDT = GETDATE(), 
+                                FinUserid = @UId";
+                    }
+
+                    string updateSql = $@"UPDATE masschemesstatusdetails 
+                                 SET {techFinEval} 
+                                 WHERE SCHSTATUSDID = @StatusId AND schemeid = @SId";
+
+                    using (SqlCommand cmd = new SqlCommand(updateSql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Eli", request.Eligibility);
+                        cmd.Parameters.AddWithValue("@Remarks", request.Remarks ?? (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@UId", request.UserId);
+                        cmd.Parameters.AddWithValue("@StatusId", request.SchStatusDid);
+                        cmd.Parameters.AddWithValue("@SId", request.SchemeId);
+
+                        await conn.OpenAsync();
+                        int rowsAffected = await cmd.ExecuteNonQueryAsync();
+
+                        if (rowsAffected > 0)
+                            return Ok(new { message = "Updated Successfully" });
+                        else
+                            return NotFound(new { message = "Record not found to update." });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error during update", details = ex.Message });
+            }
+        }
+
 
 
 

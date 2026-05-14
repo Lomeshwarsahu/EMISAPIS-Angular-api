@@ -48,5 +48,47 @@ namespace EMISAPIS.Controllers
 
             return File(fileBytes, "application/octet-stream");
         }
+
+        [HttpGet("GetPdf/{convId}")]
+        public IActionResult GetPdf(int convId)
+        {
+            
+            string folderPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "Tender", "UploadConv");
+
+           
+            string fileName = $"Conv680_{convId}.pdf"; 
+            string fullPath = Path.Combine(folderPath, fileName);
+
+            if (!System.IO.File.Exists(fullPath))
+            {
+                return NotFound("File Not Found " + fullPath);
+            }
+
+            var fileBytes = System.IO.File.ReadAllBytes(fullPath);
+            return File(fileBytes, "application/pdf", fileName);
+        }
+
+        [HttpGet("ViewPdf/{convId}")]
+        public IActionResult ViewPdf(int convId)
+        {
+            string folderPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "Tender", "UploadConv");
+
+            string fileName = $"Conv680_{convId}.pdf";
+            string fullPath = Path.Combine(folderPath, fileName);
+
+            if (!System.IO.File.Exists(fullPath))
+            {
+                return NotFound("File Not Found.");
+            }
+
+            var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
+
+       
+            return File(fileStream, "application/pdf");
+        }
+
+
+
+
     }
 }

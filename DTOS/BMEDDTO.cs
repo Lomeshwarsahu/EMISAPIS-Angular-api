@@ -210,8 +210,13 @@ namespace EMISAPIS.DTOS
     public class tenderlistDTO
     {
         public int Tenderid { get; set; }
-        public string Tenderno { get; set; }
+        public string Tenderno { get; set; } // Query 1 ka full name bhi isi mein store hoga
     }
+    //public class tenderlistDTO
+    //{
+    //    public int Tenderid { get; set; }
+    //    public string Tenderno { get; set; }
+    //}
     public class TenderSupplierrDTO
     {
         public int sId { get; set; }
@@ -417,11 +422,24 @@ namespace EMISAPIS.DTOS
         public string eprocID { get; set; }
         public string ENDDate { get; set; }
     }
-
+    public class EligiblityDTO
+    {
+        public string id { get; set; } 
+        public string Eligiblity { get; set; }
+    }
     public class CoverStatusDTO
     {
         public int csid { get; set; }
         public string cstatus { get; set; }
+    }
+    public class EligibilityUpdateRequest
+    {
+        public int SchStatusDid { get; set; }
+        public int SchemeId { get; set; }
+        public string Eligibility { get; set; } // 'Y', 'N', 'C'
+        public string Remarks { get; set; }
+        public string RoleId { get; set; } // Current User Role
+        public int UserId { get; set; } // Current User ID
     }
 
     public class UpdateTenderNoDto
@@ -549,7 +567,6 @@ namespace EMISAPIS.DTOS
         public int dtypeid { get; set; }
         public string dtypename { get; set; }
     }
-
     public class TenderSupplierParticipationDto
     {
         public int SlNo { get; set; }
@@ -557,8 +574,11 @@ namespace EMISAPIS.DTOS
         public int TenderId { get; set; }
         public string SupplierName { get; set; }
         public decimal Emd { get; set; }
+        public decimal ReqEMDAMt { get; set; } // Query 1 specific
+        public decimal SubmittedEMDAMT { get; set; } // Query 1 specific
         public decimal TpAmount { get; set; }
         public string EmdDocType { get; set; }
+        public string DTypeName { get; set; } // Query 1 specific
         public string EmdPath { get; set; }
         public string EmdFileName { get; set; }
         public string TpFileName { get; set; }
@@ -566,9 +586,33 @@ namespace EMISAPIS.DTOS
         public string EmdDocNo { get; set; }
         public int SupplierId { get; set; }
         public string Remark { get; set; }
-        public int PItems { get; set; } // isnull(piitem.cntparticipated,0)
+        public int PItems { get; set; }
         public string IsEligibleB { get; set; }
+        public string IsCovTechEli { get; set; } // Query 1 specific
+        public string IsCOVFinEli { get; set; } // Query 1 specific
+        public string CovATechRemarksBefore_OBClM { get; set; } // Query 1 specific
+        public string CovAFINRemarksBefore_OBClM { get; set; } // Query 1 specific
+        public int Csid { get; set; } // Query 1 specific
     }
+    //public class TenderSupplierParticipationDto
+    //{
+    //    public int SlNo { get; set; }
+    //    public int SchStatusDid { get; set; }
+    //    public int TenderId { get; set; }
+    //    public string SupplierName { get; set; }
+    //    public decimal Emd { get; set; }
+    //    public decimal TpAmount { get; set; }
+    //    public string EmdDocType { get; set; }
+    //    public string EmdPath { get; set; }
+    //    public string EmdFileName { get; set; }
+    //    public string TpFileName { get; set; }
+    //    public string TpPath { get; set; }
+    //    public string EmdDocNo { get; set; }
+    //    public int SupplierId { get; set; }
+    //    public string Remark { get; set; }
+    //    public int PItems { get; set; } // isnull(piitem.cntparticipated,0)
+    //    public string IsEligibleB { get; set; }
+    //}
 
     public class SupplierParticipationDto
     {
@@ -690,6 +734,55 @@ namespace EMISAPIS.DTOS
         public int FacilityAutId { get; set; }
         public string FacilityAutName { get; set; }
         public string FacilityAutCode { get; set; }
+    }
+
+    public class HodConversationDTO
+    {
+        public int SCHEMEID { get; set; }
+        public string SCHEMENAME { get; set; }
+        public string FACILITYTYPECODE { get; set; }
+        public string LetterNo { get; set; }
+        public string LetterDate { get; set; }
+        public string Remarks { get; set; }
+        public string SendDate { get; set; }
+        public DateTime? EntryDate { get; set; }
+        public string FileName { get; set; }
+        public string FilePath { get; set; }
+        public int Convid { get; set; }
+    }
+
+    public class HodConversationSaveRequest
+    {
+        public int TenderId { get; set; }
+        public int HodId { get; set; }
+        public string SendDate { get; set; }
+        public string LetterNo { get; set; }
+        public string LetterDate { get; set; }
+        public string Remarks { get; set; }
+        public IFormFile File { get; set; } 
+    }
+
+    public class HodReplyRequest
+    {
+        public int Convid { get; set; }      
+        public string RecvDate { get; set; } 
+        public string LetterNo { get; set; } 
+        public string LetterDt { get; set; } 
+        public string Remarks { get; set; }   
+        public IFormFile File { get; set; }   
+    }
+    public class HodReplyDTO
+    {
+        public int CONRID { get; set; }
+        public int CONVID { get; set; }
+        public string RecvDate { get; set; }
+        public string LetterNo { get; set; }
+        public string LetterDT { get; set; }
+        public string Remarks { get; set; }
+        public string FileName { get; set; }
+        public string FilePath { get; set; }
+        public string EntryBy { get; set; }
+        public DateTime? EntryDate { get; set; }
     }
 
 }
