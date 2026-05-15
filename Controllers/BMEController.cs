@@ -727,11 +727,81 @@ inner join masitemP p on p.PID=m.pid
                 return StatusCode(500, new { message = "Error fetching unmapped items", error = ex.Message });
             }
         }
+        //jkui
+//        public DataTable Get_TendersStatus(string stid, string undOBClaim)
+//        {
+//            string whUnderObjectClaim = "";
+//            string strcsid = "";
+//            if (undOBClaim == "Under Prep")
+//            {
+//                strcsid = " and csid in (2)";
+//                whUnderObjectClaim = " and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null ";
+//                // whUnderObjectClaim = " and csid=7"; 
+//            }
+//            if (undOBClaim == "Under Obj")
+//            {
+//                strcsid = " and csid in (2,7)";
+//                whUnderObjectClaim = " and getdate()> ObjCEndDT ";
+//                // whUnderObjectClaim = " and csid=7"; 
+//            }
+//            else if (undOBClaim == "COVERB")
+//            {
+//                strcsid = " and csid in (3,4)";
+//                whUnderObjectClaim = " ";
+//                // whUnderObjectClaim = " and csid=7"; 
+//            }
+//            else if (undOBClaim == "COVERC")
+//            {
+//                strcsid = " and csid in (3,4,5)";
+//                whUnderObjectClaim = " ";
+//                // whUnderObjectClaim = " and csid=7"; 
+//            }
 
+//            else if (undOBClaim == "GEM")
+//            {
+
+//                strcsid = " and csid in (2) and isgemTender = 'Y'";
+
+//                whUnderObjectClaim = " ";
+//                // whUnderObjectClaim = " and csid=7"; 
+//            }
+
+
+//            else
+//            {
+//                strcsid = " and csid =" + stid;
+//            }
+//            if (undOBClaim == "Under Prep")
+//            {
+//                string strSQL = @" select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders t
+//inner join 
+//(
+//select sc.SCHEMEID,count(distinct sc.SUPPLIERID) as nossupplierADA from masschemesstatusdetails sc
+//inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+//inner join tenders t on t.tender_id=sc.SCHEMEID
+//where 1=1 " + whUnderObjectClaim + @"
+//group by sc.SCHEMEID
+//) scADA on scADA.SCHEMEID=t.tender_id
+//where 1=1 and csid in (2) and financial_year_id>=15 
+//and cover_a is not null order by cover_a desc ";
+//                DataTable dt = DBHelper.GetDataTable(strSQL);
+//                return dt;
+//            }
+//            else
+//            {
+//                string strSQL = @" select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders
+//where 1=1 " + strcsid + @" and financial_year_id>=15 and cover_a is not null " + whUnderObjectClaim + " order by cover_a desc ";
+//                DataTable dt = DBHelper.GetDataTable(strSQL);
+//                return dt;
+//            }
+//        }
+        //jhjjk
 
         [HttpGet("GetTenderList1/{mode}")]
         public async Task<IActionResult> GetTenderList1(int mode)
         {
+            var strcsid = "";
+            var whUnderObjectClaim = " ";
             var list = new List<tenderlistDTO>();
             string connString = _config.GetConnectionString("DefaultConnection");
 
@@ -745,10 +815,27 @@ inner join masitemP p on p.PID=m.pid
             }
             else if (mode == 2)
             {
+             
                 sql = @"SELECT tender_id, tender_no 
                 FROM tenders 
                 WHERE FINANCIAL_YEAR_ID = 14 
                 ORDER BY tender_no";
+            }
+            else if (mode == 3)
+            {
+                //strcsid = " and csid in (2)";
+                //whUnderObjectClaim = " and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null";
+                sql = @" select tender_id,tender_no + ' ,OpenDT-' + convert(varchar,cover_a,103) AS name from tenders t
+                inner join 
+                (
+                select sc.SCHEMEID,count(distinct sc.SUPPLIERID) as nossupplierADA from masschemesstatusdetails sc
+                inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
+                inner join tenders t on t.tender_id=sc.SCHEMEID
+                where 1=1  and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null
+                group by sc.SCHEMEID
+                ) scADA on scADA.SCHEMEID=t.tender_id
+                where 1=1 and csid in (2) and financial_year_id>=15 
+                and cover_a is not null order by cover_a desc ";
             }
             else
             {
@@ -769,10 +856,19 @@ inner join masitemP p on p.PID=m.pid
                                 list.Add(new tenderlistDTO
                                 {
                                     Tenderid = Convert.ToInt32(dr["tender_id"]),
-                                    // Mode 1 mein 'name' alias hai, Mode 2 mein 'tender_no'
-                                    Tenderno = mode == 1 ? dr["name"].ToString() : dr["tender_no"].ToString()
+                                    // FIX: Mode 1 aur Mode 3 dono mein column ka naam "name" hai
+                                    Tenderno = (mode == 1 || mode == 3) ? dr["name"].ToString() : dr["tender_no"].ToString()
                                 });
                             }
+                            //while (await dr.ReadAsync())
+                            //{
+                            //    list.Add(new tenderlistDTO
+                            //    {
+                            //        Tenderid = Convert.ToInt32(dr["tender_id"]),
+                            //        // Mode 1 mein 'name' alias hai, Mode 2 mein 'tender_no'
+                            //        Tenderno = mode == 1 ? dr["name"].ToString() : dr["tender_no"].ToString()
+                            //    });
+                            //}
                         }
                     }
                 }
@@ -941,8 +1037,7 @@ inner join masitemP p on p.PID=m.pid
         {
             List<AwardOfContractDTO> list = new List<AwardOfContractDTO>(); 
 
-            // 1. खाली स्ट्रिंग "" या " " को सुरक्षित रूप से int में बदलना
-            // अगर वैल्यू नहीं मिली या खाली मिली, तो यह डिफ़ॉल्ट रूप से 0 ले लेगा
+          
             int parsedFinancialYearId = int.TryParse(financialYearId?.Trim(), out int fy) ? fy : 0;
             int parsedTenderId = int.TryParse(tenderId?.Trim(), out int t) ? t : 0;
             int parsedSupplierId = int.TryParse(supplierId?.Trim(), out int s) ? s : 0;
@@ -1116,10 +1211,8 @@ inner join masitemP p on p.PID=m.pid
                             {
                                 GetTaxDTO item = new GetTaxDTO
                                 {
-                                    // TaxId (int) है, इसलिए Convert.ToInt32 और डिफ़ॉल्ट 0 लगेगा
                                     TaxId = reader["tax_type_id"] != DBNull.Value ? Convert.ToInt32(reader["tax_type_id"]) : 0,
 
-                                    // Taxname (string) है, इसलिए Convert.ToString और डिफ़ॉल्ट खाली स्ट्रिंग "" लगेगा
                                     Taxname = reader["tax_type_name"] != DBNull.Value ? Convert.ToString(reader["tax_type_name"]) ?? string.Empty : string.Empty
                                 };
 
@@ -1343,12 +1436,11 @@ inner join masitemP p on p.PID=m.pid
                                     {
                                         ItemId = reader["item_id"] != DBNull.Value ? Convert.ToInt32(reader["item_id"]) : 0,
                                         ItemName = reader["item_name"] != DBNull.Value ? Convert.ToString(reader["item_name"]) ?? "" : "",
-                                        // लिस्ट में हमें रेट्स की ज़रूरत नहीं है, इसलिए वे डिफ़ॉल्ट 0 रहेंगे
                                     });
                                 }
                             }
                         }
-                        return Ok(itemList); // Array/List वापस करेगा
+                        return Ok(itemList); 
                     }
                 }
             }
@@ -1360,7 +1452,7 @@ inner join masitemP p on p.PID=m.pid
 
 
 
-        // API 2: Add New Item in Contract (पुराना btnSave_Click)
+
         [HttpPost("AddContractItem")]
         public async Task<IActionResult> AddContractItem([FromBody] AddContractItemDTO item)
         {
@@ -1490,13 +1582,11 @@ inner join masitemP p on p.PID=m.pid
         [HttpPut("UpdateContractItems")]
         public async Task<IActionResult> UpdateContractItem([FromBody] UpdateContractItemsDTO item)
         {
-            // 1. Validation (चेक करें कि ID सही है या नहीं)
             if (item.ContractItemId <= 0)
             {
                 return BadRequest(new { message = "Please provide a valid Contract Item ID." });
             }
 
-            // 2. Update Query
             string query = @"
         UPDATE contract_items  
         SET no_of_days_for_supply = @no_of_days_for_supply,
@@ -1515,7 +1605,6 @@ inner join masitemP p on p.PID=m.pid
                 {
                     using (SqlCommand cmd = new SqlCommand(query, conn))
                     {
-                        // 3. Parameters असाइन करें
                         cmd.Parameters.AddWithValue("@contract_item_id", item.ContractItemId);
                         cmd.Parameters.AddWithValue("@no_of_days_for_supply", item.NoOfDaysForSupply);
                         cmd.Parameters.AddWithValue("@basic_rate", item.BasicRate);
@@ -1523,7 +1612,6 @@ inner join masitemP p on p.PID=m.pid
                         cmd.Parameters.AddWithValue("@percentage", item.Percentage);
                         cmd.Parameters.AddWithValue("@single_unit_price", item.SingleUnitPrice);
 
-                        // Strings के लिए DBNull हैंडलिंग (ताकि अगर खाली आए तो क्रैश न हो)
                         cmd.Parameters.AddWithValue("@licence_number", string.IsNullOrWhiteSpace(item.LicenceNumber) ? (object)DBNull.Value : item.LicenceNumber);
                         cmd.Parameters.AddWithValue("@make", string.IsNullOrWhiteSpace(item.Make) ? (object)DBNull.Value : item.Make);
                         cmd.Parameters.AddWithValue("@model", string.IsNullOrWhiteSpace(item.Model) ? (object)DBNull.Value : item.Model);
@@ -1533,7 +1621,7 @@ inner join masitemP p on p.PID=m.pid
 
                         if (rowsAffected > 0)
                         {
-                            return Ok(new { message = "RC Updated successfully" }); // आपका पुराना मैसेज
+                            return Ok(new { message = "RC Updated successfully" });
                         }
                         else
                         {
@@ -1564,17 +1652,14 @@ inner join masitemP p on p.PID=m.pid
                 return BadRequest(new { message = "Please provide a valid contract duration (in months)." });
             }
 
-            // 2. Date Calculation (महीने जोड़कर End Date निकालना)
             DateTime signDate;
             if (!DateTime.TryParse(data.ContractSignDate, out signDate))
             {
                 return BadRequest(new { message = "Invalid Sign Date format. Use yyyy-MM-dd." });
             }
 
-            // पुराने कोड का लॉजिक: Start Date + Duration = End Date
             DateTime endDate = signDate.AddMonths(data.ContractDuration);
 
-            // 3. Update Query (SQL Injection से सुरक्षित)
             string query = @"
         UPDATE AWARD_OF_CONTRACT 
         SET Status = 'C', 
@@ -1590,7 +1675,6 @@ inner join masitemP p on p.PID=m.pid
                 {
                     using (SqlCommand cmd = new SqlCommand(query, conn))
                     {
-                        // 4. Parameters असाइन करें
                         cmd.Parameters.AddWithValue("@Duration", data.ContractDuration.ToString());
                         cmd.Parameters.AddWithValue("@SignDate", signDate);
                         cmd.Parameters.AddWithValue("@EndDate", endDate);
@@ -1601,7 +1685,7 @@ inner join masitemP p on p.PID=m.pid
 
                         if (rowsAffected > 0)
                         {
-                            return Ok(new { message = "RC Successfully Completed" }); // आपका पुराना मैसेज
+                            return Ok(new { message = "RC Successfully Completed" }); 
                         }
                         else
                         {
@@ -1663,7 +1747,6 @@ inner join masitemP p on p.PID=m.pid
         {
             List<TenderDashboardReportDTO> reportList = new List<TenderDashboardReportDTO>();
 
-            // 1. Base Query (इसमें WHERE का आखिरी हिस्सा छोड़ दिया है)
             string query = @"
         SELECT 
             A.TENDER_ID, A.TENDER_NO, Convert(varchar(10),A.TENDER_DATE, 103) AS TENDER_DATE, 
@@ -1714,12 +1797,11 @@ inner join masitemP p on p.PID=m.pid
         LEFT OUTER JOIN mascoverstatus s on s.csid=A.csid 
         WHERE A.financial_year_id = @FinancialYearId ";
 
-            // 2. Dynamic Condition (चेक के आधार पर क्वेरी में आगे की लाइन जोड़ें)
-            if (check == 0) // अगर ड्रॉपडाउन में 'All' या कोई डिफॉल्ट वैल्यू (0) सेलेक्ट हुई हो
+            if (check == 0) 
             {
                 query += " AND isnull(s.csid,0) not in (6)";
             }
-            else // अगर कोई विशेष स्टेटस सेलेक्ट हुआ हो (जैसे 1, 2, 3...)
+            else 
             {
                 query += " AND s.csid = @StatusCheck";
             }
@@ -1730,10 +1812,10 @@ inner join masitemP p on p.PID=m.pid
                 {
                     using (SqlCommand cmd = new SqlCommand(query, conn))
                     {
-                        // 3. Parameters पास करें
+                        
                         cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
 
-                        // अगर check 0 नहीं है, तो हमें @StatusCheck पैरामीटर भी पास करना होगा
+                        
                         if (check != 0)
                         {
                             cmd.Parameters.AddWithValue("@StatusCheck", check);
