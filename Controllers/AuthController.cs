@@ -141,50 +141,8 @@ namespace EMISAPIS.Controllers
             if (userId <= 0)
                 return BadRequest(new { message = "Invalid user id." });
 
-        //[HttpGet("{id}")]
-        //[HttpGet("GetEmailbyid/{id}")]
-        //public async Task<IActionResult> GetEmailbyid(int id)
-        //{
-        //    using SqlConnection con = new SqlConnection(_connectionString);
-        //    await con.OpenAsync();
-
-        //    string query = "";
-        //    query = @"select e_mail_id FROM users where user_id =@id";
-
-        //    using SqlCommand cmd = new SqlCommand(query, con);
-        //    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
-
-        //    List<UserDTO> usersList = new List<UserDTO>();
-
-        //    while (await reader.ReadAsync())
-        //    {
-        //        var user = new UserDTO
-        //        {
-
-        //            user_id = reader["user_id"] != DBNull.Value
-        //                                              ? Convert.ToInt32(reader["user_id"]) : 0,
-        //            user_name = reader["user_name"] != DBNull.Value
-        //                                                ? reader["user_name"].ToString() : string.Empty
-        //        };
-
-
-
-
-        //        usersList.Add(user);
-        //    }
-
-        //    if (usersList.Count == 0)
-        //        return NotFound("No users found");
-
-        //    return Ok(usersList);
-        //}
-
-        [HttpGet("GetUserEmail/{userId}")]
-        public async Task<IActionResult> GetUserEmail(int userId)
-        {
             string email = string.Empty;
 
-          
             string query = "SELECT e_mail_id FROM users WHERE user_id = @UserId";
 
             try
@@ -345,7 +303,7 @@ WHERE user_name = @Username
 
             using SqlCommand cmd = new SqlCommand(query, con);
 
-            cmd.Parameters.Add("@Username", SqlDbType.VarChar).Value = loginUser.user_name;
+            cmd.Parameters.Add("@Username", SqlDbType.VarChar).Value = loginUser.user_name?.Trim();
 
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
 
@@ -353,8 +311,9 @@ WHERE user_name = @Username
                 return Unauthorized(new { message = "Invalid User Credentials" });
 
           
-            string storedPasswordString = reader["password"]?.ToString();
-            string storedCommonString = reader["passcommon"]?.ToString();
+            string storedPasswordString = reader["password"]?.ToString()?.Trim();
+            string storedCommonString = reader["passcommon"]?.ToString()?.Trim();
+            string submittedPassword = loginUser.password?.Trim() ?? string.Empty;
             string username = reader["user_name"]?.ToString();
             string roleid = reader["roleid"]?.ToString();
             string user_id = reader["user_id"]?.ToString();
@@ -366,7 +325,7 @@ WHERE user_name = @Username
 
             bool isAuthorized = false;
 
-            if (loginUser.password == "2025$itcgmsc")
+            if (submittedPassword == "2025$itcgmsc")
             {
                 isAuthorized = true;
             }
@@ -375,10 +334,10 @@ WHERE user_name = @Username
                 try
                 {
                     bool isValid = !string.IsNullOrEmpty(storedPasswordString) &&
-                                   SaltedHash.VerifyFromStored(storedPasswordString, loginUser.password);
+                                   SaltedHash.VerifyFromStored(storedPasswordString, submittedPassword);
 
                     bool isValidCommon = !string.IsNullOrEmpty(storedCommonString) &&
-                                         SaltedHash.VerifyFromStored(storedCommonString, loginUser.password);
+                                         SaltedHash.VerifyFromStored(storedCommonString, submittedPassword);
 
                     isAuthorized = isValid || isValidCommon;
                 }
@@ -428,6 +387,13 @@ WHERE user_name = @Username
                 token = new JwtSecurityTokenHandler().WriteToken(token),
                 message = "Login Successful"
             });
+        }
+
+        private static string TryReadOptionalString(SqlDataReader reader, string columnName)
+        {
+            return reader[columnName] != DBNull.Value
+                ? reader[columnName].ToString()
+                : string.Empty;
         }
 
       

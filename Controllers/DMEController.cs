@@ -17,7 +17,7 @@ namespace EMISAPIS.Controllers
         }
 
         /// <summary>
-        /// Loads facility / consignee contact details for the logged-in DME user.
+        /// Loads facility contact details (legacy Master/StoreHome.aspx — users table only).
         /// </summary>
         [HttpGet("consignee/{userId:int}")]
         public async Task<IActionResult> GetConsigneeInformation(int userId)
@@ -25,24 +25,8 @@ namespace EMISAPIS.Controllers
             if (userId <= 0)
                 return BadRequest(new { message = "Invalid user id." });
 
-            const string query = @"
-SELECT
-    u.user_id,
-    ISNULL(u.e_mail_id, '') AS LoginEmail,
-    ISNULL(u.StoreName, '') AS StoreOfficerName,
-    ISNULL(u.storeOfficerMob, '') AS StoreOfficerMobile,
-    ISNULL(u.emailID, '') AS OfficeEmail,
-    ISNULL(u.StoreNo, '') AS OfficeContactNo,
-    ISNULL(m.conduct_person, '') AS DeanName,
-    ISNULL(m.mob_no, '') AS DeanMobile,
-    ISNULL(m.address_1, '') AS AddressLine1,
-    ISNULL(m.address_2, '') AS AddressLine2,
-    ISNULL(m.address_3, '') AS AddressLine3,
-    ISNULL(m.location_name, '') AS LocationName,
-    ISNULL(m.location_id, 0) AS LocationId
-FROM dbo.users u
-LEFT JOIN dbo.maslocations m ON m.location_id = u.location_id
-WHERE u.user_id = @UserId";
+            // Same SELECT as Master/StoreHome.aspx.cs fillDetails() — EMIS.dbo.users only
+            const string query = ConsigneeSelectSql + " WHERE user_id = @UserId";
 
             try
             {
@@ -55,24 +39,35 @@ WHERE u.user_id = @UserId";
                 if (!await reader.ReadAsync())
                     return NotFound(new { message = "User not found." });
 
-                var dto = new ConsigneeInformationDTO
-                {
-                    UserId = reader["user_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["user_id"]),
-                    LoginEmail = reader["LoginEmail"]?.ToString() ?? string.Empty,
-                    StoreOfficerName = reader["StoreOfficerName"]?.ToString() ?? string.Empty,
-                    StoreOfficerMobile = reader["StoreOfficerMobile"]?.ToString() ?? string.Empty,
-                    OfficeEmail = reader["OfficeEmail"]?.ToString() ?? string.Empty,
-                    OfficeContactNo = reader["OfficeContactNo"]?.ToString() ?? string.Empty,
-                    DeanName = reader["DeanName"]?.ToString() ?? string.Empty,
-                    DeanMobile = reader["DeanMobile"]?.ToString() ?? string.Empty,
-                    AddressLine1 = reader["AddressLine1"]?.ToString() ?? string.Empty,
-                    AddressLine2 = reader["AddressLine2"]?.ToString() ?? string.Empty,
-                    AddressLine3 = reader["AddressLine3"]?.ToString() ?? string.Empty,
-                    LocationName = reader["LocationName"]?.ToString() ?? string.Empty,
-                    LocationId = reader["LocationId"] == DBNull.Value ? 0 : Convert.ToInt32(reader["LocationId"]),
-                };
+                return Ok(MapConsigneeReader(reader));
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Database error loading consignee information.", detail = ex.Message });
+            }
+        }
 
-                return Ok(dto);
+        /// <summary>Load by login email when user_id is unavailable (StoreHome session uses DistId).</summary>
+        [HttpGet("consignee/by-email/{email}")]
+        public async Task<IActionResult> GetConsigneeByEmail(string email)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+                return BadRequest(new { message = "Email is required." });
+
+            const string query = ConsigneeSelectByEmailSql;
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(query, conn);
+                cmd.Parameters.AddWithValue("@Email", email.Trim());
+
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "User not found for this email." });
+
+                return Ok(MapConsigneeReader(reader));
             }
             catch (SqlException ex)
             {
@@ -81,7 +76,7 @@ WHERE u.user_id = @UserId";
         }
 
         /// <summary>
-        /// Persists consignee contact updates to users and maslocations (legacy EMIS schema).
+        /// Persists contact updates (legacy Master/StoreHome.aspx btnComplain_Click).
         /// </summary>
         [HttpPut("consignee")]
         public async Task<IActionResult> UpdateConsigneeInformation([FromBody] ConsigneeInformationUpdateDTO dto)
@@ -89,75 +84,106 @@ WHERE u.user_id = @UserId";
             if (dto == null || dto.UserId <= 0)
                 return BadRequest(new { message = "Invalid payload." });
 
+            if (string.IsNullOrWhiteSpace(dto.AddressLine2)
+                || string.IsNullOrWhiteSpace(dto.AddressLine1)
+                || string.IsNullOrWhiteSpace(dto.DeanMobile)
+                || string.IsNullOrWhiteSpace(dto.StoreOfficerMobile)
+                || string.IsNullOrWhiteSpace(dto.StoreOfficerName)
+                || string.IsNullOrWhiteSpace(dto.OfficeEmail))
+            {
+                return BadRequest(new { message = "Please fill all the required fields." });
+            }
+
             try
             {
                 await using var conn = new SqlConnection(_connectionString);
                 await conn.OpenAsync();
-                using var tx = conn.BeginTransaction();
 
                 const string updateUser = @"
 UPDATE dbo.users SET
-    StoreName = @StoreOfficerName,
-    storeOfficerMob = @StoreOfficerMobile,
+    user_name = @AddressLine1,
+    address = @AddressLine2,
+    address2 = @AddressLine3,
+    HODName = @DeanName,
+    HODNo = @DeanMobile,
     emailID = @OfficeEmail,
-    StoreNo = @OfficeContactNo
+    storeOfficerMob = @StoreOfficerMobile,
+    storeOfficer = @StoreOfficerName,
+    storelandline = @OfficeContactNo,
+    updateDT = GETDATE()
 WHERE user_id = @UserId";
 
-                await using (var cmdUser = new SqlCommand(updateUser, conn, tx))
-                {
-                    cmdUser.Parameters.AddWithValue("@UserId", dto.UserId);
-                    cmdUser.Parameters.AddWithValue("@StoreOfficerName", NullIfEmpty(dto.StoreOfficerName));
-                    cmdUser.Parameters.AddWithValue("@StoreOfficerMobile", NullIfEmpty(dto.StoreOfficerMobile));
-                    cmdUser.Parameters.AddWithValue("@OfficeEmail", NullIfEmpty(dto.OfficeEmail));
-                    cmdUser.Parameters.AddWithValue("@OfficeContactNo", NullIfEmpty(dto.OfficeContactNo));
+                await using var cmdUser = new SqlCommand(updateUser, conn);
+                cmdUser.Parameters.AddWithValue("@UserId", dto.UserId);
+                cmdUser.Parameters.AddWithValue("@AddressLine1", dto.AddressLine1.Trim());
+                cmdUser.Parameters.AddWithValue("@AddressLine2", dto.AddressLine2.Trim());
+                cmdUser.Parameters.AddWithValue("@AddressLine3", (dto.AddressLine3 ?? string.Empty).Trim());
+                cmdUser.Parameters.AddWithValue("@DeanName", (dto.DeanName ?? string.Empty).Trim());
+                cmdUser.Parameters.AddWithValue("@DeanMobile", dto.DeanMobile.Trim());
+                cmdUser.Parameters.AddWithValue("@OfficeEmail", dto.OfficeEmail.Trim());
+                cmdUser.Parameters.AddWithValue("@StoreOfficerMobile", dto.StoreOfficerMobile.Trim());
+                cmdUser.Parameters.AddWithValue("@StoreOfficerName", dto.StoreOfficerName.Trim());
+                cmdUser.Parameters.AddWithValue("@OfficeContactNo", (dto.OfficeContactNo ?? string.Empty).Trim());
 
-                    int n = await cmdUser.ExecuteNonQueryAsync();
-                    if (n == 0)
-                    {
-                        tx.Rollback();
-                        return NotFound(new { message = "User not found for update." });
-                    }
-                }
+                int n = await cmdUser.ExecuteNonQueryAsync();
+                if (n == 0)
+                    return NotFound(new { message = "User not found for update." });
 
-                const string getLoc = "SELECT location_id FROM dbo.users WHERE user_id = @UserId";
-                int locationId = 0;
-                await using (var cmdLoc = new SqlCommand(getLoc, conn, tx))
-                {
-                    cmdLoc.Parameters.AddWithValue("@UserId", dto.UserId);
-                    var o = await cmdLoc.ExecuteScalarAsync();
-                    if (o != null && o != DBNull.Value)
-                        locationId = Convert.ToInt32(o);
-                }
-
-                if (locationId > 0)
-                {
-                    const string updateLoc = @"
-UPDATE dbo.maslocations SET
-    conduct_person = @DeanName,
-    mob_no = @DeanMobile,
-    address_1 = @A1,
-    address_2 = @A2,
-    address_3 = @A3
-WHERE location_id = @LocationId";
-
-                    await using var cmdLocUp = new SqlCommand(updateLoc, conn, tx);
-                    cmdLocUp.Parameters.AddWithValue("@LocationId", locationId);
-                    cmdLocUp.Parameters.AddWithValue("@DeanName", NullIfEmpty(dto.DeanName));
-                    cmdLocUp.Parameters.AddWithValue("@DeanMobile", NullIfEmpty(dto.DeanMobile));
-                    cmdLocUp.Parameters.AddWithValue("@A1", NullIfEmpty(dto.AddressLine1));
-                    cmdLocUp.Parameters.AddWithValue("@A2", NullIfEmpty(dto.AddressLine2));
-                    cmdLocUp.Parameters.AddWithValue("@A3", NullIfEmpty(dto.AddressLine3));
-                    await cmdLocUp.ExecuteNonQueryAsync();
-                }
-
-                tx.Commit();
-                return Ok(new { message = "Updated successfully." });
+                return Ok(new { message = "Contact Updated Successfully" });
             }
             catch (SqlException ex)
             {
                 return StatusCode(500, new { message = "Database error saving consignee information.", detail = ex.Message });
             }
         }
+
+        /// <summary>StoreHome.aspx fillDetails — maps EMIS.dbo.users columns to API DTO.</summary>
+        private const string ConsigneeSelectSql = @"
+SELECT
+    user_id,
+    ISNULL(e_mail_id, '') AS LoginEmail,
+    ISNULL(HODName, '') AS DeanName,
+    ISNULL(HODNo, '') AS DeanMobile,
+    ISNULL(storeOfficer, '') AS StoreOfficerName,
+    ISNULL(storeOfficerMob, '') AS StoreOfficerMobile,
+    ISNULL(emailID, '') AS OfficeEmail,
+    ISNULL(storelandline, '') AS OfficeContactNo,
+    ISNULL(user_name, '') AS AddressLine1,
+    ISNULL(address, '') AS AddressLine2,
+    ISNULL(address2, '') AS AddressLine3
+FROM dbo.users";
+
+        private const string ConsigneeSelectByEmailSql = @"
+SELECT TOP 1
+    user_id,
+    ISNULL(e_mail_id, '') AS LoginEmail,
+    ISNULL(HODName, '') AS DeanName,
+    ISNULL(HODNo, '') AS DeanMobile,
+    ISNULL(storeOfficer, '') AS StoreOfficerName,
+    ISNULL(storeOfficerMob, '') AS StoreOfficerMobile,
+    ISNULL(emailID, '') AS OfficeEmail,
+    ISNULL(storelandline, '') AS OfficeContactNo,
+    ISNULL(user_name, '') AS AddressLine1,
+    ISNULL(address, '') AS AddressLine2,
+    ISNULL(address2, '') AS AddressLine3
+FROM dbo.users
+WHERE LTRIM(RTRIM(e_mail_id)) = @Email";
+
+        private static ConsigneeInformationDTO MapConsigneeReader(SqlDataReader reader) =>
+            new()
+            {
+                UserId = reader["user_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["user_id"]),
+                LoginEmail = reader["LoginEmail"]?.ToString() ?? string.Empty,
+                DeanName = reader["DeanName"]?.ToString() ?? string.Empty,
+                DeanMobile = reader["DeanMobile"]?.ToString() ?? string.Empty,
+                StoreOfficerName = reader["StoreOfficerName"]?.ToString() ?? string.Empty,
+                StoreOfficerMobile = reader["StoreOfficerMobile"]?.ToString() ?? string.Empty,
+                OfficeEmail = reader["OfficeEmail"]?.ToString() ?? string.Empty,
+                OfficeContactNo = reader["OfficeContactNo"]?.ToString() ?? string.Empty,
+                AddressLine1 = reader["AddressLine1"]?.ToString() ?? string.Empty,
+                AddressLine2 = reader["AddressLine2"]?.ToString() ?? string.Empty,
+                AddressLine3 = reader["AddressLine3"]?.ToString() ?? string.Empty,
+            };
 
         private static object NullIfEmpty(string? s) =>
             string.IsNullOrWhiteSpace(s) ? DBNull.Value : s.Trim();
