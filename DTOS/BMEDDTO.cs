@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.Security.Cryptography.Pkcs;
 namespace EMISAPIS.DTOS
 {
     public class BMEDDTO
@@ -206,6 +207,582 @@ namespace EMISAPIS.DTOS
         public string AmcReq { get; set; }
         public int ItemId { get; set; }
     }
+    public class tenderlistDTO
+    {
+        public int Tenderid { get; set; }
+        public string Tenderno { get; set; } // Query 1 ka full name bhi isi mein store hoga
+    }
+    //public class tenderlistDTO
+    //{
+    //    public int Tenderid { get; set; }
+    //    public string Tenderno { get; set; }
+    //}
+    public class TenderSupplierrDTO
+    {
+        public int sId { get; set; }
+        public string sName { get; set; } = string.Empty;
+    }
+    public class ContractFilterDTO
+    {
+        public int FinancialYearId { get; set; } // 0 मतलब "All"
+        public int TenderId { get; set; }        // 0 मतलब "All"
+        public int SupplierId { get; set; }      // 0 मतलब "All"
+        public string Status { get; set; } = string.Empty; // "" मतलब "All"
+    }
+    public class AwardOfContractDTO
+    {
+        public string ContractNumber { get; set; } = string.Empty;
+        public string ContractDate { get; set; } = string.Empty;
+        public int SupplierId { get; set; }
+        public string SupplierName { get; set; } = string.Empty;
+        public string ContractType { get; set; } = string.Empty;
+        public string ContractDescription { get; set; } = string.Empty;
+        public string TenderNo { get; set; } = string.Empty;
+        public string TenderDate { get; set; } = string.Empty;
+        public int TenderId { get; set; }
+        public string ContractDuration { get; set; } = string.Empty;
+        public string ContractSignDate { get; set; } = string.Empty;
+        public string ContractEndDate { get; set; } = string.Empty;
+        public int DocumentType { get; set; }
+        public string DocumentNumber { get; set; } = string.Empty;
+        public string DocumentDate { get; set; } = string.Empty;
+        public string DocumentExpiryDate { get; set; } = string.Empty;
+        public int FinancialYearId { get; set; }
+        public string Year { get; set; } = string.Empty;
+        public decimal DocumentValue { get; set; }
+        public int AwardOfContractId { get; set; }
+        public string Status { get; set; } = string.Empty;
+    }
 
+
+    // 1. Contract Header बनाने के लिए (Angular से डेटा लेने के लिए)
+    public class GenerateContractDTO
+    {
+        public int TenderId { get; set; }
+        public int SupplierId { get; set; }
+        public int FinancialYearId { get; set; }
+        public string ContractDate { get; set; } = string.Empty; // "yyyy-MM-dd" format
+    }
+
+    public class GetTaxDTO
+    {
+        public int TaxId { get; set; }
+        public string Taxname { get; set; } = string.Empty;
+    }
+    public class ItemRateDetailDTO
+    {
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+
+        // पैसों (Rates/Tax) के लिए decimal का इस्तेमाल करना सबसे अच्छा है
+        public decimal BasicRate { get; set; }
+        public decimal Gst { get; set; }
+
+        public int SupplierId { get; set; }
+        public int TenderId { get; set; }
+    }
+    public class TenderItemDTO
+    {
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+    }
+    // 2. नया आइटम जोड़ने के लिए (Add Equipments)
+    public class AddContractItemDTO
+    {
+        public int AwardOfContractId { get; set; }
+        public int ItemId { get; set; }
+        public int NoOfDaysForSupply { get; set; }
+        public decimal BasicRate { get; set; }
+        public int TaxTypeId { get; set; }
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public string LicenceNumber { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string DomesticImported { get; set; } = string.Empty; // 0 or 1
+    }
+
+    public class ContractItemDetailsDTO
+    {
+        public int AwardOfContractId { get; set; }
+        public string ContractNumber { get; set; } = string.Empty;
+        public int ContractItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+        public int NoOfDaysForSupply { get; set; }
+        public decimal BasicRate { get; set; }
+        public string TaxTypeName { get; set; } = string.Empty;
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public string LicenceNumber { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public int ItemId { get; set; }
+        public int TaxTypeId { get; set; }
+        public string SupplyCategory { get; set; } = string.Empty;
+        public string ContractDate { get; set; } = string.Empty;
+        public int SupplierId { get; set; }
+        public int FinancialYearId { get; set; }
+        public int TenderId { get; set; }
+    }
+
+    public class UpdateContractItemsDTO
+    {
+        public int ContractItemId { get; set; }
+        public int NoOfDaysForSupply { get; set; }
+        public decimal BasicRate { get; set; }
+        public int TaxTypeId { get; set; }
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public string LicenceNumber { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+    }
+
+    public class FinalizeContractDTO
+    {
+        public int AwardOfContractId { get; set; }
+        public int ContractDuration { get; set; } // महीनों (Months) में
+        public string ContractSignDate { get; set; } = string.Empty; // फॉर्मेट: "yyyy-MM-dd"
+    }
+    // 3. Grid/Table में डेटा भेजने के लिए (Response DTO)
+    public class ContractItemGridResponseDTO
+    {
+        public int ContractItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+        public int NoOfDaysForSupply { get; set; }
+        public decimal BasicRate { get; set; }
+        public string TaxTypeName { get; set; } = string.Empty;
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public string LicenceNumber { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string SupplyCategory { get; set; } = string.Empty; // Domestic/Imported
+    }
+
+    //public class FinYearListDTO
+    //{
+    //    public int finyear_id { get; set; }
+    //    public string year { get; set; } = string.Empty;
+    //}
+    public class TenderDashboardReportDTO
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+        public string TenderDate { get; set; } = string.Empty;
+        public string TenderDescription { get; set; } = string.Empty;
+        public string Flag { get; set; } = string.Empty;
+        public int FinancialYearId { get; set; }
+        public int WarrantyYear { get; set; }
+        public int ImportDays { get; set; }
+        public int DomesticDays { get; set; }
+        public string CoverA { get; set; } = string.Empty;
+        public string CoverB { get; set; } = string.Empty;
+        public string CoverDemo { get; set; } = string.Empty;
+        public string CoverC { get; set; } = string.Empty;
+        public string CStatus { get; set; } = string.Empty;
+        public int CsId { get; set; }
+
+        // काउंट्स और कैलकुलेशंस
+        public int TotalItems { get; set; }
+        public int FoundItems { get; set; }
+        public int NosNotFound { get; set; }
+        public int PriceEntry { get; set; }
+        public int Accept { get; set; }
+        public int Reject { get; set; }
+        public int NosBidder { get; set; }
+        public int NosItemsBid { get; set; }
+        public decimal TotalValue { get; set; }
+        public string TenderType { get; set; } = string.Empty;
+    }
+
+
+    public class TenderStatusDto
+    {
+        public string TENDER_NO { get; set; }
+        public string FINANCIAL_YEAR { get; set; }
+        public int domestic_days { get; set; }
+        public int import_days { get; set; }
+        public int warranty_year { get; set; }
+        public string TENDER_DATE { get; set; }
+        public string TENDER_DESCRIPTION { get; set; }
+        public string FLAG { get; set; }
+        public int FINANCIAL_YEAR_ID { get; set; }
+        public int tender_id { get; set; }
+        public string cover_a { get; set; }
+        public string cover_b { get; set; }
+        public string cover_Demo { get; set; }
+        public string cover_c { get; set; }
+        public string cStatus { get; set; }
+        public int csid { get; set; }
+        public string cover_Demo2 { get; set; }
+        public string cover_Demo3 { get; set; }
+        public string TenderRemarks { get; set; }
+        public string webSiteUploadID { get; set; }
+        public string eprocID { get; set; }
+        public string ENDDate { get; set; }
+    }
+    public class EligiblityDTO
+    {
+        public string id { get; set; } 
+        public string Eligiblity { get; set; }
+    }
+    public class CoverStatusDTO
+    {
+        public int csid { get; set; }
+        public string cstatus { get; set; }
+    }
+    public class EligibilityUpdateRequest
+    {
+        public int SchStatusDid { get; set; }
+        public int SchemeId { get; set; }
+        public string Eligibility { get; set; } // 'Y', 'N', 'C'
+        public string Remarks { get; set; }
+        public string RoleId { get; set; } // Current User Role
+        public int UserId { get; set; } // Current User ID
+    }
+
+    public class UpdateTenderNoDto
+    {
+        public int tender_id { get; set; }
+        public string webSiteUploadID { get; set; }
+        public string eprocID { get; set; }
+    }
+   
+
+
+    public class TenderFullUpdateDto
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; }
+        public int WarrantyYear { get; set; }
+        public int DomesticDays { get; set; }
+        public int ImportDays { get; set; }
+        public int Csid { get; set; } // ddlStatus.SelectedValue
+        public string TenderRemarks { get; set; }
+        public string TenderDescription { get; set; }
+        public string TenderDate { get; set; } // txtlivedate
+        public string EndDate { get; set; } // txtENDdate
+        public string ExtendDt { get; set; } // txtextenddt
+        public string CoverA { get; set; } // txtADate
+        public string CoverB { get; set; } // txtBDate
+        public string CoverC { get; set; } // txtCDate
+        public string CoverDemo { get; set; } // txtDDate
+        public string CoverDemo2 { get; set; } // txtDemo2
+        public string CoverDemo3 { get; set; } // txtDemo3
+        public string CancelledDt { get; set; } // txtCancelledDT
+    }
+    public class TenderItemSelectionDto
+    {
+        public int item_id { get; set; }
+        public string Eqtype { get; set; }
+        public string item_code_as_per_tender { get; set; }
+        public string item_name { get; set; } // Map: name + code + RC status
+        public string RCStatus { get; set; }
+        public int daysRCValid { get; set; }
+        public string Titemid { get; set; }
+        public string tender_no { get; set; }
+        public int? categoryId { get; set; }
+    }
+
+    public class TenderItemDetailDto
+    {
+        public int item_id { get; set; }
+        public string Eqtype { get; set; }
+        public string item_code_as_per_tender { get; set; }
+        public string item_name { get; set; }
+        public string RCStatus { get; set; }
+        public int daysRCValid { get; set; }
+        public string Titemid { get; set; }
+        public string tender_no { get; set; }
+        public int? categoryId { get; set; }
+    }
+
+    public class TenderLinkedItemDto
+    {
+        public int SlNo { get; set; }
+        public int ItemId { get; set; }
+        public int? TenderItemId { get; set; } // Query 2 mein shayad na ho isliye nullable
+        public int? TenderId { get; set; }
+        public string ItemName { get; set; }
+        public string ItemCodeAsPerTender { get; set; }
+        public string ItemCode { get; set; }
+        public decimal EmdAmount { get; set; }
+        public decimal TenderQuantity { get; set; }
+
+        // Extra fields from Query 2
+        public string CategoryName { get; set; }
+        public string ItemDesc { get; set; }
+    }
+
+
+    //public class TenderLinkedItemDto
+    //{
+    //    // SQL: 0 as SlNo (Frontend par auto-generate karne ke liye)
+    //    public int SlNo { get; set; }
+
+    //    // SQL: m.ITEM_ID
+    //    public int ItemId { get; set; }
+
+    //    // SQL: ti.tender_item_id
+    //    public int TenderItemId { get; set; }
+
+    //    // SQL: t.tender_id
+    //    public int TenderId { get; set; }
+
+    //    // SQL: m.item_name
+    //    public string ItemName { get; set; }
+
+    //    // SQL: m.item_code_as_per_tender
+    //    public string ItemCodeAsPerTender { get; set; }
+
+    //    // SQL: m.item_code
+    //    public string ItemCode { get; set; }
+
+    //    // SQL: ti.emd_amount
+    //    public decimal EmdAmount { get; set; }
+
+    //    // SQL: ti.tender_quantity
+    //    public decimal TenderQuantity { get; set; }
+    //}
+
+    //public class AddTenderItemDto
+    //{
+    //    public int TenderId { get; set; }
+    //    public int ItemId { get; set; }
+    //    public decimal TenderQuantity { get; set; }
+    //    public decimal EmdAmount { get; set; }
+    //}
+    public class AddTenderItemDto
+    {
+        public int TenderId { get; set; }
+        public int ItemId { get; set; }
+        public decimal TenderQuantity { get; set; }
+        public decimal EmdAmount { get; set; }
+    }
+
+    //select dtypeid, dtypename from MASDOCUMENTTYPE
+    public class MASDOCUMENTTYPEDTO
+    {
+        public int dtypeid { get; set; }
+        public string dtypename { get; set; }
+    }
+    public class TenderSupplierParticipationDto
+    {
+        public int SlNo { get; set; }
+        public int SchStatusDid { get; set; }
+        public int TenderId { get; set; }
+        public string SupplierName { get; set; }
+        public decimal Emd { get; set; }
+        public decimal ReqEMDAMt { get; set; } // Query 1 specific
+        public decimal SubmittedEMDAMT { get; set; } // Query 1 specific
+        public decimal TpAmount { get; set; }
+        public string EmdDocType { get; set; }
+        public string DTypeName { get; set; } // Query 1 specific
+        public string EmdPath { get; set; }
+        public string EmdFileName { get; set; }
+        public string TpFileName { get; set; }
+        public string TpPath { get; set; }
+        public string EmdDocNo { get; set; }
+        public int SupplierId { get; set; }
+        public string Remark { get; set; }
+        public int PItems { get; set; }
+        public string IsEligibleB { get; set; }
+        public string IsCovTechEli { get; set; } // Query 1 specific
+        public string IsCOVFinEli { get; set; } // Query 1 specific
+        public string CovATechRemarksBefore_OBClM { get; set; } // Query 1 specific
+        public string CovAFINRemarksBefore_OBClM { get; set; } // Query 1 specific
+        public int Csid { get; set; } // Query 1 specific
+    }
+    //public class TenderSupplierParticipationDto
+    //{
+    //    public int SlNo { get; set; }
+    //    public int SchStatusDid { get; set; }
+    //    public int TenderId { get; set; }
+    //    public string SupplierName { get; set; }
+    //    public decimal Emd { get; set; }
+    //    public decimal TpAmount { get; set; }
+    //    public string EmdDocType { get; set; }
+    //    public string EmdPath { get; set; }
+    //    public string EmdFileName { get; set; }
+    //    public string TpFileName { get; set; }
+    //    public string TpPath { get; set; }
+    //    public string EmdDocNo { get; set; }
+    //    public int SupplierId { get; set; }
+    //    public string Remark { get; set; }
+    //    public int PItems { get; set; } // isnull(piitem.cntparticipated,0)
+    //    public string IsEligibleB { get; set; }
+    //}
+
+    public class SupplierParticipationDto
+    {
+        public int TenderId { get; set; } // schemeid
+        public int SupplierId { get; set; }
+        public decimal EmdAmount { get; set; } // txtEMD
+        public decimal TenderProFee { get; set; } // txtTenderProFee
+        public int DocTypeId { get; set; } // ddlDocType
+        public string EmdDocNo { get; set; } // txtEMDdocNo
+        public string Remarks { get; set; } // txtRemark
+    }
+
+    public class TenderStatusDetailsDto
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; }
+        public int FinancialYearId { get; set; }
+        public string Status { get; set; }
+        public string TenderDate { get; set; }
+        public int SchStatusDid { get; set; }
+        public string EndDate { get; set; }
+    }
+
+    public class TenderItemDetailsDto
+    {
+        public int SlNo { get; set; }
+        public int TenderId { get; set; }
+        public int FinancialYearId { get; set; }
+        public int ItemId { get; set; }
+        public string ItemCodeAsPerTender { get; set; }
+        public string ItemName { get; set; }
+    }
+
+    public class BulkParticipationRequest
+    {
+        public int SupplierId { get; set; }
+        public int SchemeId { get; set; }
+        public int SchStatusDid { get; set; }
+        public List<int> ItemIds { get; set; } // GridView mein jo checkboxes select hue hain unki IDs
+    }
+    public class TenderSaveRequest11
+    {
+        public string TenderNo { get; set; }
+        public string TenderDescription { get; set; }
+        public string TenderDate { get; set; } // Format: YYYY-MM-DD
+        public string FinancialYearId { get; set; }
+        public bool IsGemTender { get; set; }
+        public string GemBidNo { get; set; }
+        public decimal TenderValue { get; set; }
+    }
+
+    public class ParticipationItemDTO
+    {
+        public int SlNo { get; set; }
+        public int SchemeId { get; set; }
+        public string ItemCode { get; set; }
+        public string ItemName { get; set; }
+        public decimal EmdAmount { get; set; }
+        public int ItemId { get; set; }
+    }
+    public class DeleteParticipationRequest
+    {
+        public int SupplierId { get; set; }
+        public int SchemeId { get; set; }
+        public List<int> ItemIds { get; set; } 
+    }
+    public class UpdateLevyRequest
+    {
+        public string TenderId { get; set; }
+        public int CancellationDays { get; set; }
+        public decimal CancellationPercentage { get; set; }
+        public decimal PenaltyPercent120 { get; set; } // Penalty for 121-180 days
+        public decimal PenaltyPercent { get; set; }    // Penalty for >60 & <120
+        public string PenaltyType { get; set; }        // Days or Week
+        public string ReleaseType { get; set; }        // Month, Week, NR
+        public string PerformanceReq { get; set; }     // Yes, No, NA
+        public decimal ReleaseValue { get; set; }      // Release Duration
+        public decimal LogoCharges { get; set; }
+        public decimal LogoChargesUpper { get; set; }
+        public string LeavyEntryDt { get; set; }       // For condition check
+        public string PerfEntryDt { get; set; }        // For condition check
+    }
+
+    public class AddTenderStatusDTO
+    {
+        public int FinancialYearId { get; set; }
+        public string TenderNo { get; set; }
+        public string LiveDT { get; set; }
+        public string TLast { get; set; }
+        public int NoSitems { get; set; }
+        public string FinalStatus { get; set; }
+        public string NosItemsA { get; set; }
+        public string AItemsSupplier { get; set; }
+        public string CoverA { get; set; }
+        public int COVA_LastDays { get; set; }
+        public string NositemsDA { get; set; }
+        public string ADAItemsSupplier { get; set; }
+        public string ObjClaimLastDate { get; set; }
+        public string ObjCStartDT { get; set; }
+        public string COVBDT { get; set; }
+        public string COVCDT { get; set; }
+        public int NoofPriceFound { get; set; }
+        public int NosAccepted { get; set; }
+        public int NosRejected { get; set; }
+        public int DaysTakenFromLiveDT { get; set; }
+        public int COVAToObjStartDays { get; set; }
+        public int OBJDays { get; set; }
+        public int ClaimEndToBDays { get; set; }
+        public int CovBToCovCDays { get; set; }
+        public int Csid { get; set; }
+        public int TenderId { get; set; }
+        public int DaysClosed { get; set; }
+        public int Show { get; set; }
+        public int NosRC { get; set; }
+    }
+
+    public class FacilityAuthDTOnew
+    {
+        public int FacilityAutId { get; set; }
+        public string FacilityAutName { get; set; }
+        public string FacilityAutCode { get; set; }
+    }
+
+    public class HodConversationDTO
+    {
+        public int SCHEMEID { get; set; }
+        public string SCHEMENAME { get; set; }
+        public string FACILITYTYPECODE { get; set; }
+        public string LetterNo { get; set; }
+        public string LetterDate { get; set; }
+        public string Remarks { get; set; }
+        public string SendDate { get; set; }
+        public DateTime? EntryDate { get; set; }
+        public string FileName { get; set; }
+        public string FilePath { get; set; }
+        public int Convid { get; set; }
+    }
+
+    public class HodConversationSaveRequest
+    {
+        public int TenderId { get; set; }
+        public int HodId { get; set; }
+        public string SendDate { get; set; }
+        public string LetterNo { get; set; }
+        public string LetterDate { get; set; }
+        public string Remarks { get; set; }
+        public IFormFile File { get; set; } 
+    }
+
+    public class HodReplyRequest
+    {
+        public int Convid { get; set; }      
+        public string RecvDate { get; set; } 
+        public string LetterNo { get; set; } 
+        public string LetterDt { get; set; } 
+        public string Remarks { get; set; }   
+        public IFormFile File { get; set; }   
+    }
+    public class HodReplyDTO
+    {
+        public int CONRID { get; set; }
+        public int CONVID { get; set; }
+        public string RecvDate { get; set; }
+        public string LetterNo { get; set; }
+        public string LetterDT { get; set; }
+        public string Remarks { get; set; }
+        public string FileName { get; set; }
+        public string FilePath { get; set; }
+        public string EntryBy { get; set; }
+        public DateTime? EntryDate { get; set; }
+    }
 
 }
