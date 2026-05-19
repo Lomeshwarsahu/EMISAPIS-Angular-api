@@ -2914,6 +2914,21 @@ where 1=1 and t.tender_id = @Tid";
         WHERE t.tender_id = @Tid
         ORDER BY mas.name";
             }
+            else if (flag == 2)
+            {
+                query = @"SELECT distinct 0 as SlNo, m.ITEM_ID, ti.tender_item_id, t.tender_id, m.item_name, 
+                         m.item_code_as_per_tender, m.item_code, ti.emd_amount, ti.tender_quantity
+                  FROM tenders t
+                  INNER JOIN tender_items ti ON ti.tender_id = t.tender_id
+                  INNER JOIN masitems m ON m.item_id = ti.item_id
+                  LEFT OUTER JOIN (
+                      SELECT s.SCHEMEID, sc.ITEMID, count(sc.ITEMID) as nosQualified 
+                      FROM schemestatusdetailschild sc 
+                      INNER JOIN masschemesstatusdetails s ON s.SCHSTATUSDID = sc.SCHSTATUSDID
+                      GROUP BY s.SCHEMEID, sc.ITEMID
+                  ) Q ON Q.SCHEMEID = t.tender_id AND q.ITEMID = m.item_id
+                  WHERE t.tender_id = @Tid AND q.ITEMID is not null";
+            }
             else
             {
                 query = @"
@@ -2947,37 +2962,50 @@ where 1=1 and t.tender_id = @Tid";
                         int counter = 1;
                         while (await reader.ReadAsync())
                         {
-                            var item = new TenderSupplierParticipationDto
-                            {
-                                SlNo = counter++,
-                                SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]),
-                                TenderId = Convert.ToInt32(reader["tender_id"]),
-                                SupplierName = reader["name"]?.ToString() ?? "",
-                                Emd = Convert.ToDecimal(reader["EMD"]),
-                                TpAmount = Convert.ToDecimal(reader["TPAMOUNT"]),
-                                EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? "",
-                                EmdPath = reader["EMDPATH"]?.ToString() ?? "",
-                                EmdFileName = reader["EMDFILENAME"]?.ToString() ?? "",
-                                TpFileName = reader["TPFILENAME"]?.ToString() ?? "",
-                                TpPath = reader["TPPATH"]?.ToString() ?? "",
-                                EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? "",
-                                SupplierId = Convert.ToInt32(reader["supplier_id"]),
-                                Remark = reader["REMARK"]?.ToString() ?? "",
-                                PItems = Convert.ToInt32(reader["pitems"]),
-                                IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? ""
-                            };
+                            var item = new TenderSupplierParticipationDto();
+                            item.SlNo = counter++;
 
-                            // Flag 1 ke extra fields handle karein
-                            if (flag == 1)
+                          
+                            if (flag == 2)
                             {
-                                item.ReqEMDAMt = Convert.ToDecimal(reader["ReqEMDAMt"]);
-                                item.SubmittedEMDAMT = Convert.ToDecimal(reader["submittedEMDAMT"]);
-                                item.DTypeName = reader["dtypename"]?.ToString() ?? "";
-                                item.IsCovTechEli = reader["ISCovTechEli"]?.ToString() ?? "";
-                                item.IsCOVFinEli = reader["IsCOVFinEli"]?.ToString() ?? "";
-                                item.CovATechRemarksBefore_OBClM = reader["CovATechRemarksBefore_OBClM"]?.ToString() ?? "";
-                                item.CovAFINRemarksBefore_OBClM = reader["CovAFINRemarksBefore_OBClM"]?.ToString() ?? "";
-                                item.Csid = Convert.ToInt32(reader["csid"]);
+                                item.TenderId = Convert.ToInt32(reader["tender_id"]);
+                                item.ItemId = reader["ITEM_ID"] != DBNull.Value ? Convert.ToInt32(reader["ITEM_ID"]) : 0;
+                                item.TenderItemId = reader["tender_item_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_item_id"]) : 0;
+                                item.ItemName = reader["item_name"]?.ToString() ?? "";
+                                item.ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? "";
+                                item.ItemCode = reader["item_code"]?.ToString() ?? "";
+                                item.Emd = reader["emd_amount"] != DBNull.Value ? Convert.ToDecimal(reader["emd_amount"]) : 0m;
+                                item.TenderQuantity = reader["tender_quantity"] != DBNull.Value ? Convert.ToDecimal(reader["tender_quantity"]) : 0m;
+                            }
+                            else
+                            {
+                                item.SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]);
+                                item.TenderId = Convert.ToInt32(reader["tender_id"]);
+                                item.SupplierName = reader["name"]?.ToString() ?? "";
+                                item.Emd = Convert.ToDecimal(reader["EMD"]);
+                                item.TpAmount = Convert.ToDecimal(reader["TPAMOUNT"]);
+                                item.EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? "";
+                                item.EmdPath = reader["EMDPATH"]?.ToString() ?? "";
+                                item.EmdFileName = reader["EMDFILENAME"]?.ToString() ?? "";
+                                item.TpFileName = reader["TPFILENAME"]?.ToString() ?? "";
+                                item.TpPath = reader["TPPATH"]?.ToString() ?? "";
+                                item.EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? "";
+                                item.SupplierId = Convert.ToInt32(reader["supplier_id"]);
+                                item.Remark = reader["REMARK"]?.ToString() ?? "";
+                                item.PItems = Convert.ToInt32(reader["pitems"]);
+                                item.IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? "";
+
+                                if (flag == 1)
+                                {
+                                    item.ReqEMDAMt = Convert.ToDecimal(reader["ReqEMDAMt"]);
+                                    item.SubmittedEMDAMT = Convert.ToDecimal(reader["submittedEMDAMT"]);
+                                    item.DTypeName = reader["dtypename"]?.ToString() ?? "";
+                                    item.IsCovTechEli = reader["ISCovTechEli"]?.ToString() ?? "";
+                                    item.IsCOVFinEli = reader["IsCOVFinEli"]?.ToString() ?? "";
+                                    item.CovATechRemarksBefore_OBClM = reader["CovATechRemarksBefore_OBClM"]?.ToString() ?? "";
+                                    item.CovAFINRemarksBefore_OBClM = reader["CovAFINRemarksBefore_OBClM"]?.ToString() ?? "";
+                                    item.Csid = Convert.ToInt32(reader["csid"]);
+                                }
                             }
 
                             list.Add(item);
@@ -2991,6 +3019,141 @@ where 1=1 and t.tender_id = @Tid";
                 return StatusCode(500, new { message = "Error fetching supplier data", error = ex.Message });
             }
         }
+
+        //        [HttpGet("GetSupplierParticipationDetails/{tenderId}/{flag}")]
+        //        public async Task<IActionResult> GetSupplierParticipationDetails(int tenderId, int flag)
+        //        {
+        //            List<TenderSupplierParticipationDto> list = new List<TenderSupplierParticipationDto>();
+        //            string query = "";
+
+        //            if (flag == 1)
+        //            {
+        //                query = @"
+        //        SELECT 0 slno, ms.SCHSTATUSDID, t.tender_id, mas.name, ms.EMD, isnull(em.ReqEMDAMt,0) as ReqEMDAMt, 
+        //               isnull(em.submittedEMDAMT,0) as submittedEMDAMT, ms.TPAMOUNT, ms.EMDDOCTYPE, ms.EMDPATH, 
+        //               ms.EMDFILENAME, ms.TPFILENAME, ms.TPPATH, ms.EMDDOCNO, mas.supplier_id, ms.REMARK, 
+        //               isnull(piitem.cntparticipated,0) pitems, ms.ISELIGIBLE_B, ms.ISCovTechEli, ms.IsCOVFinEli, 
+        //               ms.CovATechRemarksBefore_OBClM, ms.CovAFINRemarksBefore_OBClM, dt.dtypename, t.csid
+        //        FROM tenders t
+        //        INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
+        //        INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
+        //        INNER JOIN MASDOCUMENTTYPE dt ON dt.dtypeid = ms.EMDDOCTYPE
+        //        LEFT OUTER JOIN (
+        //            SELECT count(ch.ITEMID) cntparticipated, sc.SCHEMEID, sc.SUPPLIERID 
+        //            FROM SCHEMESTATUSDETAILSCHILD ch
+        //            INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+        //            GROUP BY sc.SCHEMEID, sc.SUPPLIERID
+        //        ) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
+        //        LEFT OUTER JOIN (
+        //            SELECT SUPPLIERID, sum(emd_amount) ReqEMDAMt, emd as submittedEMDAMT, SCHEMEID
+        //            FROM (
+        //                SELECT ch.ITEMID, sc.SUPPLIERID, sc.EMD, ti.emd_amount, sc.SCHEMEID 
+        //                FROM SCHEMESTATUSDETAILSCHILD ch
+        //                INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+        //                INNER JOIN tender_items ti ON ti.item_id = ch.ITEMID AND ti.tender_id = sc.SCHEMEID
+        //                WHERE sc.SCHEMEID = @Tid
+        //            ) b GROUP BY SUPPLIERID, EMD, SCHEMEID
+        //        ) em ON em.SCHEMEID = t.tender_id AND em.SUPPLIERID = ms.SUPPLIERID
+        //        WHERE t.tender_id = @Tid
+        //        ORDER BY mas.name";
+        //            }
+        //            else if (flag == 2) 
+        //            {
+
+        //                query = @"select distinct 0 as SlNo,m.ITEM_ID,ti.tender_item_id,t.tender_id,m.item_name,m.item_code_as_per_tender,m.item_code
+        //,ti.emd_amount,ti.tender_quantity
+        // from tenders t
+        //inner join tender_items ti on ti.tender_id=t.tender_id
+        //inner join masitems m on m.item_id=ti.item_id
+        //left outer join 
+        //(
+        //select s.SCHEMEID,sc.ITEMID,count(sc.ITEMID) as nosQualified from schemestatusdetailschild sc 
+        //inner join masschemesstatusdetails s on s.SCHSTATUSDID=sc.SCHSTATUSDID
+        //where 1=1 --and  s.ISELIGIBLE_B='Y' and sc.FLAGCOB='Y' and FLAGCOC='Y' 
+        //group by s.SCHEMEID,sc.ITEMID
+        //) Q on Q.SCHEMEID=t.tender_id and q.ITEMID=m.item_id
+
+        //where 1=1  and   t.tender_id=@Tid and
+        //  q.ITEMID is not null";
+        //            }
+
+        //            else
+        //            {
+        //                query = @"
+        //        SELECT 0 as slno, ms.SCHSTATUSDID, t.tender_id, mas.name, ms.EMD, ms.TPAMOUNT, 
+        //               ms.EMDDOCTYPE, ms.EMDPATH, ms.EMDFILENAME, ms.TPFILENAME, ms.TPPATH, 
+        //               ms.EMDDOCNO, mas.supplier_id, ms.REMARK, isnull(piitem.cntparticipated, 0) as pitems, 
+        //               ms.ISELIGIBLE_B 
+        //        FROM tenders t
+        //        INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
+        //        INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
+        //        LEFT OUTER JOIN (
+        //            SELECT count(ch.ITEMID) as cntparticipated, sc.SCHEMEID, sc.SUPPLIERID 
+        //            FROM SCHEMESTATUSDETAILSCHILD ch
+        //            INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+        //            GROUP BY sc.SCHEMEID, sc.SUPPLIERID
+        //        ) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
+        //        WHERE t.tender_id = @Tid
+        //        ORDER BY mas.name";
+        //            }
+
+        //            try
+        //            {
+        //                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+        //                {
+        //                    SqlCommand cmd = new SqlCommand(query, conn);
+        //                    cmd.Parameters.AddWithValue("@Tid", tenderId);
+        //                    await conn.OpenAsync();
+
+        //                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+        //                    {
+        //                        int counter = 1;
+        //                        while (await reader.ReadAsync())
+        //                        {
+        //                            var item = new TenderSupplierParticipationDto
+        //                            {
+        //                                SlNo = counter++,
+        //                                SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]),
+        //                                TenderId = Convert.ToInt32(reader["tender_id"]),
+        //                                SupplierName = reader["name"]?.ToString() ?? "",
+        //                                Emd = Convert.ToDecimal(reader["EMD"]),
+        //                                TpAmount = Convert.ToDecimal(reader["TPAMOUNT"]),
+        //                                EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? "",
+        //                                EmdPath = reader["EMDPATH"]?.ToString() ?? "",
+        //                                EmdFileName = reader["EMDFILENAME"]?.ToString() ?? "",
+        //                                TpFileName = reader["TPFILENAME"]?.ToString() ?? "",
+        //                                TpPath = reader["TPPATH"]?.ToString() ?? "",
+        //                                EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? "",
+        //                                SupplierId = Convert.ToInt32(reader["supplier_id"]),
+        //                                Remark = reader["REMARK"]?.ToString() ?? "",
+        //                                PItems = Convert.ToInt32(reader["pitems"]),
+        //                                IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? ""
+        //                            };
+
+        //                            // Flag 1 ke extra fields handle karein
+        //                            if (flag == 1)
+        //                            {
+        //                                item.ReqEMDAMt = Convert.ToDecimal(reader["ReqEMDAMt"]);
+        //                                item.SubmittedEMDAMT = Convert.ToDecimal(reader["submittedEMDAMT"]);
+        //                                item.DTypeName = reader["dtypename"]?.ToString() ?? "";
+        //                                item.IsCovTechEli = reader["ISCovTechEli"]?.ToString() ?? "";
+        //                                item.IsCOVFinEli = reader["IsCOVFinEli"]?.ToString() ?? "";
+        //                                item.CovATechRemarksBefore_OBClM = reader["CovATechRemarksBefore_OBClM"]?.ToString() ?? "";
+        //                                item.CovAFINRemarksBefore_OBClM = reader["CovAFINRemarksBefore_OBClM"]?.ToString() ?? "";
+        //                                item.Csid = Convert.ToInt32(reader["csid"]);
+        //                            }
+
+        //                            list.Add(item);
+        //                        }
+        //                    }
+        //                }
+        //                return Ok(list);
+        //            }
+        //            catch (Exception ex)
+        //            {
+        //                return StatusCode(500, new { message = "Error fetching supplier data", error = ex.Message });
+        //            }
+        //        }
         //[HttpGet("GetSupplierParticipationDetails/{tenderId}")]
         //public async Task<IActionResult> GetSupplierParticipationDetails(int tenderId)
         //{
@@ -4232,7 +4395,7 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
 
                         using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
                         {
-                            if (await dr.ReadAsync()) // Single record return karega isliye 'if' use kiya hai
+                            if (await dr.ReadAsync()) 
                             {
                                 tenderDetails = new TenderDetailsDTO
                                 {
@@ -4268,6 +4431,71 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
                 return StatusCode(500, new { message = "Error fetching tender details", details = ex.Message });
             }
         }
+
+
+        [HttpGet("GetLiveTenderPrice/{tenderItemId}")]
+        public async Task<IActionResult> GetLiveTenderPrice(int tenderItemId)
+        {
+            var list = new List<LiveTenderPriceDTO>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Parameterized SQL Query (@TItemId)
+            string sql = @"SELECT 0 AS SlNo, tppriceid AS tpriceid, t.tender_item_id AS TID, t.basicrate, t.GST, 
+                          t.supplier_id AS supplierid, t.tpricestatus, s.name AS suppliername, 
+                          t.CMC1, t.CMC2, t.CMC3, t.CMC4, t.CMC5, t.filePathReagent, t.filePathAccessories, 
+                          t.fbasicrate, CONVERT(VARCHAR(10), t.fdate, 103) AS fdate, t.isaccept
+                   FROM live_tender_price t 
+                   INNER JOIN massuppliers s ON s.supplier_id = t.supplier_id
+                   WHERE t.tender_item_id = @TItemId";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@TItemId", tenderItemId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            int counter = 1;
+                            while (await dr.ReadAsync())
+                            {
+                                list.Add(new LiveTenderPriceDTO
+                                {
+                                    SlNo = counter++, // Frontend row index ke liye auto-increment
+                                    TPriceId = Convert.ToInt32(dr["tpriceid"]),
+                                    Tid = Convert.ToInt32(dr["TID"]),
+                                    BasicRate = dr["basicrate"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["basicrate"]),
+                                    Gst = dr["GST"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["GST"]),
+                                    SupplierId = Convert.ToInt32(dr["supplierid"]),
+                                    TPriceStatus = dr["tpricestatus"]?.ToString() ?? "",
+                                    SupplierName = dr["suppliername"]?.ToString() ?? "",
+                                    Cmc1 = dr["CMC1"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC1"]),
+                                    Cmc2 = dr["CMC2"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC2"]),
+                                    Cmc3 = dr["CMC3"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC3"]),
+                                    Cmc4 = dr["CMC4"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC4"]),
+                                    Cmc5 = dr["CMC5"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC5"]),
+                                    FilePathReagent = dr["filePathReagent"]?.ToString() ?? "",
+                                    FilePathAccessories = dr["filePathAccessories"]?.ToString() ?? "",
+                                    FBasicRate = dr["fbasicrate"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["fbasicrate"]),
+                                    FDate = dr["fdate"]?.ToString() ?? "",
+                                    IsAccept = dr["isaccept"]?.ToString() ?? ""
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching live tender price data", error = ex.Message });
+            }
+        }
+
+
 
 
     }

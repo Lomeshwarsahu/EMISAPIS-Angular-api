@@ -20,7 +20,10 @@ namespace EMISAPIS.Controllers
         [HttpGet("GetConTenterlist")]
         public async Task<IActionResult> GetConTenterlist()
         {
-            List<ConTenterlistDTO> list = new List<ConTenterlistDTO>();
+            List<ConTenterlistDTO> list = new List<ConTenterlistDTO>
+            {
+                new() { tender_id = 0, tender_no = "--All--" },
+            };
 
             string query = @"select distinct t.tender_no,t.tender_id
 from  contract_items c
