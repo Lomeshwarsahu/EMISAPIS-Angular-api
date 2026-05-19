@@ -1,6 +1,8 @@
 using EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using System.Globalization;
+using System.Linq;
 
 namespace EMISAPIS.Controllers
 {
@@ -259,23 +261,25 @@ ORDER BY b.po_date";
                 cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
                 cmd.Parameters.AddWithValue("@ItemCode", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim());
 
-                await using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
+                await using (var reader = await cmd.ExecuteReaderAsync())
                 {
-                    rows.Add(new PoReceiptDeskRowDto
+                    while (await reader.ReadAsync())
                     {
-                        PoItemId = Convert.ToInt32(reader["po_item_id"]),
-                        PoId = Convert.ToInt32(reader["po_id"]),
-                        ConsigneeId = Convert.ToInt32(reader["consignee_id"]),
-                        LocationName = reader["location_name"]?.ToString() ?? string.Empty,
-                        PoNo = reader["PO_NO"]?.ToString() ?? string.Empty,
-                        PoDate = reader["po_date"]?.ToString() ?? string.Empty,
-                        ItemName = reader["item_name"]?.ToString() ?? string.Empty,
-                        ItemCode = reader["item_code"]?.ToString() ?? string.Empty,
-                        SupplierName = reader["supplier_name"]?.ToString() ?? string.Empty,
-                        Quantity = reader["quantity"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["quantity"]),
-                        TotalPrice = reader["Total_Price"] == DBNull.Value ? null : Convert.ToDecimal(reader["Total_Price"]),
-                    });
+                        rows.Add(new PoReceiptDeskRowDto
+                        {
+                            PoItemId = Convert.ToInt32(reader["po_item_id"]),
+                            PoId = Convert.ToInt32(reader["po_id"]),
+                            ConsigneeId = Convert.ToInt32(reader["consignee_id"]),
+                            LocationName = reader["location_name"]?.ToString() ?? string.Empty,
+                            PoNo = reader["PO_NO"]?.ToString() ?? string.Empty,
+                            PoDate = reader["po_date"]?.ToString() ?? string.Empty,
+                            ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                            ItemCode = reader["item_code"]?.ToString() ?? string.Empty,
+                            SupplierName = reader["supplier_name"]?.ToString() ?? string.Empty,
+                            Quantity = reader["quantity"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["quantity"]),
+                            TotalPrice = reader["Total_Price"] == DBNull.Value ? null : Convert.ToDecimal(reader["Total_Price"]),
+                        });
+                    }
                 }
 
                 foreach (var row in rows)
@@ -289,6 +293,347 @@ ORDER BY b.po_date";
             {
                 return StatusCode(500, new { message = "Error loading PO receipt desk.", detail = ex.Message });
             }
+        }
+
+        // --- DMEFACHeads / ConsolidatedIndentDME_MC (also on api/DMEIndent after API restart) ---
+
+        [HttpGet("budget-heads")]
+        public async Task<IActionResult> GetBudgetHeads([FromQuery] int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "userId is required." });
+
+            const string sql = @"
+SELECT headID, headno, headName
+FROM dbo.DMEFACHead
+WHERE user_id = @UserId
+ORDER BY headName";
+
+            var list = new List<DmeFacHeadDto>();
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new DmeFacHeadDto
+                    {
+                        HeadId = Convert.ToInt32(reader["headID"]),
+                        HeadNo = reader["headno"]?.ToString() ?? string.Empty,
+                        HeadName = reader["headName"]?.ToString() ?? string.Empty,
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading budget heads.", detail = ex.Message });
+            }
+        }
+
+        [HttpPost("budget-heads")]
+        public async Task<IActionResult> CreateBudgetHead([FromBody] CreateDmeFacHeadRequest req)
+        {
+            if (req.UserId <= 0)
+                return BadRequest(new { message = "userId is required." });
+            if (string.IsNullOrWhiteSpace(req.HeadNo) || string.IsNullOrWhiteSpace(req.HeadName))
+                return BadRequest(new { message = "Head No and Head Name are required." });
+
+            const string sql = @"
+INSERT INTO dbo.DMEFACHead (headno, headName, user_id)
+VALUES (@HeadNo, @HeadName, @UserId)";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@HeadNo", req.HeadNo.Trim());
+                cmd.Parameters.AddWithValue("@HeadName", req.HeadName.Trim());
+                cmd.Parameters.AddWithValue("@UserId", req.UserId);
+                await cmd.ExecuteNonQueryAsync();
+                return Ok(new { message = "Budget Head Saved Successfully." });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error saving budget head.", detail = ex.Message });
+            }
+        }
+
+        [HttpGet("facility-indents")]
+        public async Task<IActionResult> GetFacilityIndents(
+            [FromQuery] int userId,
+            [FromQuery] int financialYearId = 0)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "userId is required." });
+
+            var sql = @"
+SELECT a.indentid, u.user_name, a.USER_ID,
+       CONVERT(VARCHAR(10), a.indentdate, 103) AS CONSOLIDATED_DATE,
+       SUM(B.dirappqty) AS FINAL_QTY,
+       COUNT(DISTINCT b.itemid) AS nosindentQTY,
+       CASE WHEN a.STATUS = 'I' THEN 'Incomplete' WHEN a.STATUS = 'C' THEN 'Completed' ELSE '' END AS EStatus,
+       CASE WHEN a.path IS NULL THEN 'Not Uploaded' ELSE 'Uploaded' END AS uploadStatus,
+       a.financial_year_id,
+       ISNULL(a.DispatchNo, '') AS DispatchNo,
+       CONVERT(VARCHAR, a.DispatchDT, 103) AS dispatchdate
+FROM dbo.mas_indentfacility a
+LEFT OUTER JOIN dbo.mas_item_indent b ON b.indentid = a.indentid
+INNER JOIN dbo.users u ON u.user_id = a.location_id
+WHERE a.directorate_id = 12 AND u.user_id = @UserId
+  AND (@FinancialYearId = 0 OR a.financial_year_id = @FinancialYearId)
+GROUP BY a.indentid, a.USER_ID, u.user_name, a.FINANCIAL_YEAR_ID, a.STATUS, a.indentdate,
+         a.path, a.DispatchNo, a.DispatchDT
+ORDER BY a.indentdate DESC";
+
+            var list = new List<FacilityIndentRowDto>();
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new FacilityIndentRowDto
+                    {
+                        IndentId = Convert.ToInt32(reader["indentid"]),
+                        McName = reader["user_name"]?.ToString() ?? string.Empty,
+                        UserId = Convert.ToInt32(reader["USER_ID"]),
+                        ConsolidatedDate = reader["CONSOLIDATED_DATE"]?.ToString() ?? string.Empty,
+                        AsLetterNo = string.Empty,
+                        AsDate = string.Empty,
+                        DispatchNo = reader["DispatchNo"]?.ToString() ?? string.Empty,
+                        DispatchDate = reader["dispatchdate"]?.ToString() ?? string.Empty,
+                        NosIndentQty = reader["nosindentQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["nosindentQTY"]),
+                        EStatus = reader["EStatus"]?.ToString() ?? string.Empty,
+                        UploadStatus = reader["uploadStatus"]?.ToString() ?? string.Empty,
+                        FinancialYearId = reader["financial_year_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["financial_year_id"]),
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading facility indents.", detail = ex.Message });
+            }
+        }
+
+        [HttpPost("facility-indents")]
+        public async Task<IActionResult> CreateFacilityIndent([FromBody] CreateFacilityIndentRequest req)
+        {
+            if (req.UserId <= 0)
+                return BadRequest(new { message = "userId is required." });
+            if (req.BudgetId <= 0 || req.FinancialYearId <= 0)
+                return BadRequest(new { message = "Budget and Financial Year are required." });
+            if (string.IsNullOrWhiteSpace(req.IndentDate) || string.IsNullOrWhiteSpace(req.AsDate))
+                return BadRequest(new { message = "Indent Date and AS Date are required." });
+
+            if (!TryParseLegacyDate(req.IndentDate, out var indentDt))
+                return BadRequest(new { message = "Invalid Indent Date. Use dd/MM/yyyy." });
+            if (!TryParseLegacyDate(req.AsDate, out var asDt))
+                return BadRequest(new { message = "Invalid AS Date. Use dd/MM/yyyy." });
+
+            if (indentDt.Date > DateTime.Today)
+                return BadRequest(new { message = "Indent Date cannot be greater than Today." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                var hasAsColumns = await TableHasColumnsAsync(conn, "mas_indentfacility", "ASLetterNo", "ASDate");
+                var sql = hasAsColumns
+                    ? @"INSERT INTO dbo.mas_indentfacility
+    (BUDGETID, indentdate, location_id, directorate_id, financial_year_id, status, entrydate, user_id, ASLetterNo, ASDate)
+VALUES
+    (@BudgetId, @IndentDate, @UserId, 12, @FinancialYearId, 'I', GETDATE(), @UserId, @AsLetterNo, @AsDate)"
+                    : @"INSERT INTO dbo.mas_indentfacility
+    (BUDGETID, indentdate, location_id, directorate_id, financial_year_id, status, entrydate, user_id)
+VALUES
+    (@BudgetId, @IndentDate, @UserId, 12, @FinancialYearId, 'I', GETDATE(), @UserId)";
+
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@BudgetId", req.BudgetId);
+                cmd.Parameters.AddWithValue("@IndentDate", indentDt);
+                cmd.Parameters.AddWithValue("@UserId", req.UserId);
+                cmd.Parameters.AddWithValue("@FinancialYearId", req.FinancialYearId);
+                if (hasAsColumns)
+                {
+                    cmd.Parameters.AddWithValue("@AsLetterNo", req.AsLetterNo.Trim());
+                    cmd.Parameters.AddWithValue("@AsDate", asDt);
+                }
+
+                await cmd.ExecuteNonQueryAsync();
+                return Ok(new { message = "Indent created successfully." });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error creating indent.", detail = ex.Message });
+            }
+        }
+
+        private static async Task<bool> TableHasColumnsAsync(SqlConnection conn, string tableName, params string[] columns)
+        {
+            var sql = @"
+SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = @Table
+  AND COLUMN_NAME IN (" + string.Join(", ", columns.Select((_, i) => $"@C{i}")) + ")";
+
+            await using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@Table", tableName);
+            for (var i = 0; i < columns.Length; i++)
+                cmd.Parameters.AddWithValue($"@C{i}", columns[i]);
+
+            var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+            return count == columns.Length;
+        }
+
+        // --- CMCdetail.aspx (also on api/DMEReports after API restart) ---
+
+        [HttpGet("cmc-items")]
+        public async Task<IActionResult> GetCmcItems()
+        {
+            const string sql = @"
+SELECT A.ITEM_CODE_AS_PER_TENDER, A.item_code_as_per_tender + '-' + A.item_name AS item_name
+FROM dbo.MASITEMS A
+INNER JOIN dbo.tender_items TI ON TI.item_id = A.item_id
+WHERE A.item_code_as_per_tender IS NOT NULL
+ORDER BY A.ITEM_CODE_AS_PER_TENDER";
+
+            var list = new List<CmcItemOptionDto> { new() { ItemCodeAsPerTender = "0", ItemName = "--ALL--" } };
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new CmcItemOptionDto
+                    {
+                        ItemCodeAsPerTender = reader["ITEM_CODE_AS_PER_TENDER"]?.ToString() ?? string.Empty,
+                        ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading items.", detail = ex.Message });
+            }
+        }
+
+        [HttpGet("cmc-tenders")]
+        public async Task<IActionResult> GetCmcTenders([FromQuery] string itemCode)
+        {
+            if (string.IsNullOrWhiteSpace(itemCode) || itemCode == "0")
+                return Ok(new List<CmcTenderOptionDto> { new() { TenderId = 0, TenderNo = "--Select--" } });
+
+            const string sql = @"
+SELECT i.item_id, t.tender_id, t.tender_no
+FROM dbo.masitems i
+INNER JOIN dbo.tender_items ti ON ti.item_id = i.item_id
+INNER JOIN dbo.tenders t ON t.tender_id = ti.tender_id
+WHERE i.item_code_as_per_tender = @ItemCode";
+
+            var list = new List<CmcTenderOptionDto> { new() { TenderId = 0, TenderNo = "--Select--" } };
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@ItemCode", itemCode.Trim());
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new CmcTenderOptionDto
+                    {
+                        TenderId = Convert.ToInt32(reader["tender_id"]),
+                        TenderNo = reader["tender_no"]?.ToString() ?? string.Empty,
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading tenders.", detail = ex.Message });
+            }
+        }
+
+        [HttpGet("cmc-detail")]
+        public async Task<IActionResult> GetCmcDetail(
+            [FromQuery] string? itemCode = null,
+            [FromQuery] int tenderId = 0)
+        {
+            var sql = @"
+SELECT i.item_id, t.tender_id, i.item_code, i.item_code_as_per_tender, i.item_name, t.tender_no,
+       tp.CMC1, tp.CMC2, tp.CMC3, tp.CMC4, tp.CMC5
+FROM dbo.masitems i
+INNER JOIN dbo.tender_items ti ON ti.item_id = i.item_id
+INNER JOIN dbo.tenders t ON t.tender_id = ti.tender_id
+INNER JOIN dbo.live_tender_price tp ON tp.tender_item_id = ti.tender_item_id
+WHERE 1 = 1
+  AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR i.item_code_as_per_tender = @ItemCode)
+  AND (@TenderId = 0 OR t.tender_id = @TenderId)
+ORDER BY i.item_code_as_per_tender";
+
+            var list = new List<CmcDetailRowDto>();
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@ItemCode", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim());
+                cmd.Parameters.AddWithValue("@TenderId", tenderId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new CmcDetailRowDto
+                    {
+                        ItemId = Convert.ToInt32(reader["item_id"]),
+                        TenderId = Convert.ToInt32(reader["tender_id"]),
+                        ItemCode = reader["item_code"]?.ToString() ?? string.Empty,
+                        ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? string.Empty,
+                        ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                        TenderNo = reader["tender_no"]?.ToString() ?? string.Empty,
+                        Cmc1 = reader["CMC1"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["CMC1"]),
+                        Cmc2 = reader["CMC2"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["CMC2"]),
+                        Cmc3 = reader["CMC3"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["CMC3"]),
+                        Cmc4 = reader["CMC4"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["CMC4"]),
+                        Cmc5 = reader["CMC5"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["CMC5"]),
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading CMC detail.", detail = ex.Message });
+            }
+        }
+
+        private static bool TryParseLegacyDate(string value, out DateTime result)
+        {
+            var formats = new[] { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd" };
+            return DateTime.TryParseExact(
+                value.Trim(),
+                formats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out result);
         }
 
         private static async Task<List<PoReceiptBatchDto>> LoadReceiptBatchesAsync(SqlConnection conn, int poId, int locationId)

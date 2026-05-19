@@ -100,16 +100,16 @@ SELECT a.indentid, u.user_name, a.USER_ID,
        COUNT(DISTINCT b.itemid) AS nosindentQTY,
        CASE WHEN a.STATUS = 'I' THEN 'Incomplete' WHEN a.STATUS = 'C' THEN 'Completed' ELSE '' END AS EStatus,
        CASE WHEN a.path IS NULL THEN 'Not Uploaded' ELSE 'Uploaded' END AS uploadStatus,
-       a.financial_year_id, a.ASLetterNo,
-       CONVERT(VARCHAR, a.ASDate, 103) AS ASDate,
-       a.DispatchNo, CONVERT(VARCHAR, a.DispatchDT, 103) AS dispatchdate
+       a.financial_year_id,
+       ISNULL(a.DispatchNo, '') AS DispatchNo,
+       CONVERT(VARCHAR, a.DispatchDT, 103) AS dispatchdate
 FROM dbo.mas_indentfacility a
 LEFT OUTER JOIN dbo.mas_item_indent b ON b.indentid = a.indentid
 INNER JOIN dbo.users u ON u.user_id = a.location_id
 WHERE a.directorate_id = 12 AND u.user_id = @UserId
   AND (@FinancialYearId = 0 OR a.financial_year_id = @FinancialYearId)
 GROUP BY a.indentid, a.USER_ID, u.user_name, a.FINANCIAL_YEAR_ID, a.STATUS, a.indentdate,
-         a.path, a.ASLetterNo, a.ASDate, a.DispatchNo, a.DispatchDT
+         a.path, a.DispatchNo, a.DispatchDT
 ORDER BY a.indentdate DESC";
 
             var list = new List<FacilityIndentRowDto>();
@@ -129,8 +129,8 @@ ORDER BY a.indentdate DESC";
                         McName = reader["user_name"]?.ToString() ?? string.Empty,
                         UserId = Convert.ToInt32(reader["USER_ID"]),
                         ConsolidatedDate = reader["CONSOLIDATED_DATE"]?.ToString() ?? string.Empty,
-                        AsLetterNo = reader["ASLetterNo"]?.ToString() ?? string.Empty,
-                        AsDate = reader["ASDate"]?.ToString() ?? string.Empty,
+                        AsLetterNo = string.Empty,
+                        AsDate = string.Empty,
                         DispatchNo = reader["DispatchNo"]?.ToString() ?? string.Empty,
                         DispatchDate = reader["dispatchdate"]?.ToString() ?? string.Empty,
                         NosIndentQty = reader["nosindentQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["nosindentQTY"]),
