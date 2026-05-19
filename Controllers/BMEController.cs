@@ -837,6 +837,14 @@ inner join masitemP p on p.PID=m.pid
                 where 1=1 and csid in (2) and financial_year_id>=15 
                 and cover_a is not null order by cover_a desc ";
             }
+            else if (mode == 4)
+            {
+                //strcsid = " and csid in (2) and isgemTender = 'Y'";
+
+                //whUnderObjectClaim = " ";
+                sql = @"select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders
+            where 1=1 and csid in (2) and isgemTender = 'Y' and financial_year_id>=15 and cover_a is not null  order by cover_a desc ";
+            }
             else
             {
                 return BadRequest(new { message = "Invalid Mode" });
@@ -857,7 +865,7 @@ inner join masitemP p on p.PID=m.pid
                                 {
                                     Tenderid = Convert.ToInt32(dr["tender_id"]),
                                     // FIX: Mode 1 aur Mode 3 dono mein column ka naam "name" hai
-                                    Tenderno = (mode == 1 || mode == 3) ? dr["name"].ToString() : dr["tender_no"].ToString()
+                                    Tenderno = (mode == 1 || mode == 3 || mode == 4) ? dr["name"].ToString() : dr["tender_no"].ToString()
                                 });
                             }
                             //while (await dr.ReadAsync())
@@ -4195,6 +4203,71 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
         }
 
 
+
+        [HttpGet("GetTenderDetails/{tenderId}")]
+        public async Task<IActionResult> GetTenderDetails(int tenderId)
+        {
+          
+            TenderDetailsDTO tenderDetails = null;
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Aapki exact query with parameters (@Tid)
+            string sql = @"SELECT A.TENDER_NO, B.YEAR AS FINANCIAL_YEAR, A.domestic_days, A.import_days, A.warranty_year,
+                          CONVERT(VARCHAR(10), A.TENDER_DATE, 103) AS TENDER_DATE, A.TENDER_DESCRIPTION, A.FLAG, 
+                          A.FINANCIAL_YEAR_ID, A.tender_id, CONVERT(VARCHAR(10), A.cover_a, 103) AS cover_a, 
+                          CONVERT(VARCHAR(10), A.cover_b, 103) AS cover_b, CONVERT(VARCHAR(10), A.cover_Demo, 103) AS cover_Demo,
+                          CONVERT(VARCHAR(10), A.cover_c, 103) AS cover_c
+                   FROM TENDERS A
+                   LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON (A.FINANCIAL_YEAR_ID = B.FINANCIAL_YEAR_ID)
+                   WHERE A.TENDER_ID = @Tid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Tid", tenderId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            if (await dr.ReadAsync()) // Single record return karega isliye 'if' use kiya hai
+                            {
+                                tenderDetails = new TenderDetailsDTO
+                                {
+                                    TenderNo = dr["TENDER_NO"]?.ToString(),
+                                    FinancialYear = dr["FINANCIAL_YEAR"]?.ToString(),
+                                    DomesticDays = dr["domestic_days"] == DBNull.Value ? null : (int?)Convert.ToInt32(dr["domestic_days"]),
+                                    ImportDays = dr["import_days"] == DBNull.Value ? null : (int?)Convert.ToInt32(dr["import_days"]),
+                                    WarrantyYear = dr["warranty_year"] == DBNull.Value ? null : (int?)Convert.ToInt32(dr["warranty_year"]),
+                                    TenderDate = dr["TENDER_DATE"]?.ToString(),
+                                    TenderDescription = dr["TENDER_DESCRIPTION"]?.ToString(),
+                                    Flag = dr["FLAG"]?.ToString(),
+                                    FinancialYearId = dr["FINANCIAL_YEAR_ID"] == DBNull.Value ? null : (int?)Convert.ToInt32(dr["FINANCIAL_YEAR_ID"]),
+                                    TenderId = Convert.ToInt32(dr["tender_id"]),
+                                    CoverA = dr["cover_a"]?.ToString(),
+                                    CoverB = dr["cover_b"]?.ToString(),
+                                    CoverDemo = dr["cover_Demo"]?.ToString(),
+                                    CoverC = dr["cover_c"]?.ToString()
+                                };
+                            }
+                        }
+                    }
+                }
+
+                if (tenderDetails == null)
+                {
+                    return NotFound(new { message = $"Tender details not found for ID: {tenderId}" });
+                }
+
+                return Ok(tenderDetails);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching tender details", details = ex.Message });
+            }
+        }
 
 
     }

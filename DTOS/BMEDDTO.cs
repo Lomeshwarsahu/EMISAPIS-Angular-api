@@ -785,4 +785,22 @@ namespace EMISAPIS.DTOS
         public DateTime? EntryDate { get; set; }
     }
 
+    public class TenderDetailsDTO
+    {
+        public string TenderNo { get; set; }
+        public string FinancialYear { get; set; }
+        public int? DomesticDays { get; set; }
+        public int? ImportDays { get; set; }
+        public int? WarrantyYear { get; set; }
+        public string TenderDate { get; set; }
+        public string TenderDescription { get; set; }
+        public string Flag { get; set; }
+        public int? FinancialYearId { get; set; }
+        public int TenderId { get; set; }
+        public string CoverA { get; set; }
+        public string CoverB { get; set; }
+        public string CoverDemo { get; set; }
+        public string CoverC { get; set; }
+    }
+
 }
