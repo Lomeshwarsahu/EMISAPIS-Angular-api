@@ -391,9 +391,17 @@ WHERE user_name = @Username
 
         private static string TryReadOptionalString(SqlDataReader reader, string columnName)
         {
-            return reader[columnName] != DBNull.Value
-                ? reader[columnName].ToString()
-                : string.Empty;
+            try
+            {
+                int ordinal = reader.GetOrdinal(columnName);
+                return reader.IsDBNull(ordinal)
+                    ? string.Empty
+                    : reader.GetValue(ordinal)?.ToString() ?? string.Empty;
+            }
+            catch (IndexOutOfRangeException)
+            {
+                return string.Empty;
+            }
         }
 
       
