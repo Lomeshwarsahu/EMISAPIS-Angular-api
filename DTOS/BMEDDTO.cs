@@ -861,5 +861,81 @@ namespace EMISAPIS.DTOS
         public string FDate { get; set; } // Agar date formatted chahiye toh string sahi hai
         public string IsAccept { get; set; }
     }
+    public class TenderRejectRequestDto
+    {
+        public int TenderItemId { get; set; } 
+        public DateTime RejectDate { get; set; } 
+    }
+
+    //public class TenderAcceptRequestDto
+    //{
+    //    public int TPriceId { get; set; } // lbltpriceid
+    //    public decimal NegoPrice { get; set; } // txtnegoprice
+    //    public DateTime NegoDate { get; set; } // txtnegodate (Frontend standard format automatically converts)
+
+    //    // CMC Fields
+    //    public decimal Cmc1 { get; set; }
+    //    public decimal Cmc2 { get; set; }
+    //    public decimal Cmc3 { get; set; }
+    //    public decimal Cmc4 { get; set; }
+    //    public decimal Cmc5 { get; set; }
+
+    //    // Multi-part PDF Upload Files
+    //    public IFormFile? FileUploadReagent { get; set; }
+    //    public IFormFile? FileUploadAccessories { get; set; }
+    //}
+    public class TenderAcceptRequestDto
+    {
+        public int TPriceId { get; set; }
+        public decimal NegoPrice { get; set; }
+        public DateTime NegoDate { get; set; } // Frontend standard 'yyyy-MM-dd' auto-parse hoga
+
+        // CMC Year Rates
+        public decimal Cmc1 { get; set; }
+        public decimal Cmc2 { get; set; }
+        public decimal Cmc3 { get; set; }
+        public decimal Cmc4 { get; set; }
+        public decimal Cmc5 { get; set; }
+
+        // IFormFile handles dynamic multipart/form-data uploads
+        public IFormFile? FileUploadReagent { get; set; }
+        public IFormFile? FileUploadAccessories { get; set; }
+    }
+    public class GetDMElistDTO
+    {
+     
+        public int USER_ID { get; set; }
+        public string e_mail_id { get; set; }
+        public string USER_NAME { get; set; }
+        public string designation { get; set; }
+
+
+    }
+    public class IndentConsolidationDto
+    {
+        public string Path { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public int IndentConsolidationId { get; set; }
+        public int UserId { get; set; }
+        public int DirectorateId { get; set; }
+        public int FinancialYearId { get; set; }
+        public decimal ProposedQty { get; set; } // SUM aggregation
+        public string IndentConNo { get; set; } = string.Empty;
+        public string ConsolidatedDate { get; set; } = string.Empty; // Format 103 (DD/MM/YYYY)
+        public decimal FinalQty { get; set; } // SUM aggregation
+        public int NosIndentQty { get; set; } // COUNT DISTINCT aggregation
+        public string EStatus { get; set; } = string.Empty; // Incomplete / Completed
+        public string UploadStatus { get; set; } = string.Empty; // Uploaded / Not Uploaded
+        public string UserName { get; set; } = string.Empty;
+    }
+    public class IndentSaveRequestDto
+    {
+        public string IndentDateStr { get; set; } = string.Empty; // Format: "YYYY-MM-DD" ya "DD/MM/YYYY"
+        public int FinancialYearId { get; set; } // ddlYear.SelectedValue
+        public int SelectedUserId { get; set; } // ddlFAc.SelectedValue
+        public string IndentDescription { get; set; } = string.Empty; // txtIndentDescription.Text
+        public int DirectorateId { get; set; } // getDirectratedId() ki value frontend se pass karein
+    }
+
 
 }

@@ -18,10 +18,14 @@ namespace EMISAPIS.Controllers
     {
         private readonly IConfiguration _config;
 
-        public BMEController(IConfiguration config)
+        public BMEController(IConfiguration config, IWebHostEnvironment env)
         {
             _config = config;
+            _env = env;
         }
+
+        private readonly IWebHostEnvironment _env;
+
 
 
         [HttpGet("GetSupplierlist")]
@@ -4495,8 +4499,537 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
             }
         }
 
+        [HttpPost("RejectTenderItem")]
+        public async Task<IActionResult> RejectTenderItem([FromBody] TenderRejectRequestDto request)
+        {
+         
+            if (request.RejectDate == DateTime.MinValue)
+            {
+                return BadRequest(new { message = "Invalid reject date provided." });
+            }
+
+            if (request.TenderItemId <= 0)
+            {
+                return BadRequest(new { message = "Invalid Tender Item ID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            
+            string sql = @"
+        -- 1. First Update Query
+        UPDATE live_tender_price 
+        SET IsAccept = 'N' 
+        WHERE tender_item_id = @TItemId;
+
+        -- 2. Second Update Query
+        UPDATE tender_items 
+        SET RejectDate = @RejectDate, priceflag = 'N' 
+        WHERE tender_item_id = @TItemId;";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        // SQL Parameters binding
+                        cmd.Parameters.AddWithValue("@TItemId", request.TenderItemId);
+                        cmd.Parameters.AddWithValue("@RejectDate", request.RejectDate);
+
+                        await conn.OpenAsync();
+                        int rowsAffected = await cmd.ExecuteNonQueryAsync();
+
+                        if (rowsAffected > 0)
+                        {
+                            return Ok(new { message = "Item rejected and data updated successfully." });
+                        }
+                        else
+                        {
+                            return NotFound(new { message = "No records found to update for the given Tender Item ID." });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error during rejection update", error = ex.Message });
+            }
+        }
 
 
+
+        [HttpPost("AcceptTenderPrice")]
+        public async Task<IActionResult> AcceptTenderPrice([FromForm] TenderAcceptRequestDto request)
+        {
+            // 1. Basic Server Side Validations
+            if (request.TPriceId <= 0)
+                return BadRequest(new { message = "Invalid Tender Price ID." });
+
+            if (request.Cmc1 <= 0 || request.Cmc2 <= 0 || request.Cmc3 <= 0 || request.Cmc4 <= 0 || request.Cmc5 <= 0)
+                return BadRequest(new { message = "All CMC Years (1-5) are mandatory and must be greater than zero." });
+
+            // 2. File Format Validations (.pdf only)
+            if (request.FileUploadReagent != null && Path.GetExtension(request.FileUploadReagent.FileName).ToLower() != ".pdf")
+                return BadRequest(new { message = "Please upload a valid PDF file for Reagent." });
+
+            if (request.FileUploadAccessories != null && Path.GetExtension(request.FileUploadAccessories.FileName).ToLower() != ".pdf")
+                return BadRequest(new { message = "Please upload a valid PDF file for Accessories." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // 3. File Directory Path Configurations (Root/Uploads/Tenders)
+            string uploadFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Tenders");
+            if (!Directory.Exists(uploadFolder))
+            {
+                Directory.CreateDirectory(uploadFolder); // Folder nahi hai toh auto-create karega
+            }
+
+            // WebForms layout naming strategy strings
+            string reagentFileName = "";
+            string accessoriesFileName = "";
+
+            try
+            {
+                // --- A. PROCESS REAGENT FILE UPLOAD ---
+                if (request.FileUploadReagent != null)
+                {
+                    reagentFileName = $"Reagent_{request.TPriceId}.pdf";
+                    string fullPath = Path.Combine(uploadFolder, reagentFileName);
+
+                    // Save file inside destination disk folder location
+                    using (var stream = new FileStream(fullPath, FileMode.Create))
+                    {
+                        await request.FileUploadReagent.CopyToAsync(stream);
+                    }
+                }
+
+                // --- B. PROCESS ACCESSORIES FILE UPLOAD ---
+                if (request.FileUploadAccessories != null)
+                {
+                    accessoriesFileName = $"Acc_{request.TPriceId}.pdf";
+                    string fullPath = Path.Combine(uploadFolder, accessoriesFileName);
+
+                    using (var stream = new FileStream(fullPath, FileMode.Create))
+                    {
+                        await request.FileUploadAccessories.CopyToAsync(stream);
+                    }
+                }
+
+                // --- C. SQL DATABASE TRANSACTION UPDATE ---
+                // Conditional execution constructs string values directly inside parametrized architecture
+                string sql = @"UPDATE live_tender_price 
+                           SET fbasicrate = @NegoPrice, 
+                               fdate = @NegoDate, 
+                               IsAccept = 'Y', 
+                               CMC1 = @C1, CMC2 = @C2, CMC3 = @C3, CMC4 = @C4, CMC5 = @C5,
+                               isMongoReagent = CASE WHEN @ReagentFile <> '' THEN 'Y' ELSE isMongoReagent END,
+                               filePathReagent = CASE WHEN @ReagentFile <> '' THEN @ReagentFile ELSE filePathReagent END,
+                               isMongoAccessories = CASE WHEN @AccFile <> '' THEN 'Y' ELSE isMongoAccessories END,
+                               filePathAccessories = CASE WHEN @AccFile <> '' THEN @AccFile ELSE filePathAccessories END
+                           WHERE tPpriceid = @Id";
+
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@NegoPrice", request.NegoPrice);
+                        cmd.Parameters.AddWithValue("@NegoDate", request.NegoDate);
+                        cmd.Parameters.AddWithValue("@C1", request.Cmc1);
+                        cmd.Parameters.AddWithValue("@C2", request.Cmc2);
+                        cmd.Parameters.AddWithValue("@C3", request.Cmc3);
+                        cmd.Parameters.AddWithValue("@C4", request.Cmc4);
+                        cmd.Parameters.AddWithValue("@C5", request.Cmc5);
+                        cmd.Parameters.AddWithValue("@ReagentFile", reagentFileName);
+                        cmd.Parameters.AddWithValue("@AccFile", accessoriesFileName);
+                        cmd.Parameters.AddWithValue("@Id", request.TPriceId);
+
+                        await conn.OpenAsync();
+                        int rows = await cmd.ExecuteNonQueryAsync();
+
+                        if (rows > 0)
+                        {
+                            return Ok(new { message = "Data updated and files saved to server folder successfully." });
+                        }
+                        else
+                        {
+                            return NotFound(new { message = "Tender record target ID instance not found." });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error processing upload data transaction.", error = ex.Message });
+            }
+        }
+        //[HttpPost("AcceptTenderPrice")]
+        //public async Task<IActionResult> AcceptTenderPrice([FromForm] TenderAcceptRequestDto request)
+        //{
+        //    // 1. Core Input Server-side Validations
+        //    if (request.TPriceId <= 0)
+        //        return BadRequest(new { message = "Invalid Tender Price ID." });
+
+        //    if (request.Cmc1 <= 0 || request.Cmc2 <= 0 || request.Cmc3 <= 0 || request.Cmc4 <= 0 || request.Cmc5 <= 0)
+        //        return BadRequest(new { message = "CMC Years 1 to 5 values should not be empty or zero." });
+
+        //    // 2. File Format Validations (.pdf only)
+        //    if (request.FileUploadReagent != null && Path.GetExtension(request.FileUploadReagent.FileName).ToLower() != ".pdf")
+        //        return BadRequest(new { message = "Please choose a valid PDF file for Reagent Document." });
+
+        //    if (request.FileUploadAccessories != null && Path.GetExtension(request.FileUploadAccessories.FileName).ToLower() != ".pdf")
+        //        return BadRequest(new { message = "Please choose a valid PDF file for Accessories Document." });
+
+        //    string connString = _config.GetConnectionString("DefaultConnection");
+
+        //    string filenameIns = $"Reagent{request.TPriceId}";
+        //    string filenameIns2 = $"Acc{request.TPriceId}";
+
+        //    try
+        //    {
+        //        using (SqlConnection conn = new SqlConnection(connString))
+        //        {
+        //            await conn.OpenAsync();
+
+        //            // --- A. HANDLE REAGENT FILE BINARY UPLOAD (If exists) ---
+        //            if (request.FileUploadReagent != null)
+        //            {
+        //                byte[] reagentBytes;
+        //                using (var ms = new MemoryStream())
+        //                {
+        //                    await request.FileUploadReagent.CopyToAsync(ms);
+        //                    reagentBytes = ms.ToArray();
+        //                }
+
+        //                // Custom Binary Storage Call (Puraane Obj.Insert_Reagent_File ki exact replacement query)
+        //                string fileInsertSql = @"INSERT INTO Student_Info_Table (item_detail_id, InstalationReportFile, FilePhoto, ext) 
+        //                                 VALUES (@Id, @FileName, @Bytes, @Ext)";
+        //                using (SqlCommand fileCmd = new SqlCommand(fileInsertSql, conn))
+        //                {
+        //                    fileCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+        //                    fileCmd.Parameters.AddWithValue("@FileName", filenameIns);
+        //                    fileCmd.Parameters.AddWithValue("@Bytes", reagentBytes);
+        //                    fileCmd.Parameters.AddWithValue("@Ext", ".pdf");
+        //                    await fileCmd.ExecuteNonQueryAsync();
+        //                }
+
+        //                // Update Mongo Reference flag on live price
+        //                string updateRefSql = "UPDATE live_tender_price SET isMongoReagent = 'Y', filePathReagent = @FilePath WHERE tPpriceid = @Id";
+        //                using (SqlCommand refCmd = new SqlCommand(updateRefSql, conn))
+        //                {
+        //                    refCmd.Parameters.AddWithValue("@FilePath", filenameIns);
+        //                    refCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+        //                    await refCmd.ExecuteNonQueryAsync();
+        //                }
+        //            }
+
+        //            // --- B. HANDLE ACCESSORIES FILE BINARY UPLOAD (If exists) ---
+        //            if (request.FileUploadAccessories != null)
+        //            {
+        //                byte[] accBytes;
+        //                using (var ms = new MemoryStream())
+        //                {
+        //                    await request.FileUploadAccessories.CopyToAsync(ms);
+        //                    accBytes = ms.ToArray();
+        //                }
+
+        //                string fileInsertSql = @"INSERT INTO Student_Info_Table_Acc (item_detail_id, InstalationReportFile, FilePhoto, ext) 
+        //                                 VALUES (@Id, @FileName, @Bytes, @Ext)";
+        //                using (SqlCommand fileCmd = new SqlCommand(fileInsertSql, conn))
+        //                {
+        //                    fileCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+        //                    fileCmd.Parameters.AddWithValue("@FileName", filenameIns2);
+        //                    fileCmd.Parameters.AddWithValue("@Bytes", accBytes);
+        //                    fileCmd.Parameters.AddWithValue("@Ext", ".pdf");
+        //                    await fileCmd.ExecuteNonQueryAsync();
+        //                }
+
+        //                string updateRefSql = "UPDATE live_tender_price SET isMongoAccessories = 'Y', filePathAccessories = @FilePath WHERE tPpriceid = @Id";
+        //                using (SqlCommand refCmd = new SqlCommand(updateRefSql, conn))
+        //                {
+        //                    refCmd.Parameters.AddWithValue("@FilePath", filenameIns2);
+        //                    refCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+        //                    await refCmd.ExecuteNonQueryAsync();
+        //                }
+        //            }
+
+        //            // --- C. FINAL CORE TRANSACTION RECORD UPDATE ---
+        //            string finalUpdateSql = @"UPDATE live_tender_price 
+        //                              SET fbasicrate = @NegoPrice, 
+        //                                  fdate = @NegoDate, 
+        //                                  IsAccept = 'Y', 
+        //                                  CMC1 = @C1, CMC2 = @C2, CMC3 = @C3, CMC4 = @C4, CMC5 = @C5 
+        //                              WHERE tPpriceid = @Id";
+
+        //            using (SqlCommand finalCmd = new SqlCommand(finalUpdateSql, conn))
+        //            {
+        //                finalCmd.Parameters.AddWithValue("@NegoPrice", request.NegoPrice);
+        //                finalCmd.Parameters.AddWithValue("@NegoDate", request.NegoDate);
+        //                finalCmd.Parameters.AddWithValue("@C1", request.Cmc1);
+        //                finalCmd.Parameters.AddWithValue("@C2", request.Cmc2);
+        //                finalCmd.Parameters.AddWithValue("@C3", request.Cmc3);
+        //                finalCmd.Parameters.AddWithValue("@C4", request.Cmc4);
+        //                finalCmd.Parameters.AddWithValue("@C5", request.Cmc5);
+        //                finalCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+
+        //                int rows = await finalCmd.ExecuteNonQueryAsync();
+        //                if (rows > 0)
+        //                {
+        //                    return Ok(new { message = "Tender details accepted and saved successfully." });
+        //                }
+        //            }
+        //        }
+
+        //        return BadRequest(new { message = "Failed to update tender price records." });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, new { message = "Error processing accepted values", error = ex.Message });
+        //    }
+        //}
+
+        [HttpGet("GetDMElist")]
+
+        public async Task<IActionResult> GetDMElist()
+        {
+            List<GetDMElistDTO> list = new List<GetDMElistDTO>();
+            string query = @"select USER_ID,e_mail_id,USER_NAME,designation from users where authority=12 and user_id!=12";
+            using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+            {
+                SqlCommand cmd = new SqlCommand(query, conn);
+
+                await conn.OpenAsync();
+
+                SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    GetDMElistDTO data = new GetDMElistDTO
+                    {
+                        //                     public int USER_ID { get; set; }
+                        //public string e_mail_id { get; set; }
+                        //public string USER_NAME { get; set; }
+                        //public string designation { get; set; }
+                        USER_ID = reader["USER_ID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["USER_ID"]),
+
+                        e_mail_id = reader["e_mail_id"] == DBNull.Value ? null : reader["e_mail_id"].ToString(),
+                        USER_NAME = reader["USER_NAME"] == DBNull.Value ? null : reader["USER_NAME"].ToString(),
+                        designation = reader["designation"] == DBNull.Value ? null : reader["designation"].ToString(),
+
+                    };
+
+                    list.Add(data);
+                }
+
+                return Ok(list);
+            }
+
+        }
+
+        [HttpGet("GetIndentConsolidationList/{directorateId}/{userId}/{financialYearId}")]
+        public async Task<IActionResult> GetIndentConsolidationList(int directorateId, int userId, int financialYearId)
+        {
+            // Basic Request Constraints Rules Checks
+            if (directorateId <= 0 || userId <= 0 || financialYearId <= 0)
+            {
+                return BadRequest(new { message = "Invalid lookup filter criteria IDs provided." });
+            }
+
+            var list = new List<IndentConsolidationDto>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Exact SQL execution layout parameterized to eliminate injection vulnerabilities
+            string sql = @"
+        SELECT A.path, A.description, A.INDENT_CONSOLIDATION_ID, A.USER_ID, A.DIRECTORATE_ID, A.FINANCIAL_YEAR_ID, 
+               SUM(B.PROPOSED_QTY) AS PROPOSED_QTY, A.indent_con_no,
+               CONVERT(VARCHAR(10), A.CONSOLIDATED_DATE, 103) AS CONSOLIDATED_DATE, 
+               SUM(B.FINAL_QTY) AS FINAL_QTY, 
+               COUNT(DISTINCT B.item_id) AS nosindentQTY,
+               (CASE WHEN A.STATUS = 'I' THEN 'Incomplete' WHEN A.STATUS = 'C' THEN 'Completed' ELSE '' END) AS EStatus,
+               (SELECT (CASE WHEN path IS NULL THEN 'Not Uploaded' ELSE 'Uploaded' END) 
+                FROM INDENT_CONSOLIDATION WHERE indent_consolidation_id = A.INDENT_CONSOLIDATION_ID) AS uploadStatus,
+               U.user_name
+        FROM INDENT_CONSOLIDATION A 
+        LEFT OUTER JOIN INDENT_CONS_ITEMS B ON (B.INDENT_CONSOLIDATED_ID = A.INDENT_CONSOLIDATION_ID)
+        INNER JOIN users U ON U.user_id = A.user_id		
+        WHERE A.directorate_id = @DirectorateId AND A.USER_ID = @UserId AND A.financial_year_id = @FinYearId
+        GROUP BY A.INDENT_CONSOLIDATION_ID, A.USER_ID, U.user_name, A.DIRECTORATE_ID, A.FINANCIAL_YEAR_ID, 
+                 A.STATUS, A.CONSOLIDATED_DATE, A.indent_con_no, A.path, A.description
+        ORDER BY A.CONSOLIDATED_DATE DESC";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        // Assign Route Parameters safely to SQL Tokens
+                        cmd.Parameters.AddWithValue("@DirectorateId", directorateId);
+                        cmd.Parameters.AddWithValue("@UserId", userId);
+                        cmd.Parameters.AddWithValue("@FinYearId", financialYearId);
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                list.Add(new IndentConsolidationDto
+                                {
+                                    Path = dr["path"] == DBNull.Value ? string.Empty : dr["path"].ToString(),
+                                    Description = dr["description"] == DBNull.Value ? string.Empty : dr["description"].ToString(),
+                                    IndentConsolidationId = Convert.ToInt32(dr["INDENT_CONSOLIDATION_ID"]),
+                                    UserId = Convert.ToInt32(dr["USER_ID"]),
+                                    DirectorateId = Convert.ToInt32(dr["DIRECTORATE_ID"]),
+                                    FinancialYearId = Convert.ToInt32(dr["FINANCIAL_YEAR_ID"]),
+
+                                    // Aggregated decimal data conversions
+                                    ProposedQty = dr["PROPOSED_QTY"] == DBNull.Value ? 0m : Convert.ToDecimal(dr["PROPOSED_QTY"]),
+                                    FinalQty = dr["FINAL_QTY"] == DBNull.Value ? 0m : Convert.ToDecimal(dr["FINAL_QTY"]),
+                                    NosIndentQty = dr["nosindentQTY"] == DBNull.Value ? 0 : Convert.ToInt32(dr["nosindentQTY"]),
+
+                                    // Calculated alias string representations
+                                    IndentConNo = dr["indent_con_no"]?.ToString() ?? string.Empty,
+                                    ConsolidatedDate = dr["CONSOLIDATED_DATE"]?.ToString() ?? string.Empty,
+                                    EStatus = dr["EStatus"]?.ToString() ?? string.Empty,
+                                    UploadStatus = dr["uploadStatus"]?.ToString() ?? string.Empty,
+                                    UserName = dr["user_name"]?.ToString() ?? string.Empty
+                                });
+                            }
+                        }
+                    }
+                }
+
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error pulling consolidated indents data grid.", error = ex.Message });
+            }
+        }
+
+
+        [HttpPost("SaveIndentConsolidation")]
+        public async Task<IActionResult> SaveIndentConsolidation([FromBody] IndentSaveRequestDto request)
+        {
+            // --- 1. CORE DATE PARSING ---
+            DateTime receivedDT;
+
+            // YYYY-MM-DD format (Curl/Angular) aur DD/MM/YYYY dono ko parse karne ke liye custom formats rule array
+            string[] allowedFormats = { "yyyy-MM-dd", "dd/MM/yyyy", "yyyy-MM-dd HH:mm:ss" };
+
+            if (!DateTime.TryParseExact(request.IndentDateStr, allowedFormats,
+                                        System.Globalization.CultureInfo.InvariantCulture,
+                                        System.Globalization.DateTimeStyles.None, out receivedDT))
+            {
+                return BadRequest(new { message = "Invalid Indent Date format provided. Use YYYY-MM-DD or DD/MM/YYYY." });
+            }
+
+            // Validation A: Date Future mein nahi honi chahiye (Exact WebForms Logic)
+            if (receivedDT > DateTime.Now)
+            {
+                return BadRequest(new { message = "Indent Date cannot be greater than Today" });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    // --- 2. FINANCIAL YEAR BOUNDARY VALIDATION ---
+                    // Agar database table me boundaries missing hain, toh ye filter bypass ya safe condition handle karega
+                    //string checkYearSql = @"SELECT year FROM MAS_FINANCIAL_YEAR 
+                    //                WHERE FINANCIAL_YEAR_ID = @FinYearId";
+
+                    //using (SqlCommand checkCmd = new SqlCommand(checkYearSql, conn))
+                    //{
+                    //    checkCmd.Parameters.AddWithValue("@FinYearId", request.FinancialYearId);
+                    //    int yearExists = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
+
+                    //    if (yearExists == 0)
+                    //    {
+                    //        return BadRequest(new { message = "Indent Date is Not valid for the Selected Year" });
+                    //    }
+                    //}
+                    // --- 2. FINANCIAL YEAR AND DATE MATCH VALIDATION ---
+                    string checkYearSql = @"SELECT year FROM MAS_FINANCIAL_YEAR 
+                        WHERE FINANCIAL_YEAR_ID = @FinYearId";
+
+                    using (SqlCommand checkCmd = new SqlCommand(checkYearSql, conn))
+                    {
+                        checkCmd.Parameters.AddWithValue("@FinYearId", request.FinancialYearId);
+
+                        // ExecuteScalar se direct 'year' column ki value string me nikalenge
+                        object yearResult = await checkCmd.ExecuteScalarAsync();
+
+                        if (yearResult == null)
+                        {
+                            return BadRequest(new { message = "Selected Financial Year does not exist." });
+                        }
+
+                        string dbYearStr = yearResult.ToString(); // Example: "2025-2026" ya "2025"
+                        int selectedDateYear = receivedDT.Year;   // Maan lijiye input date '2026-02-05' hai toh ye 2026 dega
+
+                        // Check karein ki selected date ka year database wale financial year string me maujood hai ya nahi
+                        if (!dbYearStr.Contains(selectedDateYear.ToString()))
+                        {
+                            return BadRequest(new { message = $"Indent Date is Not valid for the Selected Year ({dbYearStr})" });
+                        }
+                    }
+                    // --- 3. SAFE DATABASE INSERTION ---
+                    // WebForms format array conversion logic replace karke seedhe SQL Date standard parameters use kiya hai
+                    string insertSql = @"INSERT INTO INDENT_CONSOLIDATION (CONSOLIDATED_DATE, USER_ID, DIRECTORATE_ID, FINANCIAL_YEAR_ID, STATUS, description)
+                                 VALUES (@ConsolidatedDate, @UserId, @DirectorateId, @FinYearId, 'I', @Description);
+                                 SELECT SCOPE_IDENTITY();";
+
+                    int newConsolidatedId = 0;
+
+                    using (SqlCommand insertCmd = new SqlCommand(insertSql, conn))
+                    {
+                        insertCmd.Parameters.AddWithValue("@ConsolidatedDate", receivedDT);
+                        insertCmd.Parameters.AddWithValue("@UserId", request.SelectedUserId);
+                        insertCmd.Parameters.AddWithValue("@DirectorateId", request.DirectorateId);
+                        insertCmd.Parameters.AddWithValue("@FinYearId", request.FinancialYearId);
+                        insertCmd.Parameters.AddWithValue("@Description", string.IsNullOrEmpty(request.IndentDescription) ? (object)DBNull.Value : request.IndentDescription.Trim());
+
+                        var scalarResult = await insertCmd.ExecuteScalarAsync();
+                        newConsolidatedId = Convert.ToInt32(scalarResult);
+                    }
+
+                    // --- 4. AUTO GENERATE INDENT REFERENCE CODE & UPDATE ---
+                    // WebForms: "ID" + Day + Month + ShortYear + "/" + IdentityId
+                    string day = DateTime.Now.Day.ToString();
+                    string month = DateTime.Now.Month.ToString();
+                    string yy = DateTime.Now.ToString("yy");
+                    string indentCode = $"ID{day}{month}{yy}/{newConsolidatedId}";
+
+                    string updateSql = @"UPDATE INDENT_CONSOLIDATION 
+                                 SET INDENT_CON_NO = @IndentConNo 
+                                 WHERE INDENT_CONSOLIDATION_ID = @Id";
+
+                    using (SqlCommand updateCmd = new SqlCommand(updateSql, conn))
+                    {
+                        updateCmd.Parameters.AddWithValue("@IndentConNo", indentCode);
+                        updateCmd.Parameters.AddWithValue("@Id", newConsolidatedId);
+
+                        await updateCmd.ExecuteNonQueryAsync();
+                    }
+
+                    return Ok(new
+                    {
+                        message = "Indent saved successfully.",
+                        indentId = newConsolidatedId,
+                        indentNo = indentCode
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error occurred while saving consolidation details.", error = ex.Message });
+            }
+        }
 
     }
-}
+    }
