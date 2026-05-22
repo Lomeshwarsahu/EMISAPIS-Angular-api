@@ -26,11 +26,11 @@ namespace EMISAPIS.Controllers
     {
         private readonly string _connectionString;
 
-        private readonly IConfiguration _config; //  IConfiguration ko add kiya gaya hai
+        private readonly IConfiguration _config; 
 
         public AuthController(IConfiguration configuration)
         {
-            _config = configuration; //  config ko yahan initialize kiya hai
+            _config = configuration;
             _connectionString = configuration.GetConnectionString("DefaultConnection");
         }
 
@@ -391,12 +391,23 @@ WHERE user_name = @Username
 
         private static string TryReadOptionalString(SqlDataReader reader, string columnName)
         {
-            return reader[columnName] != DBNull.Value
-                ? reader[columnName].ToString()
-                : string.Empty;
+            //return reader[columnName] != DBNull.Value
+            //    ? reader[columnName].ToString()
+            //    : string.Empty;
+            try
+            {
+                int ordinal = reader.GetOrdinal(columnName);
+                return reader.IsDBNull(ordinal)
+                    ? string.Empty
+                    : reader.GetValue(ordinal)?.ToString() ?? string.Empty;
+            }
+            catch (IndexOutOfRangeException)
+            {
+                return string.Empty;
+            }
         }
 
-      
+
 
     }
 
