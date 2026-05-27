@@ -930,12 +930,10 @@ namespace EMISAPIS.DTOS
     }
     public class IndentSaveRequestDto
     {
-        public string IndentDateStr { get; set; } = string.Empty; // Format: "YYYY-MM-DD" ya "DD/MM/YYYY"
-        public int FinancialYearId { get; set; } // ddlYear.SelectedValue
-        public int SelectedUserId { get; set; } // ddlFAc.SelectedValue
-        public string IndentDescription { get; set; } = string.Empty; // txtIndentDescription.Text
-        public int DirectorateId { get; set; } // getDirectratedId() ki value frontend se pass karein
+        public string IndentDateStr { get; set; } = string.Empty;
+        public int FinancialYearId { get; set; }
+        public int SelectedUserId { get; set; }
+        public string IndentDescription { get; set; } = string.Empty;
+        public int DirectorateId { get; set; }
     }
-
-
 }
