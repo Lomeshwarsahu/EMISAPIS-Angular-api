@@ -731,75 +731,7 @@ inner join masitemP p on p.PID=m.pid
                 return StatusCode(500, new { message = "Error fetching unmapped items", error = ex.Message });
             }
         }
-        //jkui
-//        public DataTable Get_TendersStatus(string stid, string undOBClaim)
-//        {
-//            string whUnderObjectClaim = "";
-//            string strcsid = "";
-//            if (undOBClaim == "Under Prep")
-//            {
-//                strcsid = " and csid in (2)";
-//                whUnderObjectClaim = " and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-//            if (undOBClaim == "Under Obj")
-//            {
-//                strcsid = " and csid in (2,7)";
-//                whUnderObjectClaim = " and getdate()> ObjCEndDT ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-//            else if (undOBClaim == "COVERB")
-//            {
-//                strcsid = " and csid in (3,4)";
-//                whUnderObjectClaim = " ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-//            else if (undOBClaim == "COVERC")
-//            {
-//                strcsid = " and csid in (3,4,5)";
-//                whUnderObjectClaim = " ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-
-//            else if (undOBClaim == "GEM")
-//            {
-
-//                strcsid = " and csid in (2) and isgemTender = 'Y'";
-
-//                whUnderObjectClaim = " ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-
-
-//            else
-//            {
-//                strcsid = " and csid =" + stid;
-//            }
-//            if (undOBClaim == "Under Prep")
-//            {
-//                string strSQL = @" select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders t
-//inner join 
-//(
-//select sc.SCHEMEID,count(distinct sc.SUPPLIERID) as nossupplierADA from masschemesstatusdetails sc
-//inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
-//inner join tenders t on t.tender_id=sc.SCHEMEID
-//where 1=1 " + whUnderObjectClaim + @"
-//group by sc.SCHEMEID
-//) scADA on scADA.SCHEMEID=t.tender_id
-//where 1=1 and csid in (2) and financial_year_id>=15 
-//and cover_a is not null order by cover_a desc ";
-//                DataTable dt = DBHelper.GetDataTable(strSQL);
-//                return dt;
-//            }
-//            else
-//            {
-//                string strSQL = @" select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders
-//where 1=1 " + strcsid + @" and financial_year_id>=15 and cover_a is not null " + whUnderObjectClaim + " order by cover_a desc ";
-//                DataTable dt = DBHelper.GetDataTable(strSQL);
-//                return dt;
-//            }
-//        }
-        //jhjjk
+       
 
         [HttpGet("GetTenderList1/{mode}")]
         public async Task<IActionResult> GetTenderList1(int mode)
@@ -849,6 +781,19 @@ inner join masitemP p on p.PID=m.pid
                 sql = @"select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders
             where 1=1 and csid in (2) and isgemTender = 'Y' and financial_year_id>=15 and cover_a is not null  order by cover_a desc ";
             }
+            else if (mode == 5)
+            {
+                //strcsid = " and csid in (2) and isgemTender = 'Y'";
+
+                //whUnderObjectClaim = " ";
+                sql = @"select distinct t.tender_id,t.tender_no AS name
+from  contract_items c
+inner join  masitems m on m.item_id= c.item_id
+inner join award_of_contract ac on ac.award_of_contract_id=c.award_of_contract_id
+inner join massuppliers s on s.supplier_id=ac.supplier_id
+inner join tenders t on t.tender_id=ac.tender_id
+where  getdate() between ac.contract_date  and DATEADD(day, 1, ac.contract_end_date) ";
+            }
             else
             {
                 return BadRequest(new { message = "Invalid Mode" });
@@ -869,7 +814,7 @@ inner join masitemP p on p.PID=m.pid
                                 {
                                     Tenderid = Convert.ToInt32(dr["tender_id"]),
                                     // FIX: Mode 1 aur Mode 3 dono mein column ka naam "name" hai
-                                    Tenderno = (mode == 1 || mode == 3 || mode == 4) ? dr["name"].ToString() : dr["tender_no"].ToString()
+                                    Tenderno = (mode == 1 || mode == 3 || mode == 4 || mode == 5) ? dr["name"].ToString() : dr["tender_no"].ToString()
                                 });
                             }
                             //while (await dr.ReadAsync())
@@ -4906,130 +4851,72 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
                 return StatusCode(500, new { message = "Error pulling consolidated indents data grid.", error = ex.Message });
             }
         }
-
-
+        // E. Save/Insert Consolidated Indent Header
         [HttpPost("SaveIndentConsolidation")]
         public async Task<IActionResult> SaveIndentConsolidation([FromBody] IndentSaveRequestDto request)
         {
-            // --- 1. CORE DATE PARSING ---
-            DateTime receivedDT;
+            if (!DateTime.TryParse(request.IndentDateStr, out DateTime receivedDT))
+                return BadRequest(new { message = "Invalid Indent Date format." });
 
-            // YYYY-MM-DD format (Curl/Angular) aur DD/MM/YYYY dono ko parse karne ke liye custom formats rule array
-            string[] allowedFormats = { "yyyy-MM-dd", "dd/MM/yyyy", "yyyy-MM-dd HH:mm:ss" };
-
-            if (!DateTime.TryParseExact(request.IndentDateStr, allowedFormats,
-                                        System.Globalization.CultureInfo.InvariantCulture,
-                                        System.Globalization.DateTimeStyles.None, out receivedDT))
-            {
-                return BadRequest(new { message = "Invalid Indent Date format provided. Use YYYY-MM-DD or DD/MM/YYYY." });
-            }
-
-            // Validation A: Date Future mein nahi honi chahiye (Exact WebForms Logic)
             if (receivedDT > DateTime.Now)
-            {
                 return BadRequest(new { message = "Indent Date cannot be greater than Today" });
-            }
 
-            string connString = _config.GetConnectionString("DefaultConnection");
-
-            try
+            using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
             {
-                using (SqlConnection conn = new SqlConnection(connString))
+                await conn.OpenAsync();
+
+                // Financial Year Code Range Validation Match Strategy
+                string checkYearSql = "SELECT year FROM mas_financial_year WHERE financial_year_id = @FinId";
+                using (SqlCommand checkCmd = new SqlCommand(checkYearSql, conn))
                 {
-                    await conn.OpenAsync();
-
-                    // --- 2. FINANCIAL YEAR BOUNDARY VALIDATION ---
-                    // Agar database table me boundaries missing hain, toh ye filter bypass ya safe condition handle karega
-                    //string checkYearSql = @"SELECT year FROM MAS_FINANCIAL_YEAR 
-                    //                WHERE FINANCIAL_YEAR_ID = @FinYearId";
-
-                    //using (SqlCommand checkCmd = new SqlCommand(checkYearSql, conn))
-                    //{
-                    //    checkCmd.Parameters.AddWithValue("@FinYearId", request.FinancialYearId);
-                    //    int yearExists = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
-
-                    //    if (yearExists == 0)
-                    //    {
-                    //        return BadRequest(new { message = "Indent Date is Not valid for the Selected Year" });
-                    //    }
-                    //}
-                    // --- 2. FINANCIAL YEAR AND DATE MATCH VALIDATION ---
-                    string checkYearSql = @"SELECT year FROM MAS_FINANCIAL_YEAR 
-                        WHERE FINANCIAL_YEAR_ID = @FinYearId";
-
-                    using (SqlCommand checkCmd = new SqlCommand(checkYearSql, conn))
+                    checkCmd.Parameters.AddWithValue("@FinId", request.FinancialYearId);
+                    var yearVal = await checkCmd.ExecuteScalarAsync();
+                    if (yearVal == null || !yearVal.ToString()!.Contains(receivedDT.Year.ToString()))
                     {
-                        checkCmd.Parameters.AddWithValue("@FinYearId", request.FinancialYearId);
-
-                        // ExecuteScalar se direct 'year' column ki value string me nikalenge
-                        object yearResult = await checkCmd.ExecuteScalarAsync();
-
-                        if (yearResult == null)
-                        {
-                            return BadRequest(new { message = "Selected Financial Year does not exist." });
-                        }
-
-                        string dbYearStr = yearResult.ToString(); // Example: "2025-2026" ya "2025"
-                        int selectedDateYear = receivedDT.Year;   // Maan lijiye input date '2026-02-05' hai toh ye 2026 dega
-
-                        // Check karein ki selected date ka year database wale financial year string me maujood hai ya nahi
-                        if (!dbYearStr.Contains(selectedDateYear.ToString()))
-                        {
-                            return BadRequest(new { message = $"Indent Date is Not valid for the Selected Year ({dbYearStr})" });
-                        }
+                        return BadRequest(new { message = "Indent Date is Not valid for the Selected Year" });
                     }
-                    // --- 3. SAFE DATABASE INSERTION ---
-                    // WebForms format array conversion logic replace karke seedhe SQL Date standard parameters use kiya hai
-                    string insertSql = @"INSERT INTO INDENT_CONSOLIDATION (CONSOLIDATED_DATE, USER_ID, DIRECTORATE_ID, FINANCIAL_YEAR_ID, STATUS, description)
-                                 VALUES (@ConsolidatedDate, @UserId, @DirectorateId, @FinYearId, 'I', @Description);
-                                 SELECT SCOPE_IDENTITY();";
-
-                    int newConsolidatedId = 0;
-
-                    using (SqlCommand insertCmd = new SqlCommand(insertSql, conn))
-                    {
-                        insertCmd.Parameters.AddWithValue("@ConsolidatedDate", receivedDT);
-                        insertCmd.Parameters.AddWithValue("@UserId", request.SelectedUserId);
-                        insertCmd.Parameters.AddWithValue("@DirectorateId", request.DirectorateId);
-                        insertCmd.Parameters.AddWithValue("@FinYearId", request.FinancialYearId);
-                        insertCmd.Parameters.AddWithValue("@Description", string.IsNullOrEmpty(request.IndentDescription) ? (object)DBNull.Value : request.IndentDescription.Trim());
-
-                        var scalarResult = await insertCmd.ExecuteScalarAsync();
-                        newConsolidatedId = Convert.ToInt32(scalarResult);
-                    }
-
-                    // --- 4. AUTO GENERATE INDENT REFERENCE CODE & UPDATE ---
-                    // WebForms: "ID" + Day + Month + ShortYear + "/" + IdentityId
-                    string day = DateTime.Now.Day.ToString();
-                    string month = DateTime.Now.Month.ToString();
-                    string yy = DateTime.Now.ToString("yy");
-                    string indentCode = $"ID{day}{month}{yy}/{newConsolidatedId}";
-
-                    string updateSql = @"UPDATE INDENT_CONSOLIDATION 
-                                 SET INDENT_CON_NO = @IndentConNo 
-                                 WHERE INDENT_CONSOLIDATION_ID = @Id";
-
-                    using (SqlCommand updateCmd = new SqlCommand(updateSql, conn))
-                    {
-                        updateCmd.Parameters.AddWithValue("@IndentConNo", indentCode);
-                        updateCmd.Parameters.AddWithValue("@Id", newConsolidatedId);
-
-                        await updateCmd.ExecuteNonQueryAsync();
-                    }
-
-                    return Ok(new
-                    {
-                        message = "Indent saved successfully.",
-                        indentId = newConsolidatedId,
-                        indentNo = indentCode
-                    });
                 }
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = "Error occurred while saving consolidation details.", error = ex.Message });
+
+                // Get target authority directorate group id code mapping fallback context
+                string dirSql = "SELECT TOP(1) authority FROM users WHERE user_id = @UId";
+                int resolvedDirectorateId = 12;
+                using (SqlCommand dirCmd = new SqlCommand(dirSql, conn))
+                {
+                    dirCmd.Parameters.AddWithValue("@UId", request.SelectedUserId);
+                    var dId = await dirCmd.ExecuteScalarAsync();
+                    if (dId != null) resolvedDirectorateId = Convert.ToInt32(dId);
+                }
+
+                // Insert Transaction Engine Logic Pipeline
+                string insertSql = @"INSERT INTO INDENT_CONSOLIDATION (CONSOLIDATED_DATE, USER_ID, DIRECTORATE_ID, FINANCIAL_YEAR_ID, STATUS, description)
+                          VALUES (@CDate, @UserId, @DirId, @FinId, 'I', @Desc);
+                          SELECT SCOPE_IDENTITY();";
+
+                int newId = 0;
+                using (SqlCommand insCmd = new SqlCommand(insertSql, conn))
+                {
+                    insCmd.Parameters.AddWithValue("@CDate", receivedDT);
+                    insCmd.Parameters.AddWithValue("@UserId", request.SelectedUserId);
+                    insCmd.Parameters.AddWithValue("@DirId", resolvedDirectorateId);
+                    insCmd.Parameters.AddWithValue("@FinId", request.FinancialYearId);
+                    insCmd.Parameters.AddWithValue("@Desc", request.IndentDescription.Trim());
+                    newId = Convert.ToInt32(await insCmd.ExecuteScalarAsync());
+                }
+
+                // Reference Identity generation updates string format layout mapping
+                string indentCode = $"ID{DateTime.Now.Day}{DateTime.Now.Month}{DateTime.Now.ToString("yy")}/{newId}";
+                string updateSql = "UPDATE INDENT_CONSOLIDATION SET INDENT_CON_NO = @ICode WHERE INDENT_CONSOLIDATION_ID = @Id";
+                using (SqlCommand updCmd = new SqlCommand(updateSql, conn))
+                {
+                    updCmd.Parameters.AddWithValue("@ICode", indentCode);
+                    updCmd.Parameters.AddWithValue("@Id", newId);
+                    await updCmd.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new { message = "Indent successfully initialized.", indentNo = indentCode });
             }
         }
+
 
     }
     }
