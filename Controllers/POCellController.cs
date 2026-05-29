@@ -1289,7 +1289,203 @@ namespace EMISAPIS.Controllers
 
             return Ok(resultList);
         }
+        // Dynamic Route Parameter Route Context: GET api/Indent/GetConsolidationReport?yearId=19&directorateId=12
+        [HttpGet("GetConsolidationReport")]
+        public async Task<IActionResult> GetConsolidationReport([FromQuery] int yearId, [FromQuery] int directorateId)
+        {
+            // Fail-safe basic validation check boundary filters
+            if (yearId <= 0 || directorateId <= 0)
+            {
+                return BadRequest(new { message = "Please provide valid Financial Year ID and Directorate ID parameters." });
+            }
 
+            var consolidationList = new List<IndentConsolidationReportDto>();
+            string connString = _config.GetConnectionString("DefaultConnection");
 
+            // Exact secure parameterized query execution layout
+            string sql = @"
+            SELECT COUNT(B.item_id) AS Equipmentcount, 
+                   A.INDENT_CONSOLIDATION_ID, 
+                   A.description, 
+                   A.USER_ID, 
+                   A.DIRECTORATE_ID, 
+                   A.FINANCIAL_YEAR_ID, 
+                   ISNULL(SUM(B.PROPOSED_QTY), 0) AS PROPOSED_QTY, 
+                   A.indent_con_no,
+                   CONVERT(VARCHAR(10), A.CONSOLIDATED_DATE, 103) AS CONSOLIDATED_DATE, 
+                   ISNULL(SUM(B.FINAL_QTY), 0) AS FINAL_QTY,
+                   (CASE WHEN A.STATUS = 'I' THEN 'Incomplete' WHEN A.STATUS = 'C' THEN 'Completed' ELSE '' END) AS EStatus,
+                   (SELECT (CASE WHEN FileName IS NULL THEN 'Not Uploaded' ELSE 'Uploaded' END) 
+                    FROM INDENT_CONSOLIDATION 
+                    WHERE indent_consolidation_id = A.INDENT_CONSOLIDATION_ID) AS uploadStatus,
+                   A.CreatedOn
+            FROM INDENT_CONSOLIDATION A 
+            LEFT OUTER JOIN INDENT_CONS_ITEMS B ON (B.INDENT_CONSOLIDATED_ID = A.INDENT_CONSOLIDATION_ID)			
+            WHERE A.financial_year_id = @YearId AND A.directorate_id = @DirectorateId
+            GROUP BY A.INDENT_CONSOLIDATION_ID, A.USER_ID, A.DIRECTORATE_ID, A.FINANCIAL_YEAR_ID, 
+                     A.STATUS, A.CONSOLIDATED_DATE, A.indent_con_no, A.CreatedOn, A.description
+            ORDER BY A.CreatedOn DESC";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        // Adding strong typed parameter bindings to avoid SQL Injection completely
+                        cmd.Parameters.AddWithValue("@YearId", yearId);
+                        cmd.Parameters.AddWithValue("@DirectorateId", directorateId);
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                consolidationList.Add(new IndentConsolidationReportDto
+                                {
+                                    EquipmentCount = Convert.ToInt32(dr["Equipmentcount"]),
+                                    IndentConsolidationId = Convert.ToInt32(dr["INDENT_CONSOLIDATION_ID"]),
+                                    Description = dr["description"]?.ToString() ?? string.Empty,
+                                    UserId = Convert.ToInt32(dr["USER_ID"]),
+                                    DirectorateId = Convert.ToInt32(dr["DIRECTORATE_ID"]),
+                                    FinancialYearId = Convert.ToInt32(dr["FINANCIAL_YEAR_ID"]),
+                                    ProposedQty = dr["PROPOSED_QTY"] != DBNull.Value ? Convert.ToDecimal(dr["PROPOSED_QTY"]) : 0m,
+                                    IndentConNo = dr["indent_con_no"]?.ToString() ?? string.Empty,
+                                    ConsolidatedDate = dr["CONSOLIDATED_DATE"]?.ToString() ?? string.Empty,
+                                    FinalQty = dr["FINAL_QTY"] != DBNull.Value ? Convert.ToDecimal(dr["FINAL_QTY"]) : 0m,
+                                    EStatus = dr["EStatus"]?.ToString() ?? string.Empty,
+                                    UploadStatus = dr["uploadStatus"]?.ToString() ?? string.Empty,
+                                    CreatedOn = dr["CreatedOn"] != DBNull.Value ? Convert.ToDateTime(dr["CreatedOn"]) : null
+                                });
+                            }
+                        }
+                    }
+                }
+
+                return Ok(consolidationList); // Returns safe array JSON data mapping framework models
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error pulling indent consolidation reporting streams.", error = ex.Message });
+            }
+        }
+        [HttpPost("SaveIndentConsolidation")]
+        public async Task<IActionResult> SaveIndentConsolidation([FromBody] SaveIndentConsolidationRequestDto request)
+        {
+            // --- 1. SERVER-SIDE CONDITIONAL VALIDATIONS ---
+            if (request.FinancialYearId <= 0)
+                return BadRequest(new { message = "Select Financial Year" });
+
+            if (request.DirectorateId <= 0)
+                return BadRequest(new { message = "Select Directorate" });
+
+            if (request.FundId <= 0)
+                return BadRequest(new { message = "Select Fund Head" });
+
+            if (string.IsNullOrWhiteSpace(request.IndentDescription))
+                return BadRequest(new { message = "Enter Letter No" });
+
+            if (string.IsNullOrWhiteSpace(request.IndentDateStr))
+                return BadRequest(new { message = "Enter Indent Date" });
+
+            // Parse date input
+            if (!DateTime.TryParse(request.IndentDateStr, out DateTime receivedDT))
+            {
+                return BadRequest(new { message = "Invalid Indent Date format." });
+            }
+
+            // Condition check: Indent date cannot be greater than today
+            if (receivedDT.Date > DateTime.Now.Date)
+            {
+                return BadRequest(new { message = "Indent Date cannot be greater than Today" });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    // --- 2. EMULATE legacy helper: ind.CheckDatainYear ---
+                    // Financial year ranges validation engine check fallback (Example validation layout)
+                    string checkYearSql = "SELECT COUNT(1) FROM MAS_FINANCIAL_YEAR WHERE FINANCIAL_YEAR_ID = @YearId AND @IndentDate BETWEEN START_DATE AND END_DATE";
+                    using (SqlCommand checkCmd = new SqlCommand(checkYearSql, conn))
+                    {
+                        checkCmd.Parameters.AddWithValue("@YearId", request.FinancialYearId);
+                        checkCmd.Parameters.AddWithValue("@IndentDate", receivedDT);
+
+                        int isValidYear = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
+                        if (isValidYear == 0)
+                        {
+                            return BadRequest(new { message = "Indent Date is Not valid for the Selected Year" });
+                        }
+                    }
+
+                    // --- 3. DATABASE TRANSACTION BLOCK FOR DOUBLE ENGINES UPDATES ---
+                    using (SqlTransaction transaction = conn.BeginTransaction())
+                    {
+                        try
+                        {
+                            // QUERY A: Insert statement execution pipeline + Fetch explicit output Identity ID
+                            string insertSql = @"INSERT INTO INDENT_CONSOLIDATION 
+                                            (IndentFundID, description, CONSOLIDATED_DATE, USER_ID, DIRECTORATE_ID, FINANCIAL_YEAR_ID, STATUS, CreatedOn)
+                                             VALUES
+                                            (@FundId, @Desc, @ConsolidatedDate, @UserId, @DirId, @FinYearId, 'I', GETDATE());
+                                             SELECT SCOPE_IDENTITY();";
+
+                            int generatedId = 0;
+                            using (SqlCommand insertCmd = new SqlCommand(insertSql, conn, transaction))
+                            {
+                                insertCmd.Parameters.AddWithValue("@FundId", request.FundId);
+                                insertCmd.Parameters.AddWithValue("@Desc", request.IndentDescription.Trim());
+                                insertCmd.Parameters.AddWithValue("@ConsolidatedDate", receivedDT);
+                                insertCmd.Parameters.AddWithValue("@UserId", request.UserId);
+                                insertCmd.Parameters.AddWithValue("@DirId", request.DirectorateId);
+                                insertCmd.Parameters.AddWithValue("@FinYearId", request.FinancialYearId);
+
+                                generatedId = Convert.ToInt32(await insertCmd.ExecuteScalarAsync());
+                            }
+
+                            // --- 4. EXPLICIT DYNAMIC CODE GENERATOR (getindent_consolidation_id emulation) ---
+                            // Generates format schema: ID + Day + Month + ShortYear + / + GeneratedRowID
+                            // E.g., ID28526/1045
+                            string indentCode = $"ID{DateTime.Now.Day}{DateTime.Now.Month}{DateTime.Now.ToString("yy")}/{generatedId}";
+
+                            // QUERY B: Update tracking serial mapping code back to row parameters
+                            string updateSql = "UPDATE INDENT_CONSOLIDATION SET INDENT_CON_NO = @IndentCode WHERE INDENT_CONSOLIDATION_ID = @Id";
+                            using (SqlCommand updateCmd = new SqlCommand(updateSql, conn, transaction))
+                            {
+                                updateCmd.Parameters.AddWithValue("@IndentCode", indentCode);
+                                updateCmd.Parameters.AddWithValue("@Id", generatedId);
+
+                                await updateCmd.ExecuteNonQueryAsync();
+                            }
+
+                            // Save transaction pipeline changes cleanly
+                            await transaction.CommitAsync();
+
+                            return Ok(new
+                            {
+                                message = "Indent Consolidation Saved Successfully.",
+                                indentConsolidationId = generatedId,
+                                indentConNo = indentCode
+                            });
+                        }
+                        catch (Exception txEx)
+                        {
+                            await transaction.RollbackAsync();
+                            throw new Exception("Transaction crashed inside update consolidation loops.", txEx);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error processing data persistence engine loops.", error = ex.Message });
+            }
+        }
     }
 }
