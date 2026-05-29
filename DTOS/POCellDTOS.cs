@@ -244,7 +244,6 @@ public class IndentConsolidationReportDto
         public string UploadStatus { get; set; } = string.Empty; // Nested select file status
         public DateTime? CreatedOn { get; set; } // A.CreatedOn
     }
-    
 
 public class SaveIndentConsolidationRequestDto
     {
@@ -255,4 +254,27 @@ public class SaveIndentConsolidationRequestDto
         public int DirectorateId { get; set; } // ddlFacilityAuth.SelectedValue
         public int FinancialYearId { get; set; } // ddlYear.SelectedValue
     }
+    public class BudgetDropdownDto
+    {
+        public int BudgetId { get; set; } // BUDGETID
+        public string BudgetName { get; set; } = string.Empty; // BUDGETNAME
+    }
+    public class IndentSingleRecordDto
+    {
+        public int UserId { get; set; } // user_id
+        public int DirectorateId { get; set; } // directorate_id
+        public string Year { get; set; } = string.Empty; // f.year
+        public int FinancialYearId { get; set; } // i.financial_year_id
+        public string IndentConNo { get; set; } = string.Empty; // indent_con_no
+        public string ConsolidatedDate { get; set; } = string.Empty; // Formatted consolidated_date (103)
+    }
+    public class SearchDropdownDto
+    {
+
+        public int ItemId { get; set; } // item_id
+        public string ItemName { get; set; } = string.Empty; // item_name
+        public string itemcode_as_per_tender { get; set; } = string.Empty;
+        public string CMEEEL { get; set; } = string.Empty;
+    }
+
 }
