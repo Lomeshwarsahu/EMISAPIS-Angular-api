@@ -226,5 +226,33 @@ public class PoExtensionReportDto
         public string SysGenApplyDate { get; set; } = string.Empty; // 105 Format (DD-MM-YYYY)
         public string LetterStatus { get; set; } = string.Empty; // ltr.status
     }
+ 
 
+public class IndentConsolidationReportDto
+    {
+        public int EquipmentCount { get; set; } // count(B.item_id)
+        public int IndentConsolidationId { get; set; } // A.INDENT_CONSOLIDATION_ID
+        public string Description { get; set; } = string.Empty; // A.description
+        public int UserId { get; set; } // A.USER_ID
+        public int DirectorateId { get; set; } // A.DIRECTORATE_ID
+        public int FinancialYearId { get; set; } // A.FINANCIAL_YEAR_ID
+        public decimal ProposedQty { get; set; } // SUM(B.PROPOSED_QTY)
+        public string IndentConNo { get; set; } = string.Empty; // A.indent_con_no
+        public string ConsolidatedDate { get; set; } = string.Empty; // Formatted CONSOLIDATED_DATE (103)
+        public decimal FinalQty { get; set; } // SUM(B.FINAL_QTY)
+        public string EStatus { get; set; } = string.Empty; // Case statement status
+        public string UploadStatus { get; set; } = string.Empty; // Nested select file status
+        public DateTime? CreatedOn { get; set; } // A.CreatedOn
+    }
+    
+
+public class SaveIndentConsolidationRequestDto
+    {
+        public int FundId { get; set; } // ddlFund.SelectedValue
+        public string IndentDescription { get; set; } = string.Empty; // txtIndentDescription.Text (Letter No)
+        public string IndentDateStr { get; set; } = string.Empty; // txtDate.Text (Format: YYYY-MM-DD)
+        public int UserId { get; set; } // sDet.DistId
+        public int DirectorateId { get; set; } // ddlFacilityAuth.SelectedValue
+        public int FinancialYearId { get; set; } // ddlYear.SelectedValue
+    }
 }
