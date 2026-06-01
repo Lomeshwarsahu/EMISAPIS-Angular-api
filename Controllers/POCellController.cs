@@ -1682,5 +1682,85 @@ namespace EMISAPIS.Controllers
             }
         }
 
-    }
+        // Target Endpoint Route URL: GET api/POCell/GetConsolidationItemDetails/3948
+        [HttpGet("GetConsolidationItemDetails/{indentConsolidationId}")]
+        public async Task<IActionResult> GetConsolidationItemDetails(int indentConsolidationId)
+        {
+            if (indentConsolidationId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Indent Consolidation ID parameter." });
+            }
+
+            var detailsList = new List<IndentConsolidationItemDetailDto>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // FIX: Hardcoded '3948' ko completely dynamic @IndentId parameter se map kar diya hai
+            string sqlQuery = @"
+            SELECT ic.indent_consolidation_id, ic.indent_con_no, 
+                   CONVERT(VARCHAR, ic.consolidated_date, 103) AS consolidated_date, ic.description,
+                   m.item_id, m.item_code_as_per_tender, m.item_name, 
+                   CONVERT(VARCHAR, g.RC_END_DATE, 103) AS RC_END_DATE,
+                   ISNULL(COALESCE(g.SINGLE_UNIT_PRICE, m.ESTIMATED_COST), 0) AS ESTIMATED_COST,
+                   ISNULL(ind.indent, 0) AS final_qty, ici.status
+            FROM indent_consolidation ic
+            LEFT OUTER JOIN indent_cons_items ici ON ici.indent_consolidated_id = ic.indent_consolidation_id
+            INNER JOIN masitems m ON m.item_id = ici.item_id
+            LEFT OUTER JOIN (
+                SELECT w1.ITEM_ID, w1.SINGLE_UNIT_PRICE, w1.CONTRACT_ITEM_ID,
+                       CASE WHEN w1.is_extended = 'Y' THEN w1.contract_new_end_date ELSE d1.contract_end_date END AS RC_END_DATE 
+                FROM AWARD_OF_CONTRACT d1
+                INNER JOIN CONTRACT_ITEMS w1 ON w1.AWARD_OF_CONTRACT_ID = d1.AWARD_OF_CONTRACT_ID
+                WHERE GETDATE() BETWEEN d1.CONTRACT_SIGN_DATE AND d1.CONTRACT_END_DATE
+            ) g ON g.ITEM_ID = m.ITEM_ID
+            LEFT OUTER JOIN (
+                SELECT i.indent_consolidation_id, c.item_id, SUM(ISNULL(c.indent_quantity, 0)) AS indent 
+                FROM indent i 
+                INNER JOIN indent_items c ON c.indent_id = i.indent_id
+                WHERE i.indent_consolidation_id = @IndentId
+                GROUP BY i.indent_consolidation_id, c.item_id
+            ) ind ON ind.indent_consolidation_id = ic.indent_consolidation_id AND ind.item_id = ici.item_id
+            WHERE ic.indent_consolidation_id = @IndentId
+            ORDER BY m.item_code_as_per_tender";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        // Parameter secure bindings
+                        cmd.Parameters.AddWithValue("@IndentId", indentConsolidationId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                detailsList.Add(new IndentConsolidationItemDetailDto
+                                {
+                                    IndentConsolidationId = Convert.ToInt32(dr["indent_consolidation_id"]),
+                                    IndentConNo = dr["indent_con_no"]?.ToString() ?? string.Empty,
+                                    ConsolidatedDate = dr["consolidated_date"]?.ToString() ?? string.Empty,
+                                    Description = dr["description"]?.ToString() ?? string.Empty,
+                                    ItemId = Convert.ToInt32(dr["item_id"]),
+                                    ItemCodeAsPerTender = dr["item_code_as_per_tender"]?.ToString() ?? string.Empty,
+                                    ItemName = dr["item_name"]?.ToString() ?? string.Empty,
+                                    RcEndDate = dr["RC_END_DATE"]?.ToString() ?? string.Empty,
+                                    EstimatedCost = dr["ESTIMATED_COST"] != DBNull.Value ? Convert.ToDecimal(dr["ESTIMATED_COST"]) : 0m,
+                                    FinalQty = dr["final_qty"] != DBNull.Value ? Convert.ToDecimal(dr["final_qty"]) : 0m,
+                                    Status = dr["status"]?.ToString() ?? string.Empty
+                                });
+                            }
+                        }
+                    }
+                }
+
+                return Ok(detailsList); // Returns complete relational mapped rows array to frontend
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error pulling consolidated item analytical reports.", error = ex.Message });
+            }
+
+        }
 }
