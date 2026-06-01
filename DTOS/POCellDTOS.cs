@@ -276,5 +276,23 @@ public class SaveIndentConsolidationRequestDto
         public string itemcode_as_per_tender { get; set; } = string.Empty;
         public string CMEEEL { get; set; } = string.Empty;
     }
+ 
+
+public class IndentConsolidationItemDetailDto
+    {
+        public int IndentConsolidationId { get; set; } // ic.indent_consolidation_id
+        public string IndentConNo { get; set; } = string.Empty; // ic.indent_con_no
+        public string ConsolidatedDate { get; set; } = string.Empty; // ic.consolidated_date
+        public string Description { get; set; } = string.Empty; // ic.description
+        public int ItemId { get; set; } // m.item_id
+        public string ItemCodeAsPerTender { get; set; } = string.Empty; // m.item_code_as_per_tender
+        public string ItemName { get; set; } = string.Empty; // m.item_name
+        public string RcEndDate { get; set; } = string.Empty; // g.RC_END_DATE (Formatted)
+        public decimal EstimatedCost { get; set; } // calculated ESTIMATED_COST
+        public decimal FinalQty { get; set; } // isnull(ind.indent,0)
+        public string Status { get; set; } = string.Empty; // ici.status
+    }
+
+
 
 }
