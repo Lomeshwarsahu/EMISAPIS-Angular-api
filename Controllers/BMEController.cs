@@ -18,10 +18,14 @@ namespace EMISAPIS.Controllers
     {
         private readonly IConfiguration _config;
 
-        public BMEController(IConfiguration config)
+        public BMEController(IConfiguration config, IWebHostEnvironment env)
         {
             _config = config;
+            _env = env;
         }
+
+        private readonly IWebHostEnvironment _env;
+
 
 
         [HttpGet("GetSupplierlist")]
@@ -727,75 +731,7 @@ inner join masitemP p on p.PID=m.pid
                 return StatusCode(500, new { message = "Error fetching unmapped items", error = ex.Message });
             }
         }
-        //jkui
-//        public DataTable Get_TendersStatus(string stid, string undOBClaim)
-//        {
-//            string whUnderObjectClaim = "";
-//            string strcsid = "";
-//            if (undOBClaim == "Under Prep")
-//            {
-//                strcsid = " and csid in (2)";
-//                whUnderObjectClaim = " and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-//            if (undOBClaim == "Under Obj")
-//            {
-//                strcsid = " and csid in (2,7)";
-//                whUnderObjectClaim = " and getdate()> ObjCEndDT ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-//            else if (undOBClaim == "COVERB")
-//            {
-//                strcsid = " and csid in (3,4)";
-//                whUnderObjectClaim = " ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-//            else if (undOBClaim == "COVERC")
-//            {
-//                strcsid = " and csid in (3,4,5)";
-//                whUnderObjectClaim = " ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-
-//            else if (undOBClaim == "GEM")
-//            {
-
-//                strcsid = " and csid in (2) and isgemTender = 'Y'";
-
-//                whUnderObjectClaim = " ";
-//                // whUnderObjectClaim = " and csid=7"; 
-//            }
-
-
-//            else
-//            {
-//                strcsid = " and csid =" + stid;
-//            }
-//            if (undOBClaim == "Under Prep")
-//            {
-//                string strSQL = @" select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders t
-//inner join 
-//(
-//select sc.SCHEMEID,count(distinct sc.SUPPLIERID) as nossupplierADA from masschemesstatusdetails sc
-//inner join SCHEMESTATUSDETAILSCHILD sch on sch.SCHSTATUSDID=sc.SCHSTATUSDID
-//inner join tenders t on t.tender_id=sc.SCHEMEID
-//where 1=1 " + whUnderObjectClaim + @"
-//group by sc.SCHEMEID
-//) scADA on scADA.SCHEMEID=t.tender_id
-//where 1=1 and csid in (2) and financial_year_id>=15 
-//and cover_a is not null order by cover_a desc ";
-//                DataTable dt = DBHelper.GetDataTable(strSQL);
-//                return dt;
-//            }
-//            else
-//            {
-//                string strSQL = @" select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders
-//where 1=1 " + strcsid + @" and financial_year_id>=15 and cover_a is not null " + whUnderObjectClaim + " order by cover_a desc ";
-//                DataTable dt = DBHelper.GetDataTable(strSQL);
-//                return dt;
-//            }
-//        }
-        //jhjjk
+       
 
         [HttpGet("GetTenderList1/{mode}")]
         public async Task<IActionResult> GetTenderList1(int mode)
@@ -837,6 +773,27 @@ inner join masitemP p on p.PID=m.pid
                 where 1=1 and csid in (2) and financial_year_id>=15 
                 and cover_a is not null order by cover_a desc ";
             }
+            else if (mode == 4)
+            {
+                //strcsid = " and csid in (2) and isgemTender = 'Y'";
+
+                //whUnderObjectClaim = " ";
+                sql = @"select tender_id,tender_no+' ,OpenDT-'+convert(varchar,cover_a,103) as name   from tenders
+            where 1=1 and csid in (2) and isgemTender = 'Y' and financial_year_id>=15 and cover_a is not null  order by cover_a desc ";
+            }
+            else if (mode == 5)
+            {
+                //strcsid = " and csid in (2) and isgemTender = 'Y'";
+
+                //whUnderObjectClaim = " ";
+                sql = @"select distinct t.tender_id,t.tender_no AS name
+from  contract_items c
+inner join  masitems m on m.item_id= c.item_id
+inner join award_of_contract ac on ac.award_of_contract_id=c.award_of_contract_id
+inner join massuppliers s on s.supplier_id=ac.supplier_id
+inner join tenders t on t.tender_id=ac.tender_id
+where  getdate() between ac.contract_date  and DATEADD(day, 1, ac.contract_end_date) ";
+            }
             else
             {
                 return BadRequest(new { message = "Invalid Mode" });
@@ -857,7 +814,7 @@ inner join masitemP p on p.PID=m.pid
                                 {
                                     Tenderid = Convert.ToInt32(dr["tender_id"]),
                                     // FIX: Mode 1 aur Mode 3 dono mein column ka naam "name" hai
-                                    Tenderno = (mode == 1 || mode == 3) ? dr["name"].ToString() : dr["tender_no"].ToString()
+                                    Tenderno = (mode == 1 || mode == 3 || mode == 4 || mode == 5) ? dr["name"].ToString() : dr["tender_no"].ToString()
                                 });
                             }
                             //while (await dr.ReadAsync())
@@ -2906,6 +2863,21 @@ where 1=1 and t.tender_id = @Tid";
         WHERE t.tender_id = @Tid
         ORDER BY mas.name";
             }
+            else if (flag == 2)
+            {
+                query = @"SELECT distinct 0 as SlNo, m.ITEM_ID, ti.tender_item_id, t.tender_id, m.item_name, 
+                         m.item_code_as_per_tender, m.item_code, ti.emd_amount, ti.tender_quantity
+                  FROM tenders t
+                  INNER JOIN tender_items ti ON ti.tender_id = t.tender_id
+                  INNER JOIN masitems m ON m.item_id = ti.item_id
+                  LEFT OUTER JOIN (
+                      SELECT s.SCHEMEID, sc.ITEMID, count(sc.ITEMID) as nosQualified 
+                      FROM schemestatusdetailschild sc 
+                      INNER JOIN masschemesstatusdetails s ON s.SCHSTATUSDID = sc.SCHSTATUSDID
+                      GROUP BY s.SCHEMEID, sc.ITEMID
+                  ) Q ON Q.SCHEMEID = t.tender_id AND q.ITEMID = m.item_id
+                  WHERE t.tender_id = @Tid AND q.ITEMID is not null";
+            }
             else
             {
                 query = @"
@@ -2939,37 +2911,50 @@ where 1=1 and t.tender_id = @Tid";
                         int counter = 1;
                         while (await reader.ReadAsync())
                         {
-                            var item = new TenderSupplierParticipationDto
-                            {
-                                SlNo = counter++,
-                                SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]),
-                                TenderId = Convert.ToInt32(reader["tender_id"]),
-                                SupplierName = reader["name"]?.ToString() ?? "",
-                                Emd = Convert.ToDecimal(reader["EMD"]),
-                                TpAmount = Convert.ToDecimal(reader["TPAMOUNT"]),
-                                EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? "",
-                                EmdPath = reader["EMDPATH"]?.ToString() ?? "",
-                                EmdFileName = reader["EMDFILENAME"]?.ToString() ?? "",
-                                TpFileName = reader["TPFILENAME"]?.ToString() ?? "",
-                                TpPath = reader["TPPATH"]?.ToString() ?? "",
-                                EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? "",
-                                SupplierId = Convert.ToInt32(reader["supplier_id"]),
-                                Remark = reader["REMARK"]?.ToString() ?? "",
-                                PItems = Convert.ToInt32(reader["pitems"]),
-                                IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? ""
-                            };
+                            var item = new TenderSupplierParticipationDto();
+                            item.SlNo = counter++;
 
-                            // Flag 1 ke extra fields handle karein
-                            if (flag == 1)
+                          
+                            if (flag == 2)
                             {
-                                item.ReqEMDAMt = Convert.ToDecimal(reader["ReqEMDAMt"]);
-                                item.SubmittedEMDAMT = Convert.ToDecimal(reader["submittedEMDAMT"]);
-                                item.DTypeName = reader["dtypename"]?.ToString() ?? "";
-                                item.IsCovTechEli = reader["ISCovTechEli"]?.ToString() ?? "";
-                                item.IsCOVFinEli = reader["IsCOVFinEli"]?.ToString() ?? "";
-                                item.CovATechRemarksBefore_OBClM = reader["CovATechRemarksBefore_OBClM"]?.ToString() ?? "";
-                                item.CovAFINRemarksBefore_OBClM = reader["CovAFINRemarksBefore_OBClM"]?.ToString() ?? "";
-                                item.Csid = Convert.ToInt32(reader["csid"]);
+                                item.TenderId = Convert.ToInt32(reader["tender_id"]);
+                                item.ItemId = reader["ITEM_ID"] != DBNull.Value ? Convert.ToInt32(reader["ITEM_ID"]) : 0;
+                                item.TenderItemId = reader["tender_item_id"] != DBNull.Value ? Convert.ToInt32(reader["tender_item_id"]) : 0;
+                                item.ItemName = reader["item_name"]?.ToString() ?? "";
+                                item.ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? "";
+                                item.ItemCode = reader["item_code"]?.ToString() ?? "";
+                                item.Emd = reader["emd_amount"] != DBNull.Value ? Convert.ToDecimal(reader["emd_amount"]) : 0m;
+                                item.TenderQuantity = reader["tender_quantity"] != DBNull.Value ? Convert.ToDecimal(reader["tender_quantity"]) : 0m;
+                            }
+                            else
+                            {
+                                item.SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]);
+                                item.TenderId = Convert.ToInt32(reader["tender_id"]);
+                                item.SupplierName = reader["name"]?.ToString() ?? "";
+                                item.Emd = Convert.ToDecimal(reader["EMD"]);
+                                item.TpAmount = Convert.ToDecimal(reader["TPAMOUNT"]);
+                                item.EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? "";
+                                item.EmdPath = reader["EMDPATH"]?.ToString() ?? "";
+                                item.EmdFileName = reader["EMDFILENAME"]?.ToString() ?? "";
+                                item.TpFileName = reader["TPFILENAME"]?.ToString() ?? "";
+                                item.TpPath = reader["TPPATH"]?.ToString() ?? "";
+                                item.EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? "";
+                                item.SupplierId = Convert.ToInt32(reader["supplier_id"]);
+                                item.Remark = reader["REMARK"]?.ToString() ?? "";
+                                item.PItems = Convert.ToInt32(reader["pitems"]);
+                                item.IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? "";
+
+                                if (flag == 1)
+                                {
+                                    item.ReqEMDAMt = Convert.ToDecimal(reader["ReqEMDAMt"]);
+                                    item.SubmittedEMDAMT = Convert.ToDecimal(reader["submittedEMDAMT"]);
+                                    item.DTypeName = reader["dtypename"]?.ToString() ?? "";
+                                    item.IsCovTechEli = reader["ISCovTechEli"]?.ToString() ?? "";
+                                    item.IsCOVFinEli = reader["IsCOVFinEli"]?.ToString() ?? "";
+                                    item.CovATechRemarksBefore_OBClM = reader["CovATechRemarksBefore_OBClM"]?.ToString() ?? "";
+                                    item.CovAFINRemarksBefore_OBClM = reader["CovAFINRemarksBefore_OBClM"]?.ToString() ?? "";
+                                    item.Csid = Convert.ToInt32(reader["csid"]);
+                                }
                             }
 
                             list.Add(item);
@@ -2983,6 +2968,141 @@ where 1=1 and t.tender_id = @Tid";
                 return StatusCode(500, new { message = "Error fetching supplier data", error = ex.Message });
             }
         }
+
+        //        [HttpGet("GetSupplierParticipationDetails/{tenderId}/{flag}")]
+        //        public async Task<IActionResult> GetSupplierParticipationDetails(int tenderId, int flag)
+        //        {
+        //            List<TenderSupplierParticipationDto> list = new List<TenderSupplierParticipationDto>();
+        //            string query = "";
+
+        //            if (flag == 1)
+        //            {
+        //                query = @"
+        //        SELECT 0 slno, ms.SCHSTATUSDID, t.tender_id, mas.name, ms.EMD, isnull(em.ReqEMDAMt,0) as ReqEMDAMt, 
+        //               isnull(em.submittedEMDAMT,0) as submittedEMDAMT, ms.TPAMOUNT, ms.EMDDOCTYPE, ms.EMDPATH, 
+        //               ms.EMDFILENAME, ms.TPFILENAME, ms.TPPATH, ms.EMDDOCNO, mas.supplier_id, ms.REMARK, 
+        //               isnull(piitem.cntparticipated,0) pitems, ms.ISELIGIBLE_B, ms.ISCovTechEli, ms.IsCOVFinEli, 
+        //               ms.CovATechRemarksBefore_OBClM, ms.CovAFINRemarksBefore_OBClM, dt.dtypename, t.csid
+        //        FROM tenders t
+        //        INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
+        //        INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
+        //        INNER JOIN MASDOCUMENTTYPE dt ON dt.dtypeid = ms.EMDDOCTYPE
+        //        LEFT OUTER JOIN (
+        //            SELECT count(ch.ITEMID) cntparticipated, sc.SCHEMEID, sc.SUPPLIERID 
+        //            FROM SCHEMESTATUSDETAILSCHILD ch
+        //            INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+        //            GROUP BY sc.SCHEMEID, sc.SUPPLIERID
+        //        ) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
+        //        LEFT OUTER JOIN (
+        //            SELECT SUPPLIERID, sum(emd_amount) ReqEMDAMt, emd as submittedEMDAMT, SCHEMEID
+        //            FROM (
+        //                SELECT ch.ITEMID, sc.SUPPLIERID, sc.EMD, ti.emd_amount, sc.SCHEMEID 
+        //                FROM SCHEMESTATUSDETAILSCHILD ch
+        //                INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+        //                INNER JOIN tender_items ti ON ti.item_id = ch.ITEMID AND ti.tender_id = sc.SCHEMEID
+        //                WHERE sc.SCHEMEID = @Tid
+        //            ) b GROUP BY SUPPLIERID, EMD, SCHEMEID
+        //        ) em ON em.SCHEMEID = t.tender_id AND em.SUPPLIERID = ms.SUPPLIERID
+        //        WHERE t.tender_id = @Tid
+        //        ORDER BY mas.name";
+        //            }
+        //            else if (flag == 2) 
+        //            {
+
+        //                query = @"select distinct 0 as SlNo,m.ITEM_ID,ti.tender_item_id,t.tender_id,m.item_name,m.item_code_as_per_tender,m.item_code
+        //,ti.emd_amount,ti.tender_quantity
+        // from tenders t
+        //inner join tender_items ti on ti.tender_id=t.tender_id
+        //inner join masitems m on m.item_id=ti.item_id
+        //left outer join 
+        //(
+        //select s.SCHEMEID,sc.ITEMID,count(sc.ITEMID) as nosQualified from schemestatusdetailschild sc 
+        //inner join masschemesstatusdetails s on s.SCHSTATUSDID=sc.SCHSTATUSDID
+        //where 1=1 --and  s.ISELIGIBLE_B='Y' and sc.FLAGCOB='Y' and FLAGCOC='Y' 
+        //group by s.SCHEMEID,sc.ITEMID
+        //) Q on Q.SCHEMEID=t.tender_id and q.ITEMID=m.item_id
+
+        //where 1=1  and   t.tender_id=@Tid and
+        //  q.ITEMID is not null";
+        //            }
+
+        //            else
+        //            {
+        //                query = @"
+        //        SELECT 0 as slno, ms.SCHSTATUSDID, t.tender_id, mas.name, ms.EMD, ms.TPAMOUNT, 
+        //               ms.EMDDOCTYPE, ms.EMDPATH, ms.EMDFILENAME, ms.TPFILENAME, ms.TPPATH, 
+        //               ms.EMDDOCNO, mas.supplier_id, ms.REMARK, isnull(piitem.cntparticipated, 0) as pitems, 
+        //               ms.ISELIGIBLE_B 
+        //        FROM tenders t
+        //        INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
+        //        INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
+        //        LEFT OUTER JOIN (
+        //            SELECT count(ch.ITEMID) as cntparticipated, sc.SCHEMEID, sc.SUPPLIERID 
+        //            FROM SCHEMESTATUSDETAILSCHILD ch
+        //            INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+        //            GROUP BY sc.SCHEMEID, sc.SUPPLIERID
+        //        ) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
+        //        WHERE t.tender_id = @Tid
+        //        ORDER BY mas.name";
+        //            }
+
+        //            try
+        //            {
+        //                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+        //                {
+        //                    SqlCommand cmd = new SqlCommand(query, conn);
+        //                    cmd.Parameters.AddWithValue("@Tid", tenderId);
+        //                    await conn.OpenAsync();
+
+        //                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+        //                    {
+        //                        int counter = 1;
+        //                        while (await reader.ReadAsync())
+        //                        {
+        //                            var item = new TenderSupplierParticipationDto
+        //                            {
+        //                                SlNo = counter++,
+        //                                SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]),
+        //                                TenderId = Convert.ToInt32(reader["tender_id"]),
+        //                                SupplierName = reader["name"]?.ToString() ?? "",
+        //                                Emd = Convert.ToDecimal(reader["EMD"]),
+        //                                TpAmount = Convert.ToDecimal(reader["TPAMOUNT"]),
+        //                                EmdDocType = reader["EMDDOCTYPE"]?.ToString() ?? "",
+        //                                EmdPath = reader["EMDPATH"]?.ToString() ?? "",
+        //                                EmdFileName = reader["EMDFILENAME"]?.ToString() ?? "",
+        //                                TpFileName = reader["TPFILENAME"]?.ToString() ?? "",
+        //                                TpPath = reader["TPPATH"]?.ToString() ?? "",
+        //                                EmdDocNo = reader["EMDDOCNO"]?.ToString() ?? "",
+        //                                SupplierId = Convert.ToInt32(reader["supplier_id"]),
+        //                                Remark = reader["REMARK"]?.ToString() ?? "",
+        //                                PItems = Convert.ToInt32(reader["pitems"]),
+        //                                IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? ""
+        //                            };
+
+        //                            // Flag 1 ke extra fields handle karein
+        //                            if (flag == 1)
+        //                            {
+        //                                item.ReqEMDAMt = Convert.ToDecimal(reader["ReqEMDAMt"]);
+        //                                item.SubmittedEMDAMT = Convert.ToDecimal(reader["submittedEMDAMT"]);
+        //                                item.DTypeName = reader["dtypename"]?.ToString() ?? "";
+        //                                item.IsCovTechEli = reader["ISCovTechEli"]?.ToString() ?? "";
+        //                                item.IsCOVFinEli = reader["IsCOVFinEli"]?.ToString() ?? "";
+        //                                item.CovATechRemarksBefore_OBClM = reader["CovATechRemarksBefore_OBClM"]?.ToString() ?? "";
+        //                                item.CovAFINRemarksBefore_OBClM = reader["CovAFINRemarksBefore_OBClM"]?.ToString() ?? "";
+        //                                item.Csid = Convert.ToInt32(reader["csid"]);
+        //                            }
+
+        //                            list.Add(item);
+        //                        }
+        //                    }
+        //                }
+        //                return Ok(list);
+        //            }
+        //            catch (Exception ex)
+        //            {
+        //                return StatusCode(500, new { message = "Error fetching supplier data", error = ex.Message });
+        //            }
+        //        }
         //[HttpGet("GetSupplierParticipationDetails/{tenderId}")]
         //public async Task<IActionResult> GetSupplierParticipationDetails(int tenderId)
         //{
@@ -4196,6 +4316,607 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
 
 
 
+        [HttpGet("GetTenderDetails/{tenderId}")]
+        public async Task<IActionResult> GetTenderDetails(int tenderId)
+        {
+          
+            TenderDetailsDTO tenderDetails = null;
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Aapki exact query with parameters (@Tid)
+            string sql = @"SELECT A.TENDER_NO, B.YEAR AS FINANCIAL_YEAR, A.domestic_days, A.import_days, A.warranty_year,
+                          CONVERT(VARCHAR(10), A.TENDER_DATE, 103) AS TENDER_DATE, A.TENDER_DESCRIPTION, A.FLAG, 
+                          A.FINANCIAL_YEAR_ID, A.tender_id, CONVERT(VARCHAR(10), A.cover_a, 103) AS cover_a, 
+                          CONVERT(VARCHAR(10), A.cover_b, 103) AS cover_b, CONVERT(VARCHAR(10), A.cover_Demo, 103) AS cover_Demo,
+                          CONVERT(VARCHAR(10), A.cover_c, 103) AS cover_c
+                   FROM TENDERS A
+                   LEFT OUTER JOIN MAS_FINANCIAL_YEAR B ON (A.FINANCIAL_YEAR_ID = B.FINANCIAL_YEAR_ID)
+                   WHERE A.TENDER_ID = @Tid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Tid", tenderId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            if (await dr.ReadAsync()) 
+                            {
+                                tenderDetails = new TenderDetailsDTO
+                                {
+                                    TenderNo = dr["TENDER_NO"]?.ToString(),
+                                    FinancialYear = dr["FINANCIAL_YEAR"]?.ToString(),
+                                    DomesticDays = dr["domestic_days"] == DBNull.Value ? null : (int?)Convert.ToInt32(dr["domestic_days"]),
+                                    ImportDays = dr["import_days"] == DBNull.Value ? null : (int?)Convert.ToInt32(dr["import_days"]),
+                                    WarrantyYear = dr["warranty_year"] == DBNull.Value ? null : (int?)Convert.ToInt32(dr["warranty_year"]),
+                                    TenderDate = dr["TENDER_DATE"]?.ToString(),
+                                    TenderDescription = dr["TENDER_DESCRIPTION"]?.ToString(),
+                                    Flag = dr["FLAG"]?.ToString(),
+                                    FinancialYearId = dr["FINANCIAL_YEAR_ID"] == DBNull.Value ? null : (int?)Convert.ToInt32(dr["FINANCIAL_YEAR_ID"]),
+                                    TenderId = Convert.ToInt32(dr["tender_id"]),
+                                    CoverA = dr["cover_a"]?.ToString(),
+                                    CoverB = dr["cover_b"]?.ToString(),
+                                    CoverDemo = dr["cover_Demo"]?.ToString(),
+                                    CoverC = dr["cover_c"]?.ToString()
+                                };
+                            }
+                        }
+                    }
+                }
+
+                if (tenderDetails == null)
+                {
+                    return NotFound(new { message = $"Tender details not found for ID: {tenderId}" });
+                }
+
+                return Ok(tenderDetails);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching tender details", details = ex.Message });
+            }
+        }
+
+
+        [HttpGet("GetLiveTenderPrice/{tenderItemId}")]
+        public async Task<IActionResult> GetLiveTenderPrice(int tenderItemId)
+        {
+            var list = new List<LiveTenderPriceDTO>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Parameterized SQL Query (@TItemId)
+            string sql = @"SELECT 0 AS SlNo, tppriceid AS tpriceid, t.tender_item_id AS TID, t.basicrate, t.GST, 
+                          t.supplier_id AS supplierid, t.tpricestatus, s.name AS suppliername, 
+                          t.CMC1, t.CMC2, t.CMC3, t.CMC4, t.CMC5, t.filePathReagent, t.filePathAccessories, 
+                          t.fbasicrate, CONVERT(VARCHAR(10), t.fdate, 103) AS fdate, t.isaccept
+                   FROM live_tender_price t 
+                   INNER JOIN massuppliers s ON s.supplier_id = t.supplier_id
+                   WHERE t.tender_item_id = @TItemId";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@TItemId", tenderItemId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            int counter = 1;
+                            while (await dr.ReadAsync())
+                            {
+                                list.Add(new LiveTenderPriceDTO
+                                {
+                                    SlNo = counter++, // Frontend row index ke liye auto-increment
+                                    TPriceId = Convert.ToInt32(dr["tpriceid"]),
+                                    Tid = Convert.ToInt32(dr["TID"]),
+                                    BasicRate = dr["basicrate"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["basicrate"]),
+                                    Gst = dr["GST"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["GST"]),
+                                    SupplierId = Convert.ToInt32(dr["supplierid"]),
+                                    TPriceStatus = dr["tpricestatus"]?.ToString() ?? "",
+                                    SupplierName = dr["suppliername"]?.ToString() ?? "",
+                                    Cmc1 = dr["CMC1"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC1"]),
+                                    Cmc2 = dr["CMC2"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC2"]),
+                                    Cmc3 = dr["CMC3"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC3"]),
+                                    Cmc4 = dr["CMC4"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC4"]),
+                                    Cmc5 = dr["CMC5"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["CMC5"]),
+                                    FilePathReagent = dr["filePathReagent"]?.ToString() ?? "",
+                                    FilePathAccessories = dr["filePathAccessories"]?.ToString() ?? "",
+                                    FBasicRate = dr["fbasicrate"] == DBNull.Value ? null : (decimal?)Convert.ToDecimal(dr["fbasicrate"]),
+                                    FDate = dr["fdate"]?.ToString() ?? "",
+                                    IsAccept = dr["isaccept"]?.ToString() ?? ""
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching live tender price data", error = ex.Message });
+            }
+        }
+
+        [HttpPost("RejectTenderItem")]
+        public async Task<IActionResult> RejectTenderItem([FromBody] TenderRejectRequestDto request)
+        {
+         
+            if (request.RejectDate == DateTime.MinValue)
+            {
+                return BadRequest(new { message = "Invalid reject date provided." });
+            }
+
+            if (request.TenderItemId <= 0)
+            {
+                return BadRequest(new { message = "Invalid Tender Item ID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            
+            string sql = @"
+        -- 1. First Update Query
+        UPDATE live_tender_price 
+        SET IsAccept = 'N' 
+        WHERE tender_item_id = @TItemId;
+
+        -- 2. Second Update Query
+        UPDATE tender_items 
+        SET RejectDate = @RejectDate, priceflag = 'N' 
+        WHERE tender_item_id = @TItemId;";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        // SQL Parameters binding
+                        cmd.Parameters.AddWithValue("@TItemId", request.TenderItemId);
+                        cmd.Parameters.AddWithValue("@RejectDate", request.RejectDate);
+
+                        await conn.OpenAsync();
+                        int rowsAffected = await cmd.ExecuteNonQueryAsync();
+
+                        if (rowsAffected > 0)
+                        {
+                            return Ok(new { message = "Item rejected and data updated successfully." });
+                        }
+                        else
+                        {
+                            return NotFound(new { message = "No records found to update for the given Tender Item ID." });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error during rejection update", error = ex.Message });
+            }
+        }
+
+
+
+        [HttpPost("AcceptTenderPrice")]
+        public async Task<IActionResult> AcceptTenderPrice([FromForm] TenderAcceptRequestDto request)
+        {
+            // 1. Basic Server Side Validations
+            if (request.TPriceId <= 0)
+                return BadRequest(new { message = "Invalid Tender Price ID." });
+
+            if (request.Cmc1 <= 0 || request.Cmc2 <= 0 || request.Cmc3 <= 0 || request.Cmc4 <= 0 || request.Cmc5 <= 0)
+                return BadRequest(new { message = "All CMC Years (1-5) are mandatory and must be greater than zero." });
+
+            // 2. File Format Validations (.pdf only)
+            if (request.FileUploadReagent != null && Path.GetExtension(request.FileUploadReagent.FileName).ToLower() != ".pdf")
+                return BadRequest(new { message = "Please upload a valid PDF file for Reagent." });
+
+            if (request.FileUploadAccessories != null && Path.GetExtension(request.FileUploadAccessories.FileName).ToLower() != ".pdf")
+                return BadRequest(new { message = "Please upload a valid PDF file for Accessories." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // 3. File Directory Path Configurations (Root/Uploads/Tenders)
+            string uploadFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Tenders");
+            if (!Directory.Exists(uploadFolder))
+            {
+                Directory.CreateDirectory(uploadFolder); // Folder nahi hai toh auto-create karega
+            }
+
+            // WebForms layout naming strategy strings
+            string reagentFileName = "";
+            string accessoriesFileName = "";
+
+            try
+            {
+                // --- A. PROCESS REAGENT FILE UPLOAD ---
+                if (request.FileUploadReagent != null)
+                {
+                    reagentFileName = $"Reagent_{request.TPriceId}.pdf";
+                    string fullPath = Path.Combine(uploadFolder, reagentFileName);
+
+                    // Save file inside destination disk folder location
+                    using (var stream = new FileStream(fullPath, FileMode.Create))
+                    {
+                        await request.FileUploadReagent.CopyToAsync(stream);
+                    }
+                }
+
+                // --- B. PROCESS ACCESSORIES FILE UPLOAD ---
+                if (request.FileUploadAccessories != null)
+                {
+                    accessoriesFileName = $"Acc_{request.TPriceId}.pdf";
+                    string fullPath = Path.Combine(uploadFolder, accessoriesFileName);
+
+                    using (var stream = new FileStream(fullPath, FileMode.Create))
+                    {
+                        await request.FileUploadAccessories.CopyToAsync(stream);
+                    }
+                }
+
+                // --- C. SQL DATABASE TRANSACTION UPDATE ---
+                // Conditional execution constructs string values directly inside parametrized architecture
+                string sql = @"UPDATE live_tender_price 
+                           SET fbasicrate = @NegoPrice, 
+                               fdate = @NegoDate, 
+                               IsAccept = 'Y', 
+                               CMC1 = @C1, CMC2 = @C2, CMC3 = @C3, CMC4 = @C4, CMC5 = @C5,
+                               isMongoReagent = CASE WHEN @ReagentFile <> '' THEN 'Y' ELSE isMongoReagent END,
+                               filePathReagent = CASE WHEN @ReagentFile <> '' THEN @ReagentFile ELSE filePathReagent END,
+                               isMongoAccessories = CASE WHEN @AccFile <> '' THEN 'Y' ELSE isMongoAccessories END,
+                               filePathAccessories = CASE WHEN @AccFile <> '' THEN @AccFile ELSE filePathAccessories END
+                           WHERE tPpriceid = @Id";
+
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@NegoPrice", request.NegoPrice);
+                        cmd.Parameters.AddWithValue("@NegoDate", request.NegoDate);
+                        cmd.Parameters.AddWithValue("@C1", request.Cmc1);
+                        cmd.Parameters.AddWithValue("@C2", request.Cmc2);
+                        cmd.Parameters.AddWithValue("@C3", request.Cmc3);
+                        cmd.Parameters.AddWithValue("@C4", request.Cmc4);
+                        cmd.Parameters.AddWithValue("@C5", request.Cmc5);
+                        cmd.Parameters.AddWithValue("@ReagentFile", reagentFileName);
+                        cmd.Parameters.AddWithValue("@AccFile", accessoriesFileName);
+                        cmd.Parameters.AddWithValue("@Id", request.TPriceId);
+
+                        await conn.OpenAsync();
+                        int rows = await cmd.ExecuteNonQueryAsync();
+
+                        if (rows > 0)
+                        {
+                            return Ok(new { message = "Data updated and files saved to server folder successfully." });
+                        }
+                        else
+                        {
+                            return NotFound(new { message = "Tender record target ID instance not found." });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error processing upload data transaction.", error = ex.Message });
+            }
+        }
+        //[HttpPost("AcceptTenderPrice")]
+        //public async Task<IActionResult> AcceptTenderPrice([FromForm] TenderAcceptRequestDto request)
+        //{
+        //    // 1. Core Input Server-side Validations
+        //    if (request.TPriceId <= 0)
+        //        return BadRequest(new { message = "Invalid Tender Price ID." });
+
+        //    if (request.Cmc1 <= 0 || request.Cmc2 <= 0 || request.Cmc3 <= 0 || request.Cmc4 <= 0 || request.Cmc5 <= 0)
+        //        return BadRequest(new { message = "CMC Years 1 to 5 values should not be empty or zero." });
+
+        //    // 2. File Format Validations (.pdf only)
+        //    if (request.FileUploadReagent != null && Path.GetExtension(request.FileUploadReagent.FileName).ToLower() != ".pdf")
+        //        return BadRequest(new { message = "Please choose a valid PDF file for Reagent Document." });
+
+        //    if (request.FileUploadAccessories != null && Path.GetExtension(request.FileUploadAccessories.FileName).ToLower() != ".pdf")
+        //        return BadRequest(new { message = "Please choose a valid PDF file for Accessories Document." });
+
+        //    string connString = _config.GetConnectionString("DefaultConnection");
+
+        //    string filenameIns = $"Reagent{request.TPriceId}";
+        //    string filenameIns2 = $"Acc{request.TPriceId}";
+
+        //    try
+        //    {
+        //        using (SqlConnection conn = new SqlConnection(connString))
+        //        {
+        //            await conn.OpenAsync();
+
+        //            // --- A. HANDLE REAGENT FILE BINARY UPLOAD (If exists) ---
+        //            if (request.FileUploadReagent != null)
+        //            {
+        //                byte[] reagentBytes;
+        //                using (var ms = new MemoryStream())
+        //                {
+        //                    await request.FileUploadReagent.CopyToAsync(ms);
+        //                    reagentBytes = ms.ToArray();
+        //                }
+
+        //                // Custom Binary Storage Call (Puraane Obj.Insert_Reagent_File ki exact replacement query)
+        //                string fileInsertSql = @"INSERT INTO Student_Info_Table (item_detail_id, InstalationReportFile, FilePhoto, ext) 
+        //                                 VALUES (@Id, @FileName, @Bytes, @Ext)";
+        //                using (SqlCommand fileCmd = new SqlCommand(fileInsertSql, conn))
+        //                {
+        //                    fileCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+        //                    fileCmd.Parameters.AddWithValue("@FileName", filenameIns);
+        //                    fileCmd.Parameters.AddWithValue("@Bytes", reagentBytes);
+        //                    fileCmd.Parameters.AddWithValue("@Ext", ".pdf");
+        //                    await fileCmd.ExecuteNonQueryAsync();
+        //                }
+
+        //                // Update Mongo Reference flag on live price
+        //                string updateRefSql = "UPDATE live_tender_price SET isMongoReagent = 'Y', filePathReagent = @FilePath WHERE tPpriceid = @Id";
+        //                using (SqlCommand refCmd = new SqlCommand(updateRefSql, conn))
+        //                {
+        //                    refCmd.Parameters.AddWithValue("@FilePath", filenameIns);
+        //                    refCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+        //                    await refCmd.ExecuteNonQueryAsync();
+        //                }
+        //            }
+
+        //            // --- B. HANDLE ACCESSORIES FILE BINARY UPLOAD (If exists) ---
+        //            if (request.FileUploadAccessories != null)
+        //            {
+        //                byte[] accBytes;
+        //                using (var ms = new MemoryStream())
+        //                {
+        //                    await request.FileUploadAccessories.CopyToAsync(ms);
+        //                    accBytes = ms.ToArray();
+        //                }
+
+        //                string fileInsertSql = @"INSERT INTO Student_Info_Table_Acc (item_detail_id, InstalationReportFile, FilePhoto, ext) 
+        //                                 VALUES (@Id, @FileName, @Bytes, @Ext)";
+        //                using (SqlCommand fileCmd = new SqlCommand(fileInsertSql, conn))
+        //                {
+        //                    fileCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+        //                    fileCmd.Parameters.AddWithValue("@FileName", filenameIns2);
+        //                    fileCmd.Parameters.AddWithValue("@Bytes", accBytes);
+        //                    fileCmd.Parameters.AddWithValue("@Ext", ".pdf");
+        //                    await fileCmd.ExecuteNonQueryAsync();
+        //                }
+
+        //                string updateRefSql = "UPDATE live_tender_price SET isMongoAccessories = 'Y', filePathAccessories = @FilePath WHERE tPpriceid = @Id";
+        //                using (SqlCommand refCmd = new SqlCommand(updateRefSql, conn))
+        //                {
+        //                    refCmd.Parameters.AddWithValue("@FilePath", filenameIns2);
+        //                    refCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+        //                    await refCmd.ExecuteNonQueryAsync();
+        //                }
+        //            }
+
+        //            // --- C. FINAL CORE TRANSACTION RECORD UPDATE ---
+        //            string finalUpdateSql = @"UPDATE live_tender_price 
+        //                              SET fbasicrate = @NegoPrice, 
+        //                                  fdate = @NegoDate, 
+        //                                  IsAccept = 'Y', 
+        //                                  CMC1 = @C1, CMC2 = @C2, CMC3 = @C3, CMC4 = @C4, CMC5 = @C5 
+        //                              WHERE tPpriceid = @Id";
+
+        //            using (SqlCommand finalCmd = new SqlCommand(finalUpdateSql, conn))
+        //            {
+        //                finalCmd.Parameters.AddWithValue("@NegoPrice", request.NegoPrice);
+        //                finalCmd.Parameters.AddWithValue("@NegoDate", request.NegoDate);
+        //                finalCmd.Parameters.AddWithValue("@C1", request.Cmc1);
+        //                finalCmd.Parameters.AddWithValue("@C2", request.Cmc2);
+        //                finalCmd.Parameters.AddWithValue("@C3", request.Cmc3);
+        //                finalCmd.Parameters.AddWithValue("@C4", request.Cmc4);
+        //                finalCmd.Parameters.AddWithValue("@C5", request.Cmc5);
+        //                finalCmd.Parameters.AddWithValue("@Id", request.TPriceId);
+
+        //                int rows = await finalCmd.ExecuteNonQueryAsync();
+        //                if (rows > 0)
+        //                {
+        //                    return Ok(new { message = "Tender details accepted and saved successfully." });
+        //                }
+        //            }
+        //        }
+
+        //        return BadRequest(new { message = "Failed to update tender price records." });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, new { message = "Error processing accepted values", error = ex.Message });
+        //    }
+        //}
+
+        [HttpGet("GetDMElist")]
+
+        public async Task<IActionResult> GetDMElist()
+        {
+            List<GetDMElistDTO> list = new List<GetDMElistDTO>();
+            string query = @"select USER_ID,e_mail_id,USER_NAME,designation from users where authority=12 and user_id!=12";
+            using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+            {
+                SqlCommand cmd = new SqlCommand(query, conn);
+
+                await conn.OpenAsync();
+
+                SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    GetDMElistDTO data = new GetDMElistDTO
+                    {
+                        //                     public int USER_ID { get; set; }
+                        //public string e_mail_id { get; set; }
+                        //public string USER_NAME { get; set; }
+                        //public string designation { get; set; }
+                        USER_ID = reader["USER_ID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["USER_ID"]),
+
+                        e_mail_id = reader["e_mail_id"] == DBNull.Value ? null : reader["e_mail_id"].ToString(),
+                        USER_NAME = reader["USER_NAME"] == DBNull.Value ? null : reader["USER_NAME"].ToString(),
+                        designation = reader["designation"] == DBNull.Value ? null : reader["designation"].ToString(),
+
+                    };
+
+                    list.Add(data);
+                }
+
+                return Ok(list);
+            }
+
+        }
+
+        [HttpGet("GetIndentConsolidationList/{directorateId}/{userId}/{financialYearId}")]
+        public async Task<IActionResult> GetIndentConsolidationList(int directorateId, int userId, int financialYearId)
+        {
+            // Basic Request Constraints Rules Checks
+            if (directorateId <= 0 || userId <= 0 || financialYearId <= 0)
+            {
+                return BadRequest(new { message = "Invalid lookup filter criteria IDs provided." });
+            }
+
+            var list = new List<IndentConsolidationDto>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Exact SQL execution layout parameterized to eliminate injection vulnerabilities
+            string sql = @"
+        SELECT A.path, A.description, A.INDENT_CONSOLIDATION_ID, A.USER_ID, A.DIRECTORATE_ID, A.FINANCIAL_YEAR_ID, 
+               SUM(B.PROPOSED_QTY) AS PROPOSED_QTY, A.indent_con_no,
+               CONVERT(VARCHAR(10), A.CONSOLIDATED_DATE, 103) AS CONSOLIDATED_DATE, 
+               SUM(B.FINAL_QTY) AS FINAL_QTY, 
+               COUNT(DISTINCT B.item_id) AS nosindentQTY,
+               (CASE WHEN A.STATUS = 'I' THEN 'Incomplete' WHEN A.STATUS = 'C' THEN 'Completed' ELSE '' END) AS EStatus,
+               (SELECT (CASE WHEN path IS NULL THEN 'Not Uploaded' ELSE 'Uploaded' END) 
+                FROM INDENT_CONSOLIDATION WHERE indent_consolidation_id = A.INDENT_CONSOLIDATION_ID) AS uploadStatus,
+               U.user_name
+        FROM INDENT_CONSOLIDATION A 
+        LEFT OUTER JOIN INDENT_CONS_ITEMS B ON (B.INDENT_CONSOLIDATED_ID = A.INDENT_CONSOLIDATION_ID)
+        INNER JOIN users U ON U.user_id = A.user_id		
+        WHERE A.directorate_id = @DirectorateId AND A.USER_ID = @UserId AND A.financial_year_id = @FinYearId
+        GROUP BY A.INDENT_CONSOLIDATION_ID, A.USER_ID, U.user_name, A.DIRECTORATE_ID, A.FINANCIAL_YEAR_ID, 
+                 A.STATUS, A.CONSOLIDATED_DATE, A.indent_con_no, A.path, A.description
+        ORDER BY A.CONSOLIDATED_DATE DESC";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        // Assign Route Parameters safely to SQL Tokens
+                        cmd.Parameters.AddWithValue("@DirectorateId", directorateId);
+                        cmd.Parameters.AddWithValue("@UserId", userId);
+                        cmd.Parameters.AddWithValue("@FinYearId", financialYearId);
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                list.Add(new IndentConsolidationDto
+                                {
+                                    Path = dr["path"] == DBNull.Value ? string.Empty : dr["path"].ToString(),
+                                    Description = dr["description"] == DBNull.Value ? string.Empty : dr["description"].ToString(),
+                                    IndentConsolidationId = Convert.ToInt32(dr["INDENT_CONSOLIDATION_ID"]),
+                                    UserId = Convert.ToInt32(dr["USER_ID"]),
+                                    DirectorateId = Convert.ToInt32(dr["DIRECTORATE_ID"]),
+                                    FinancialYearId = Convert.ToInt32(dr["FINANCIAL_YEAR_ID"]),
+
+                                    // Aggregated decimal data conversions
+                                    ProposedQty = dr["PROPOSED_QTY"] == DBNull.Value ? 0m : Convert.ToDecimal(dr["PROPOSED_QTY"]),
+                                    FinalQty = dr["FINAL_QTY"] == DBNull.Value ? 0m : Convert.ToDecimal(dr["FINAL_QTY"]),
+                                    NosIndentQty = dr["nosindentQTY"] == DBNull.Value ? 0 : Convert.ToInt32(dr["nosindentQTY"]),
+
+                                    // Calculated alias string representations
+                                    IndentConNo = dr["indent_con_no"]?.ToString() ?? string.Empty,
+                                    ConsolidatedDate = dr["CONSOLIDATED_DATE"]?.ToString() ?? string.Empty,
+                                    EStatus = dr["EStatus"]?.ToString() ?? string.Empty,
+                                    UploadStatus = dr["uploadStatus"]?.ToString() ?? string.Empty,
+                                    UserName = dr["user_name"]?.ToString() ?? string.Empty
+                                });
+                            }
+                        }
+                    }
+                }
+
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error pulling consolidated indents data grid.", error = ex.Message });
+            }
+        }
+        // E. Save/Insert Consolidated Indent Header
+        [HttpPost("SaveIndentConsolidation")]
+        public async Task<IActionResult> SaveIndentConsolidation([FromBody] IndentSaveRequestDto request)
+        {
+            if (!DateTime.TryParse(request.IndentDateStr, out DateTime receivedDT))
+                return BadRequest(new { message = "Invalid Indent Date format." });
+
+            if (receivedDT > DateTime.Now)
+                return BadRequest(new { message = "Indent Date cannot be greater than Today" });
+
+            using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+            {
+                await conn.OpenAsync();
+
+                // Financial Year Code Range Validation Match Strategy
+                string checkYearSql = "SELECT year FROM mas_financial_year WHERE financial_year_id = @FinId";
+                using (SqlCommand checkCmd = new SqlCommand(checkYearSql, conn))
+                {
+                    checkCmd.Parameters.AddWithValue("@FinId", request.FinancialYearId);
+                    var yearVal = await checkCmd.ExecuteScalarAsync();
+                    if (yearVal == null || !yearVal.ToString()!.Contains(receivedDT.Year.ToString()))
+                    {
+                        return BadRequest(new { message = "Indent Date is Not valid for the Selected Year" });
+                    }
+                }
+
+                // Get target authority directorate group id code mapping fallback context
+                string dirSql = "SELECT TOP(1) authority FROM users WHERE user_id = @UId";
+                int resolvedDirectorateId = 12;
+                using (SqlCommand dirCmd = new SqlCommand(dirSql, conn))
+                {
+                    dirCmd.Parameters.AddWithValue("@UId", request.SelectedUserId);
+                    var dId = await dirCmd.ExecuteScalarAsync();
+                    if (dId != null) resolvedDirectorateId = Convert.ToInt32(dId);
+                }
+
+                // Insert Transaction Engine Logic Pipeline
+                string insertSql = @"INSERT INTO INDENT_CONSOLIDATION (CONSOLIDATED_DATE, USER_ID, DIRECTORATE_ID, FINANCIAL_YEAR_ID, STATUS, description)
+                          VALUES (@CDate, @UserId, @DirId, @FinId, 'I', @Desc);
+                          SELECT SCOPE_IDENTITY();";
+
+                int newId = 0;
+                using (SqlCommand insCmd = new SqlCommand(insertSql, conn))
+                {
+                    insCmd.Parameters.AddWithValue("@CDate", receivedDT);
+                    insCmd.Parameters.AddWithValue("@UserId", request.SelectedUserId);
+                    insCmd.Parameters.AddWithValue("@DirId", resolvedDirectorateId);
+                    insCmd.Parameters.AddWithValue("@FinId", request.FinancialYearId);
+                    insCmd.Parameters.AddWithValue("@Desc", request.IndentDescription.Trim());
+                    newId = Convert.ToInt32(await insCmd.ExecuteScalarAsync());
+                }
+
+                // Reference Identity generation updates string format layout mapping
+                string indentCode = $"ID{DateTime.Now.Day}{DateTime.Now.Month}{DateTime.Now.ToString("yy")}/{newId}";
+                string updateSql = "UPDATE INDENT_CONSOLIDATION SET INDENT_CON_NO = @ICode WHERE INDENT_CONSOLIDATION_ID = @Id";
+                using (SqlCommand updCmd = new SqlCommand(updateSql, conn))
+                {
+                    updCmd.Parameters.AddWithValue("@ICode", indentCode);
+                    updCmd.Parameters.AddWithValue("@Id", newId);
+                    await updCmd.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new { message = "Indent successfully initialized.", indentNo = indentCode });
+            }
+        }
+
 
     }
-}
+    }

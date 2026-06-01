@@ -561,24 +561,26 @@ namespace EMISAPIS.DTOS
         public decimal EmdAmount { get; set; }
     }
 
-    //select dtypeid, dtypename from MASDOCUMENTTYPE
+  
     public class MASDOCUMENTTYPEDTO
     {
         public int dtypeid { get; set; }
         public string dtypename { get; set; }
     }
+
     public class TenderSupplierParticipationDto
     {
+   
         public int SlNo { get; set; }
         public int SchStatusDid { get; set; }
         public int TenderId { get; set; }
         public string SupplierName { get; set; }
         public decimal Emd { get; set; }
-        public decimal ReqEMDAMt { get; set; } // Query 1 specific
-        public decimal SubmittedEMDAMT { get; set; } // Query 1 specific
+        public decimal ReqEMDAMt { get; set; }
+        public decimal SubmittedEMDAMT { get; set; }
         public decimal TpAmount { get; set; }
         public string EmdDocType { get; set; }
-        public string DTypeName { get; set; } // Query 1 specific
+        public string DTypeName { get; set; }
         public string EmdPath { get; set; }
         public string EmdFileName { get; set; }
         public string TpFileName { get; set; }
@@ -588,12 +590,47 @@ namespace EMISAPIS.DTOS
         public string Remark { get; set; }
         public int PItems { get; set; }
         public string IsEligibleB { get; set; }
-        public string IsCovTechEli { get; set; } // Query 1 specific
-        public string IsCOVFinEli { get; set; } // Query 1 specific
-        public string CovATechRemarksBefore_OBClM { get; set; } // Query 1 specific
-        public string CovAFINRemarksBefore_OBClM { get; set; } // Query 1 specific
-        public int Csid { get; set; } // Query 1 specific
+        public string IsCovTechEli { get; set; }
+        public string IsCOVFinEli { get; set; }
+        public string CovATechRemarksBefore_OBClM { get; set; }
+        public string CovAFINRemarksBefore_OBClM { get; set; }
+        public int Csid { get; set; }
+
+        // --- FLAG 2 SPECIFIC NEW FIELDS ADDED HERE ---
+        public int ItemId { get; set; }
+        public int TenderItemId { get; set; }
+        public string ItemName { get; set; }
+        public string ItemCodeAsPerTender { get; set; }
+        public string ItemCode { get; set; }
+        public decimal TenderQuantity { get; set; }
     }
+    //public class TenderSupplierParticipationDto
+    //{
+    //    public int SlNo { get; set; }
+    //    public int SchStatusDid { get; set; }
+    //    public int TenderId { get; set; }
+    //    public string SupplierName { get; set; }
+    //    public decimal Emd { get; set; }
+    //    public decimal ReqEMDAMt { get; set; } // Query 1 specific
+    //    public decimal SubmittedEMDAMT { get; set; } // Query 1 specific
+    //    public decimal TpAmount { get; set; }
+    //    public string EmdDocType { get; set; }
+    //    public string DTypeName { get; set; } // Query 1 specific
+    //    public string EmdPath { get; set; }
+    //    public string EmdFileName { get; set; }
+    //    public string TpFileName { get; set; }
+    //    public string TpPath { get; set; }
+    //    public string EmdDocNo { get; set; }
+    //    public int SupplierId { get; set; }
+    //    public string Remark { get; set; }
+    //    public int PItems { get; set; }
+    //    public string IsEligibleB { get; set; }
+    //    public string IsCovTechEli { get; set; } // Query 1 specific
+    //    public string IsCOVFinEli { get; set; } // Query 1 specific
+    //    public string CovATechRemarksBefore_OBClM { get; set; } // Query 1 specific
+    //    public string CovAFINRemarksBefore_OBClM { get; set; } // Query 1 specific
+    //    public int Csid { get; set; } // Query 1 specific
+    //}
     //public class TenderSupplierParticipationDto
     //{
     //    public int SlNo { get; set; }
@@ -785,4 +822,118 @@ namespace EMISAPIS.DTOS
         public DateTime? EntryDate { get; set; }
     }
 
+    public class TenderDetailsDTO
+    {
+        public string TenderNo { get; set; }
+        public string FinancialYear { get; set; }
+        public int? DomesticDays { get; set; }
+        public int? ImportDays { get; set; }
+        public int? WarrantyYear { get; set; }
+        public string TenderDate { get; set; }
+        public string TenderDescription { get; set; }
+        public string Flag { get; set; }
+        public int? FinancialYearId { get; set; }
+        public int TenderId { get; set; }
+        public string CoverA { get; set; }
+        public string CoverB { get; set; }
+        public string CoverDemo { get; set; }
+        public string CoverC { get; set; }
+    }
+
+    public class LiveTenderPriceDTO
+    {
+        public int SlNo { get; set; }
+        public int TPriceId { get; set; }
+        public int Tid { get; set; }
+        public decimal? BasicRate { get; set; }
+        public decimal? Gst { get; set; }
+        public int SupplierId { get; set; }
+        public string TPriceStatus { get; set; }
+        public string SupplierName { get; set; }
+        public decimal? Cmc1 { get; set; }
+        public decimal? Cmc2 { get; set; }
+        public decimal? Cmc3 { get; set; }
+        public decimal? Cmc4 { get; set; }
+        public decimal? Cmc5 { get; set; }
+        public string FilePathReagent { get; set; }
+        public string FilePathAccessories { get; set; }
+        public decimal? FBasicRate { get; set; }
+        public string FDate { get; set; } // Agar date formatted chahiye toh string sahi hai
+        public string IsAccept { get; set; }
+    }
+    public class TenderRejectRequestDto
+    {
+        public int TenderItemId { get; set; } 
+        public DateTime RejectDate { get; set; } 
+    }
+
+    //public class TenderAcceptRequestDto
+    //{
+    //    public int TPriceId { get; set; } // lbltpriceid
+    //    public decimal NegoPrice { get; set; } // txtnegoprice
+    //    public DateTime NegoDate { get; set; } // txtnegodate (Frontend standard format automatically converts)
+
+    //    // CMC Fields
+    //    public decimal Cmc1 { get; set; }
+    //    public decimal Cmc2 { get; set; }
+    //    public decimal Cmc3 { get; set; }
+    //    public decimal Cmc4 { get; set; }
+    //    public decimal Cmc5 { get; set; }
+
+    //    // Multi-part PDF Upload Files
+    //    public IFormFile? FileUploadReagent { get; set; }
+    //    public IFormFile? FileUploadAccessories { get; set; }
+    //}
+    public class TenderAcceptRequestDto
+    {
+        public int TPriceId { get; set; }
+        public decimal NegoPrice { get; set; }
+        public DateTime NegoDate { get; set; } // Frontend standard 'yyyy-MM-dd' auto-parse hoga
+
+        // CMC Year Rates
+        public decimal Cmc1 { get; set; }
+        public decimal Cmc2 { get; set; }
+        public decimal Cmc3 { get; set; }
+        public decimal Cmc4 { get; set; }
+        public decimal Cmc5 { get; set; }
+
+        // IFormFile handles dynamic multipart/form-data uploads
+        public IFormFile? FileUploadReagent { get; set; }
+        public IFormFile? FileUploadAccessories { get; set; }
+    }
+    public class GetDMElistDTO
+    {
+     
+        public int USER_ID { get; set; }
+        public string e_mail_id { get; set; }
+        public string USER_NAME { get; set; }
+        public string designation { get; set; }
+
+
+    }
+    public class IndentConsolidationDto
+    {
+        public string Path { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public int IndentConsolidationId { get; set; }
+        public int UserId { get; set; }
+        public int DirectorateId { get; set; }
+        public int FinancialYearId { get; set; }
+        public decimal ProposedQty { get; set; } // SUM aggregation
+        public string IndentConNo { get; set; } = string.Empty;
+        public string ConsolidatedDate { get; set; } = string.Empty; // Format 103 (DD/MM/YYYY)
+        public decimal FinalQty { get; set; } // SUM aggregation
+        public int NosIndentQty { get; set; } // COUNT DISTINCT aggregation
+        public string EStatus { get; set; } = string.Empty; // Incomplete / Completed
+        public string UploadStatus { get; set; } = string.Empty; // Uploaded / Not Uploaded
+        public string UserName { get; set; } = string.Empty;
+    }
+    public class IndentSaveRequestDto
+    {
+        public string IndentDateStr { get; set; } = string.Empty;
+        public int FinancialYearId { get; set; }
+        public int SelectedUserId { get; set; }
+        public string IndentDescription { get; set; } = string.Empty;
+        public int DirectorateId { get; set; }
+    }
 }
