@@ -391,12 +391,9 @@ WHERE user_name = @Username
 
         private static string TryReadOptionalString(SqlDataReader reader, string columnName)
         {
-<<<<<<< HEAD
-=======
             //return reader[columnName] != DBNull.Value
             //    ? reader[columnName].ToString()
             //    : string.Empty;
->>>>>>> main
             try
             {
                 int ordinal = reader.GetOrdinal(columnName);
