@@ -294,5 +294,139 @@ public class IndentConsolidationItemDetailDto
     }
 
 
+public class IndentConsolidationDetailDto
+    {
+        public int ItemId { get; set; } // A.ITEM_ID
+        public string ItemCodeAsPerTender { get; set; } = string.Empty; // A.ITEM_CODE_AS_PER_TENDER
+        public string RcEndDate { get; set; } = string.Empty; // g.RC_END_DATE (Formatted)
+        public string ItemDesc { get; set; } = string.Empty; // A.ITEM_DESC
+        public string ItemName { get; set; } = string.Empty; // A.ITEM_NAME
+        public string FileName { get; set; } = string.Empty; // B.FILE_NAME
+        public int? UploadDocId { get; set; } // B.UPLOAD_DOC_ID
+        public string UploadFolderName { get; set; } = string.Empty; // B.UPLOAD_FOLDER_NAME
+        public decimal SingleUnitPrice { get; set; } // isnull(G.SINGLE_UNIT_PRICE,0)
+        public decimal EstimatedCost { get; set; } // calculated ESTIMATED_COST
+        public int ContractItemId { get; set; } // COALESCE(G.CONTRACT_ITEM_ID,0)
+        public int? IndentConsItemsId { get; set; } // s.indent_cons_items_id
+        public int? IndentConsolidationId { get; set; } // q.indent_consolidation_id
+        public decimal ProposedQty { get; set; } // s.proposed_qty
+        public string OtherFundName { get; set; } = string.Empty; // s.other_fund_name
+        public decimal FinalQtyI { get; set; } // s.final_qty
+        public decimal FinalQty { get; set; } // isnull(ind.indent,0)
+        public int? IndentFundId { get; set; } // s.indent_fund_id
+        public int? IndentMonthId { get; set; } // s.indent_month_id
+        public string IndentFundName { get; set; } = string.Empty; // r.indent_fund_name
+        public string IndentMonth { get; set; } = string.Empty; // r1.indent_month
+        public string Status { get; set; } = string.Empty; // s.status
+    }
+    public class ConsigneeIndentDetailDto
+    {
+        public int LocationId { get; set; } // l.location_id
+        public string LocationName { get; set; } = string.Empty; // l.location_name
+        public int DpDistrictId { get; set; } // l.DP_DistrictID
+        public string IndentQuantity { get; set; } = "0"; // calculated indent_quantity
+        public int? IndentItemId { get; set; } // fac.indent_item_id
+        public int? FacilityTypeId { get; set; } // facility_type_id
+    }
+
+
+
+
+public class BulkConsigneeSaveRequestDto
+    {
+        public int ItemId { get; set; } // Request.QueryString["itemId"]
+        public int FinancialYearId { get; set; } // Request.QueryString["finyrId"]
+        public int IndConId { get; set; } // Request.QueryString["indConId"]
+        public string IndentNumber { get; set; } = string.Empty; // lblIndent_Number.Text
+        public List<ConsigneeRowItemDto> ConsigneeRows { get; set; } = new List<ConsigneeRowItemDto>();
+    }
+
+    public class ConsigneeRowItemDto
+    {
+        public int LocationId { get; set; } // lblFacilityId
+        public int IndentItemId { get; set; } // lblIndentItemId
+        public decimal IndentQuantity { get; set; } // txtIndeQty
+    }
+    public class CompleteIndentRequestDto
+    {
+        public int ItemId { get; set; } // Request.QueryString["itemId"]
+        public int IndConId { get; set; } // Request.QueryString["indentId"]
+    }
+   
+
+public class SavedDataGridDto
+    {
+        public int IndentConsolidationId { get; set; } // id.indent_consolidation_id
+        public string Description { get; set; } = string.Empty; // id.description
+        public string IndentDate { get; set; } = string.Empty; // Indent_date
+        public int LocationId { get; set; } // l.location_id
+        public string LocationName { get; set; } = string.Empty; // l.location_name
+        public int CurrentStock { get; set; } // CurrentStock
+        public int Pipeline { get; set; } // Pipeline
+        public int ItemId { get; set; } // im.item_id
+        public string ItemName { get; set; } = string.Empty; // itemname
+        public string EqpCode { get; set; } = string.Empty; // eqpcode
+        public int FacilityId { get; set; } // i.facility_id
+        public decimal IndentQuantity { get; set; } // im.indent_quantity
+        public decimal EstimatedCost { get; set; } // m.estimated_cost
+        public long Value { get; set; } // Value
+        public string Remarks { get; set; } = string.Empty; // i.remarks
+        public int? HeadId { get; set; } // d.headID
+        public string HeadName { get; set; } = string.Empty; // d.headName
+        public string RCEndDate { get; set; } = string.Empty; // RCEndDate
+        public string Supplier { get; set; } = string.Empty; // Supplier
+        public string Make { get; set; } = string.Empty; // make
+        public string Model { get; set; } = string.Empty; // model
+        public decimal? PriceIncGST { get; set; } // PriceIncGST
+        public string TenderDT { get; set; } = string.Empty; // tenderDT
+        public string TenderNo { get; set; } = string.Empty; // tender_no
+        public string FinalStatus { get; set; } = string.Empty; // finalstatus
+        public string POYear { get; set; } = string.Empty; // POYear
+        public string PODate { get; set; } = string.Empty; // po_date
+        public string PONo { get; set; } = string.Empty; // po_no
+        public decimal POQTY { get; set; } // POQTY
+        public long POValueWithTax { get; set; } // POValueWithTax
+        public string ItemRemarks { get; set; } = string.Empty; // itemremarks
+        public int IndentConsItemsId { get; set; } // iim.indent_cons_items_id
+    }
+    public class TermConditionGridDto
+    {
+        public int TermConditionId { get; set; } // tc.term_condition_id
+        public string TermCondition { get; set; } = string.Empty; // tc.term_condition
+        public int TenderId { get; set; } // tc.tender_id
+        public string TenderNo { get; set; } = string.Empty; // t.tender_no
+    }
+    public class TenderSummaryRdlcDto
+    {
+        public string TenderNo { get; set; } = string.Empty;
+        public string LiveDT { get; set; } = string.Empty;
+        public string TLast { get; set; } = string.Empty;
+        public int NoSitems { get; set; }
+        public string FinalStatus { get; set; } = string.Empty;
+        public string NosItemsA { get; set; } = string.Empty;
+        public string AItemsSupplier { get; set; } = string.Empty;
+        public string CoverA { get; set; } = string.Empty;
+        public int? COVALastDays { get; set; }
+        public string NositemsDA { get; set; } = string.Empty;
+        public string AdaItemsSupplier { get; set; } = string.Empty;
+        public string ObjClaimLastDate { get; set; } = string.Empty;
+        public string ObjCStartDT { get; set; } = string.Empty;
+        public string COVBDT { get; set; } = string.Empty;
+        public string COVCDT { get; set; } = string.Empty;
+        public int NoofPriceFound { get; set; }
+        public int NosAccepted { get; set; }
+        public int NosRejected { get; set; }
+        public int DaysTakenFromLiveDT { get; set; }
+        public int? COVAToObjStartDays { get; set; }
+        public int? OBJDays { get; set; }
+        public int? ClaimEndToBDays { get; set; }
+        public int? CovBToCovCDays { get; set; }
+        public int Csid { get; set; }
+        public int TenderId { get; set; }
+        public int DaysClosed { get; set; }
+        public int Show { get; set; }
+        public int NosRC { get; set; }
+    }
 
 }
+

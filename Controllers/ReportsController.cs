@@ -319,7 +319,7 @@ and m.item_id =@item_id
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
 
-            using SqlCommand cmd = new SqlCommand("select DP_DistrictID,DBStart_Name_En from Districts", con);
+            using SqlCommand cmd = new SqlCommand("select DP_DistrictID,DBStart_Name_En from Districts order by DBStart_Name_En", con);
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
