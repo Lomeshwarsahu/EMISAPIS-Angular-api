@@ -1,10 +1,24 @@
-﻿
+
 using System.Security.Cryptography;
 using System.Text;
 namespace EMISAPIS.Helpers
 {
     public class SaltedHash
     {
+        public static string CreateStored(string password)
+        {
+            string salt = GenerateSalt();
+            string hash = ComputeHash(password, salt);
+            return $"salt{{{salt}}}hash{{{hash}}}";
+        }
+
+        private static string GenerateSalt()
+        {
+            byte[] bytes = new byte[6];
+            RandomNumberGenerator.Fill(bytes);
+            return Convert.ToBase64String(bytes)[..8];
+        }
+
         public static bool VerifyFromStored(string storedValue, string password)
         {
             if (string.IsNullOrWhiteSpace(storedValue))
