@@ -66,7 +66,7 @@ namespace EMISAPIS.Controllers
 
             return Ok(users);
         }
-        [HttpGet("{id}")]
+        [HttpGet("{id:int}")]
         public async Task<IActionResult> GetUserbyid(int id)
         {
             using SqlConnection con = new SqlConnection(_connectionString);
@@ -93,7 +93,13 @@ namespace EMISAPIS.Controllers
                     break;
                 case 6:
                 case 7:
-                    query = @"SELECT user_id, user_name FROM users WHERE user_type IN ('SUP') ORDER BY user_id";
+                    query = @"SELECT u.user_id,
+                                     ISNULL(NULLIF(LTRIM(RTRIM(ms.name)), ''), u.user_name) AS user_name,
+                                     u.e_mail_id
+                              FROM users u
+                              LEFT JOIN massuppliers ms ON ms.supplier_id = u.supplier_id
+                              WHERE u.user_type = 'SUP'
+                              ORDER BY user_name, u.user_id";
                     break;
                 case 8:
                     query = @"SELECT ms.supplier_id AS user_id, ms.name AS user_name FROM massuppliers ms WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.supplier_id = ms.supplier_id AND u.user_type = 'SUP')";
@@ -391,9 +397,6 @@ WHERE user_name = @Username
 
         private static string TryReadOptionalString(SqlDataReader reader, string columnName)
         {
-            //return reader[columnName] != DBNull.Value
-            //    ? reader[columnName].ToString()
-            //    : string.Empty;
             try
             {
                 int ordinal = reader.GetOrdinal(columnName);
@@ -406,9 +409,5 @@ WHERE user_name = @Username
                 return string.Empty;
             }
         }
-
-
-
     }
-
 }
