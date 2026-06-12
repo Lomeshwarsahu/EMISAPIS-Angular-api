@@ -1712,7 +1712,8 @@ where 1=1 order by b.BUDGETNAME";
             }
         }
 
-        //foleder save krna h 
+       
+
         [HttpPost("SaveActualFundEntry1")]
         public async Task<IActionResult> SaveActualFundEntry1([FromBody] SubmitActualEntryDto dto)
         {
@@ -1750,11 +1751,11 @@ where 1=1 order by b.BUDGETNAME";
                 {
                     try
                     {
-                        // Step 1: Insert record text configurations parameters inside SQL Server
+                        // Step 1: Insert record parameter configurations text components inside SQL Server
                         string insertSql = @"
-                        INSERT INTO MASBUDGETDETAILSActualEntry (BUDGETID, AMOUNT, RECEIVEDDATE, ENTRYDATE, bankid, Remarks, bgid)
-                        VALUES (@BudId, @Amt, CONVERT(DATETIME, @RecDt, 120), GETDATE(), @BankId, @Rem, @Bgid);
-                        SELECT SCOPE_IDENTITY();";
+                INSERT INTO MASBUDGETDETAILSActualEntry (BUDGETID, AMOUNT, RECEIVEDDATE, ENTRYDATE, bankid, Remarks, bgid)
+                VALUES (@BudId, @Amt, CONVERT(DATETIME, @RecDt, 120), GETDATE(), @BankId, @Rem, @Bgid);
+                SELECT SCOPE_IDENTITY();";
 
                         int generatedAbgid = 0;
                         using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
@@ -1770,31 +1771,38 @@ where 1=1 order by b.BUDGETNAME";
                         }
 
                         // Step 2: FOLDER STORAGE LOGIC PIPELINE
-                        // Aapke application root (wwwroot) ke andar 'Uploads/Funds' naam ka folder target hoga
                         string folderRootPath = Path.Combine(_env.ContentRootPath, "Uploads", "Funds");
 
-                        // Agar folder physically server machine par create nahi hua hai, toh ye auto-create kar dega
                         if (!Directory.Exists(folderRootPath))
                         {
                             Directory.CreateDirectory(folderRootPath);
                         }
 
-                        // Dynamic naming scheme matched perfectly to your legacy rules code logic
+                        // Dynamic nomenclature calculated string value parameters matching your business logic
                         string fileNameOnly = $"{dto.Bgid}AntiFundRec{generatedAbgid}";
                         string fullPhysicalPathWithExtension = Path.Combine(folderRootPath, fileNameOnly + extClean);
 
-                        // Step 3: Write Base64 string directly into a physical raw system file (.pdf)
+                        // Step 3: Write Base64 string directly into a physical raw local file (.pdf)
                         byte[] rawBinaryFileBytes = Convert.FromBase64String(dto.FileBase64);
                         await System.IO.File.WriteAllBytesAsync(fullPhysicalPathWithExtension, rawBinaryFileBytes);
 
-                        // Step 4: Update the file path/name identifiers keys inside database index rows
-                        string updateSql = "UPDATE MASBUDGETDETAILSActualEntry SET fileName = @FileName WHERE ABGID = @Abgid";
+                        // ==================== FIXED DATABASE UPDATE PIPELINE ====================
+                        // FIX 1: Explicitly used distinctive tracking variable parameters to avoid baseline NULL injection paths
+                        // FIX 2: Added verification schema to force exceptions tracking if row identity isn't synced
+                        string updateSql = "UPDATE MASBUDGETDETAILSActualEntry SET fileName = @FileNameToStore WHERE ABGID = @TargetAbgid";
+
                         using (SqlCommand updCmd = new SqlCommand(updateSql, conn, trans))
                         {
-                            updCmd.Parameters.AddWithValue("@FileName", fileNameOnly);
-                            updCmd.Parameters.AddWithValue("@Abgid", generatedAbgid);
-                            await updCmd.ExecuteNonQueryAsync();
+                            updCmd.Parameters.AddWithValue("@FileNameToStore", fileNameOnly.Trim());
+                            updCmd.Parameters.AddWithValue("@TargetAbgid", generatedAbgid);
+
+                            int rowsUpdated = await updCmd.ExecuteNonQueryAsync();
+                            if (rowsUpdated == 0)
+                            {
+                                throw new Exception($"File reference sync crashed. Target ledger entry ID row ABGID: {generatedAbgid} could not be located.");
+                            }
                         }
+                        // =========================================================================
 
                         await trans.CommitAsync();
                         return Ok(new { message = "Saved Successfully and File Uploaded into Server Folder Context", actualId = generatedAbgid });
@@ -1808,6 +1816,171 @@ where 1=1 order by b.BUDGETNAME";
             }
         }
 
+
+
+      
+        //[HttpGet("DownloadFundFile/{abgid}")]
+        //public async Task<IActionResult> DownloadFundFile(int abgid, [FromQuery] bool forceDownload = false)
+        //{
+        //    if (abgid <= 0)
+        //    {
+        //        return BadRequest(new { message = "Invalid actual entry index identification (abgid)." });
+        //    }
+
+        //    string connectionString = _config.GetConnectionString("DefaultConnection");
+        //    string dbFileName = string.Empty;
+
+        //    // Database se exact row wise filename load karna
+        //    string query = "SELECT fileName FROM MASBUDGETDETAILSActualEntry WHERE ABGID = @Abgid";
+
+        //    try
+        //    {
+        //        using (SqlConnection conn = new SqlConnection(connectionString))
+        //        {
+        //            using (SqlCommand cmd = new SqlCommand(query, conn))
+        //            {
+        //                cmd.Parameters.AddWithValue("@Abgid", abgid);
+        //                await conn.OpenAsync();
+        //                object result = await cmd.ExecuteScalarAsync();
+
+        //                if (result != null && result != DBNull.Value)
+        //                {
+        //                    dbFileName = result.ToString().Trim();
+        //                }
+        //            }
+        //        }
+
+        //        if (string.IsNullOrEmpty(dbFileName))
+        //        {
+        //            return NotFound(new { message = "No file footprint registered in database records logs." });
+        //        }
+
+        //        // AUTOMATED RECURSIVE ABSOLUTE RESOLVER
+        //        string folderRootPath = Path.Combine(_env.ContentRootPath, "Uploads", "Funds");
+        //        string completePhysicalPath = Path.Combine(folderRootPath, dbFileName + ".pdf");
+
+        //        // Windows dynamic format parsing normalization
+        //        completePhysicalPath = Path.GetFullPath(completePhysicalPath);
+
+        //        if (!System.IO.File.Exists(completePhysicalPath))
+        //        {
+        //            // EMERGENCY SAFETY SCOPE: Agar extension double truncate ho gaya ho (.pdf.pdf)
+        //            string altPath = completePhysicalPath.Replace(".pdf.pdf", ".pdf");
+        //            if (System.IO.File.Exists(altPath))
+        //            {
+        //                completePhysicalPath = altPath;
+        //            }
+        //            else
+        //            {
+        //                return NotFound(new
+        //                {
+        //                    message = $"File '{dbFileName}.pdf' is in database but physically missing in server directories context.",
+        //                    system_scanned_root = _env.ContentRootPath,
+        //                    searched_filename = dbFileName + ".pdf"
+        //                });
+        //            }
+        //        }
+
+        //        // Thread-safe async reading to bypass OS lockdown permissions
+        //        byte[] fileBytes = await System.IO.File.ReadAllBytesAsync(completePhysicalPath);
+        //        string contentType = "application/pdf";
+        //        string outputDownloadName = dbFileName.EndsWith(".pdf") ? dbFileName : dbFileName + ".pdf";
+
+        //        if (forceDownload)
+        //        {
+        //            return File(fileBytes, contentType, outputDownloadName);
+        //        }
+        //        else
+        //        {
+        //            // FIRST ACTION: Opens inline stream view inside chrome tab reader seamlessly
+        //            Response.Headers.Append("Content-Disposition", $"inline; filename=\"{outputDownloadName}\"");
+        //            return File(fileBytes, contentType);
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, new { message = "Internal execution collapsed streaming file bytes arrays.", error = ex.Message });
+        //    }
+        //}
+
+        [HttpGet("DownloadFundFile/{abgid}")]
+        public async Task<IActionResult> DownloadFundFile(int abgid, [FromQuery] bool forceDownload = false)
+        {
+            if (abgid <= 0)
+            {
+                return BadRequest(new { message = "Invalid actual entry index identification (abgid)." });
+            }
+
+            string connectionString = _config.GetConnectionString("DefaultConnection");
+            string dbFileName = string.Empty;
+
+            string query = "SELECT fileName FROM MASBUDGETDETAILSActualEntry WHERE ABGID = @Abgid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Abgid", abgid);
+                        await conn.OpenAsync();
+                        object result = await cmd.ExecuteScalarAsync();
+
+                        if (result != null && result != DBNull.Value)
+                        {
+                            dbFileName = result.ToString().Trim();
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(dbFileName))
+                {
+                    return NotFound(new { message = "No file footprint registered in database records logs." });
+                }
+
+                string folderRootPath = Path.Combine(_env.ContentRootPath, "Uploads", "Funds");
+                string completePhysicalPath = Path.Combine(folderRootPath, dbFileName + ".pdf");
+                completePhysicalPath = Path.GetFullPath(completePhysicalPath);
+
+                if (!System.IO.File.Exists(completePhysicalPath))
+                {
+                    string altPath = completePhysicalPath.Replace(".pdf.pdf", ".pdf");
+                    if (System.IO.File.Exists(altPath))
+                    {
+                        completePhysicalPath = altPath;
+                    }
+                    else
+                    {
+                        return NotFound(new
+                        {
+                            message = $"File '{dbFileName}.pdf' is in database but physically missing in server directories context."
+                        });
+                    }
+                }
+
+                byte[] fileBytes = await System.IO.File.ReadAllBytesAsync(completePhysicalPath);
+
+                // CRITICAL FIX: To force inline view in browser, content-type must be exact application/pdf
+                string contentType = "application/pdf";
+                string outputDownloadName = dbFileName.EndsWith(".pdf") ? dbFileName : dbFileName + ".pdf";
+
+                if (forceDownload)
+                {
+                    return File(fileBytes, contentType, outputDownloadName);
+                }
+                else
+                {
+                    // REMOVED COMPLEX HEADERS: Simple inline assignment forces browsers to render via built-in PDF viewer
+                    Response.Headers.Clear(); // Clears any caching attachment header block
+                    Response.Headers.Append("Content-Disposition", "inline");
+                    return File(fileBytes, contentType);
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal error streaming bytes.", error = ex.Message });
+            }
+        }
 
 
     }
