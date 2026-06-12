@@ -1464,7 +1464,349 @@ where 1=1 order by b.BUDGETNAME";
             }
         }
 
+        [HttpGet("GetFundDetailsByBgid/{bgid}")]
+        public async Task<IActionResult> GetFundDetailsByBgid(int bgid)
+        {
+            if (bgid <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid budget details record configuration identifier (bgid)." });
+            }
 
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Exact original query with your parameters and joins logic preserved securely
+            string query = @"
+            SELECT mb.budgetid, bd.bgid, mb.budgetname, ISNULL(bd.amount,0) AS amount, 
+                   CONVERT(VARCHAR, bd.receiveddate, 105) AS receiveddate, bd.filepath AS path, bd.filename,
+                   ac.accountname + '-' + ac.bankname + '-' + ac.accountno AS acname, 
+                   ISNULL(bd.Remarks, '-') AS Remarks, bd.BGID AS extensionId, '.pdf' AS ext,
+                   CASE WHEN Isop='Y' THEN 'Opening Balance' ELSE 'Received from Directorate' END AS RecType, 
+                   CASE WHEN isprovisional ='Y' THEN 'Provisional' ELSE 'Actual' END AS Pentry,
+                   CASE WHEN isprovisional ='Y' THEN 'Anticipatory' ELSE 'Actual' END AS PentryShow,
+                   CASE WHEN isprovisional='Y' THEN ISNULL(act.actamt, 0) ELSE ISNULL(bd.amount, 0) END AS ActualAmountReceived,
+                   CAST(ISNULL(bd.amount, 0) - ISNULL(act.actamt, 0) AS BIGINT) AS Bal,
+                   (ISNULL(bd.amount, 0) - ISNULL(act.actamt, 0)) AS BalValue, 
+                   bd.bankid
+            FROM MASBUDGET mb 
+            INNER JOIN MASBUDGETDETAILS bd ON bd.budgetid = mb.budgetid
+            INNER JOIN masCGMSCAccNos ac ON ac.bankid = bd.bankid
+            LEFT OUTER JOIN 
+            (
+                SELECT SUM(Amount) AS actamt, BGID 
+                FROM MASBUDGETDETAILSActualEntry
+                GROUP BY BGID
+            ) act ON act.BGID = bd.BGID
+            WHERE bd.bgid = @Bgid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        // Injection protection rule parameter binding
+                        cmd.Parameters.AddWithValue("@Bgid", bgid);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            if (await dr.ReadAsync())
+                            {
+                                var detailsObj = new FundDetailsResponseDto
+                                {
+                                    Budgetid = Convert.ToInt32(dr["budgetid"]),
+                                    Bgid = Convert.ToInt32(dr["bgid"]),
+                                    Budgetname = dr["budgetname"]?.ToString() ?? "",
+                                    Amount = Convert.ToInt64(dr["amount"]),
+                                    Receiveddate = dr["receiveddate"]?.ToString() ?? "",
+                                    Path = dr["path"]?.ToString() ?? "",
+                                    Filename = dr["filename"]?.ToString() ?? "",
+                                    Acname = dr["acname"]?.ToString() ?? "",
+                                    Remarks = dr["Remarks"]?.ToString() ?? "-",
+                                    ExtensionId = Convert.ToInt32(dr["extensionId"]),
+                                    Ext = dr["ext"]?.ToString() ?? ".pdf",
+                                    RecType = dr["RecType"]?.ToString() ?? "",
+                                    Pentry = dr["Pentry"]?.ToString() ?? "",
+                                    PentryShow = dr["PentryShow"]?.ToString() ?? "",
+                                    ActualAmountReceived = Convert.ToInt64(dr["ActualAmountReceived"]),
+                                    Bal = Convert.ToInt64(dr["Bal"]),
+                                    BalValue = Convert.ToInt64(dr["BalValue"]),
+                                    Bankid = Convert.ToInt32(dr["bankid"])
+                                };
+
+                                return Ok(detailsObj); // Returns clean single descriptive JSON object
+                            }
+                        }
+                    }
+                }
+                return NotFound(new { message = "No matching anticipatory fund log metrics located for this specific identifier." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Database mapping extraction transaction crashed.", error = ex.Message });
+            }
+        }
+
+        [HttpGet("GetActualEntriesByBgid/{bgid}")]
+        public async Task<IActionResult> GetActualEntriesByBgid(int bgid)
+        {
+            if (bgid <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Provisional reference budget ID (bgid)." });
+            }
+
+            var actualEntriesList = new List<ActualCentricFundDto>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Dynamic multi-table inner join query matching your requirements strictly
+            string query = @"
+            SELECT bd.bgid, bd.abgid, mb.budgetname, ISNULL(bd.amount,0) AS amount,
+                   mb.budgetid, CONVERT(VARCHAR, bd.RECEIVEDDATE, 105) AS receiveddate, 
+                   bd.filepath AS path, bd.filename,
+                   ac.accountname + '-' + ac.bankname + '-' + ac.accountno AS acname, 
+                   ISNULL(bd.Remarks, '-') AS Remarks, bd.BGID AS extensionId, '.pdf' AS ext
+            FROM MASBUDGET mb 
+            INNER JOIN MASBUDGETDETAILSActualEntry bd ON bd.budgetid = mb.budgetid
+            INNER JOIN masCGMSCAccNos ac ON ac.bankid = bd.bankid
+            WHERE bd.bgid = @Bgid 
+            ORDER BY bd.abgid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        // Parameterized injection shielding layer
+                        cmd.Parameters.AddWithValue("@Bgid", bgid);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                actualEntriesList.Add(new ActualCentricFundDto
+                                {
+                                    Bgid = Convert.ToInt32(dr["bgid"]),
+                                    Abgid = Convert.ToInt32(dr["abgid"]),
+                                    Budgetname = dr["budgetname"]?.ToString() ?? "",
+                                    Amount = Convert.ToInt64(dr["amount"]),
+                                    Budgetid = Convert.ToInt32(dr["budgetid"]),
+                                    Receiveddate = dr["receiveddate"]?.ToString() ?? "",
+                                    Path = dr["path"]?.ToString() ?? "",
+                                    Filename = dr["filename"]?.ToString() ?? "",
+                                    Acname = dr["acname"]?.ToString() ?? "",
+                                    Remarks = dr["Remarks"]?.ToString() ?? "-",
+                                    ExtensionId = Convert.ToInt32(dr["extensionId"]),
+                                    Ext = dr["ext"]?.ToString() ?? ".pdf"
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(actualEntriesList); // Returns clean structured JSON Array
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing actual allocation log list processing.", error = ex.Message });
+            }
+        }
+        [HttpPost("SaveActualFundEntry")]
+        public async Task<IActionResult> SaveActualFundEntry([FromBody] SubmitActualEntryDto dto)
+        {
+            // 0. Base Model Validation Guard
+            if (dto == null || dto.Bgid <= 0 || dto.Budgetid <= 0 || dto.Amount <= 0)
+            {
+                return BadRequest(new { message = "Invalid allocation parameter values inside payload." });
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.FileBase64))
+            {
+                return BadRequest(new { message = "Please Upload File" });
+            }
+
+            // Validate File format types as per legacy switch statements constraints
+            string extClean = dto.FileExtension.Trim().ToLower();
+            if (extClean != ".pdf")
+            {
+                return BadRequest(new { message = "Please Upload pdf file only" });
+            }
+
+            // Parsing dates arrays strings securely
+            if (!DateTime.TryParse(dto.ReceivedDate, out DateTime recvDt) ||
+                !DateTime.TryParse(dto.AnticipatoryDate, out DateTime antiDt))
+            {
+                return BadRequest(new { message = "Invalid date structures notation formatting parsed." });
+            }
+
+            // 1. BUSINESS RULE CHECK 1: Received date comparison with current real-time window
+            if (recvDt.Date > DateTime.Now.Date)
+            {
+                return BadRequest(new { message = "You Can`t Select Greater than todays Date" });
+            }
+
+            // 2. BUSINESS RULE CHECK 2: Received date check against parent provisional allotment baseline timeline
+            if (recvDt.Date < antiDt.Date)
+            {
+                return BadRequest(new { message = "You Can`t Select Less Anticipatory Date" });
+            }
+
+            // 3. BUSINESS RULE CHECK 3: Balance envelope cross-check constraint validation
+            if (dto.Amount > dto.CurrentBalance)
+            {
+                return BadRequest(new { message = "You can not Received more than Entered Anticipatory Amount" });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        // 4. Parameterized Insert command targeting MASBUDGETDETAILSActualEntry scheme table
+                        string insertSql = @"
+                        INSERT INTO MASBUDGETDETAILSActualEntry (BUDGETID, AMOUNT, RECEIVEDDATE, ENTRYDATE, bankid, Remarks, bgid)
+                        VALUES (@BudId, @Amt, CONVERT(DATETIME, @RecDt, 120), GETDATE(), @BankId, @Rem, @Bgid);
+                        SELECT SCOPE_IDENTITY();";
+
+                        int generatedAbgid = 0;
+                        using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@BudId", dto.Budgetid);
+                            cmd.Parameters.AddWithValue("@Amt", dto.Amount);
+                            cmd.Parameters.AddWithValue("@RecDt", recvDt.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+                            cmd.Parameters.AddWithValue("@BankId", dto.BankId);
+                            cmd.Parameters.AddWithValue("@Rem", string.IsNullOrEmpty(dto.Remarks) ? (object)DBNull.Value : dto.Remarks.Trim());
+                            cmd.Parameters.AddWithValue("@Bgid", dto.Bgid);
+
+                            generatedAbgid = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+                        }
+
+                        // 5. Processing Document Byte Array Conversion and Filename Concatenation mapping strings
+                        string dynamicCalculatedFileName = $"{dto.Bgid}AntiFundRec{generatedAbgid}";
+                        byte[] rawBinaryFileBytes = Convert.FromBase64String(dto.FileBase64);
+
+                        // A. Update the primary record file descriptor path keys (Emulating legacy string strSQL2 execution)
+                        string updateSql = "UPDATE MASBUDGETDETAILSActualEntry SET fileName = @FileName WHERE ABGID = @Abgid";
+                        using (SqlCommand updCmd = new SqlCommand(updateSql, conn, trans))
+                        {
+                            updCmd.Parameters.AddWithValue("@FileName", dynamicCalculatedFileName.Trim());
+                            updCmd.Parameters.AddWithValue("@Abgid", generatedAbgid);
+                            await updCmd.ExecuteNonQueryAsync();
+                        }
+
+                        // B. Emulating: MongoDB_Class file insertion placeholder (_Obj.Insert_AntiBudgetDetails)
+                        // If you have secondary document attachments servers, invoke their binary insert loops here passing rawBinaryFileBytes
+
+                        await trans.CommitAsync();
+                        return Ok(new { message = "Saved Successfully", generatedActualId = generatedAbgid });
+                    }
+                    catch (Exception ex)
+                    {
+                        await trans.RollbackAsync();
+                        return StatusCode(500, new { message = "Database transaction failed inside bulk batch operation block routines.", error = ex.Message });
+                    }
+                }
+            }
+        }
+
+        //foleder save krna h 
+        [HttpPost("SaveActualFundEntry1")]
+        public async Task<IActionResult> SaveActualFundEntry1([FromBody] SubmitActualEntryDto dto)
+        {
+            if (dto == null || dto.Bgid <= 0 || dto.Budgetid <= 0 || dto.Amount <= 0)
+            {
+                return BadRequest(new { message = "Invalid allocation parameter values inside payload." });
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.FileBase64))
+            {
+                return BadRequest(new { message = "Please Upload File" });
+            }
+
+            string extClean = dto.FileExtension.Trim().ToLower();
+            if (extClean != ".pdf")
+            {
+                return BadRequest(new { message = "Please Upload pdf file only" });
+            }
+
+            if (!DateTime.TryParse(dto.ReceivedDate, out DateTime recvDt) ||
+                !DateTime.TryParse(dto.AnticipatoryDate, out DateTime antiDt))
+            {
+                return BadRequest(new { message = "Invalid date structures notation formatting parsed." });
+            }
+
+            if (recvDt.Date > DateTime.Now.Date) return BadRequest(new { message = "You Can`t Select Greater than todays Date" });
+            if (recvDt.Date < antiDt.Date) return BadRequest(new { message = "You Can`t Select Less Anticipatory Date" });
+            if (dto.Amount > dto.CurrentBalance) return BadRequest(new { message = "You can not Received more than Entered Anticipatory Amount" });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        // Step 1: Insert record text configurations parameters inside SQL Server
+                        string insertSql = @"
+                        INSERT INTO MASBUDGETDETAILSActualEntry (BUDGETID, AMOUNT, RECEIVEDDATE, ENTRYDATE, bankid, Remarks, bgid)
+                        VALUES (@BudId, @Amt, CONVERT(DATETIME, @RecDt, 120), GETDATE(), @BankId, @Rem, @Bgid);
+                        SELECT SCOPE_IDENTITY();";
+
+                        int generatedAbgid = 0;
+                        using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@BudId", dto.Budgetid);
+                            cmd.Parameters.AddWithValue("@Amt", dto.Amount);
+                            cmd.Parameters.AddWithValue("@RecDt", recvDt.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+                            cmd.Parameters.AddWithValue("@BankId", dto.BankId);
+                            cmd.Parameters.AddWithValue("@Rem", string.IsNullOrEmpty(dto.Remarks) ? (object)DBNull.Value : dto.Remarks.Trim());
+                            cmd.Parameters.AddWithValue("@Bgid", dto.Bgid);
+
+                            generatedAbgid = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+                        }
+
+                        // Step 2: FOLDER STORAGE LOGIC PIPELINE
+                        // Aapke application root (wwwroot) ke andar 'Uploads/Funds' naam ka folder target hoga
+                        string folderRootPath = Path.Combine(_env.ContentRootPath, "Uploads", "Funds");
+
+                        // Agar folder physically server machine par create nahi hua hai, toh ye auto-create kar dega
+                        if (!Directory.Exists(folderRootPath))
+                        {
+                            Directory.CreateDirectory(folderRootPath);
+                        }
+
+                        // Dynamic naming scheme matched perfectly to your legacy rules code logic
+                        string fileNameOnly = $"{dto.Bgid}AntiFundRec{generatedAbgid}";
+                        string fullPhysicalPathWithExtension = Path.Combine(folderRootPath, fileNameOnly + extClean);
+
+                        // Step 3: Write Base64 string directly into a physical raw system file (.pdf)
+                        byte[] rawBinaryFileBytes = Convert.FromBase64String(dto.FileBase64);
+                        await System.IO.File.WriteAllBytesAsync(fullPhysicalPathWithExtension, rawBinaryFileBytes);
+
+                        // Step 4: Update the file path/name identifiers keys inside database index rows
+                        string updateSql = "UPDATE MASBUDGETDETAILSActualEntry SET fileName = @FileName WHERE ABGID = @Abgid";
+                        using (SqlCommand updCmd = new SqlCommand(updateSql, conn, trans))
+                        {
+                            updCmd.Parameters.AddWithValue("@FileName", fileNameOnly);
+                            updCmd.Parameters.AddWithValue("@Abgid", generatedAbgid);
+                            await updCmd.ExecuteNonQueryAsync();
+                        }
+
+                        await trans.CommitAsync();
+                        return Ok(new { message = "Saved Successfully and File Uploaded into Server Folder Context", actualId = generatedAbgid });
+                    }
+                    catch (Exception ex)
+                    {
+                        await trans.RollbackAsync();
+                        return StatusCode(500, new { message = "Database or File Directory stream write transaction failed.", error = ex.Message });
+                    }
+                }
+            }
+        }
 
 
 
