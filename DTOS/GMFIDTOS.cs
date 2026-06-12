@@ -162,5 +162,56 @@ public class UpdateReceivedDateRequestDto
         public string IsProvisional { get; set; } = "N"; // Y = Anticipatory, N = Actual
         public string FileBase64 { get; set; } = string.Empty; // PDF File binary upload string stream
     }
+    public class FundDetailsResponseDto
+    {
+        public int Budgetid { get; set; }
+        public int Bgid { get; set; }
+        public string Budgetname { get; set; } = string.Empty;
+        public long Amount { get; set; }
+        public string Receiveddate { get; set; } = string.Empty;
+        public string Path { get; set; } = string.Empty;
+        public string Filename { get; set; } = string.Empty;
+        public string Acname { get; set; } = string.Empty;
+        public string Remarks { get; set; } = string.Empty;
+        public int ExtensionId { get; set; }
+        public string Ext { get; set; } = ".pdf";
+        public string RecType { get; set; } = string.Empty;
+        public string Pentry { get; set; } = string.Empty;
+        public string PentryShow { get; set; } = string.Empty;
+        public long ActualAmountReceived { get; set; }
+        public long Bal { get; set; } // Remaining pending balance format string
+        public long BalValue { get; set; } // Actual calculation numeric remaining flag
+        public int Bankid { get; set; }
+    }
+    public class ActualCentricFundDto
+    {
+        public int Bgid { get; set; } // bd.bgid
+        public int Abgid { get; set; } // bd.abgid
+        public string Budgetname { get; set; } = string.Empty; // mb.budgetname
+        public long Amount { get; set; } // bd.amount
+        public int Budgetid { get; set; } // mb.budgetid
+        public string Receiveddate { get; set; } = string.Empty; // bd.RECEIVEDDATE formatted
+        public string Path { get; set; } = string.Empty; // bd.filepath
+        public string Filename { get; set; } = string.Empty; // bd.filename
+        public string Acname { get; set; } = string.Empty; // accountname-bankname-accountno
+        public string Remarks { get; set; } = string.Empty; // bd.Remarks
+        public int ExtensionId { get; set; } // bd.BGID
+        public string Ext { get; set; } = ".pdf"; // default extension
+    }
+    public class SubmitActualEntryDto
+    {
+        public int Bgid { get; set; } // mbd.bgid (Parent Provisional ID)
+        public int Budgetid { get; set; } // mb.budgetid
+        public long Amount { get; set; } // txtAmunt entered value
+        public long CurrentBalance { get; set; } // lblBalance0 validation baseline value
+        public string ReceivedDate { get; set; } = string.Empty; // txtRecvDt standard YYYY-MM-DD
+        public string AnticipatoryDate { get; set; } = string.Empty; // lblBudgRecevDT standard YYYY-MM-DD
+        public int BankId { get; set; } // ddlAcno selected value
+        public string Remarks { get; set; } = string.Empty; // txtRemarks text value
+        public string FileBase64 { get; set; } = string.Empty; // Base64 PDF content data string stream
+        public string FileExtension { get; set; } = ".pdf"; // default extension
+    }
+
+
 
 }
