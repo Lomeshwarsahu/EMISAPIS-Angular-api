@@ -44,6 +44,7 @@ namespace EMISAPIS.DTOS
         public decimal CMC5 { get; set; }
 
         public int TenderId { get; set; }
+        public bool HasSpecification { get; set; }
     }
 
     public class RcDetailReportRequestDTO
