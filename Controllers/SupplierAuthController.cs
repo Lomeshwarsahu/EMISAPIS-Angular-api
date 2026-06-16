@@ -566,6 +566,188 @@ namespace EMISAPIS.Controllers
             }
         }
 
+        /// <summary>po_supply.aspx — financial years, tenders, current year for logged-in supplier.</summary>
+        [HttpGet("po-supply/filters/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierPoSupplyFilters(int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                var financialYears = new List<FinancialYearOptionDto>
+                {
+                    new() { FinancialYearId = 0, Year = "--ALL--" }
+                };
+
+                using (SqlCommand yearCmd = new SqlCommand(
+                    "SELECT financial_year_id, year FROM mas_financial_year ORDER BY OrderDP DESC", con))
+                using (SqlDataReader yearReader = await yearCmd.ExecuteReaderAsync())
+                {
+                    while (await yearReader.ReadAsync())
+                    {
+                        financialYears.Add(new FinancialYearOptionDto
+                        {
+                            FinancialYearId = Convert.ToInt32(yearReader["financial_year_id"]),
+                            Year = yearReader["year"]?.ToString() ?? string.Empty
+                        });
+                    }
+                }
+
+                int currentFinancialYearId = 0;
+                using (SqlCommand currentYearCmd = new SqlCommand(
+                    @"SELECT financial_year_id FROM mas_financial_year
+                      WHERE GETDATE() BETWEEN from_date AND to_date", con))
+                {
+                    object? currentYear = await currentYearCmd.ExecuteScalarAsync();
+                    if (currentYear != null && currentYear != DBNull.Value)
+                        currentFinancialYearId = Convert.ToInt32(currentYear);
+                }
+
+                var tenders = new List<SupplierTenderOptionDto>
+                {
+                    new() { TenderId = 0, TenderNo = "--ALL--" }
+                };
+
+                using (SqlCommand tenderCmd = new SqlCommand(
+                    @"SELECT a.tender_id, a.tender_no
+                      FROM tenders a
+                      INNER JOIN award_of_contract b ON a.tender_id = b.tender_id
+                      WHERE b.supplier_id = @SupplierId
+                      GROUP BY a.tender_id, a.tender_no, a.tender_date
+                      ORDER BY a.tender_date", con))
+                {
+                    tenderCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    using SqlDataReader tenderReader = await tenderCmd.ExecuteReaderAsync();
+                    while (await tenderReader.ReadAsync())
+                    {
+                        tenders.Add(new SupplierTenderOptionDto
+                        {
+                            TenderId = Convert.ToInt32(tenderReader["tender_id"]),
+                            TenderNo = tenderReader["tender_no"]?.ToString() ?? string.Empty
+                        });
+                    }
+                }
+
+                return Ok(new SupplierPoSupplyFiltersDto
+                {
+                    SupplierId = supplierId.Value,
+                    CurrentFinancialYearId = currentFinancialYearId,
+                    FinancialYears = financialYears,
+                    Tenders = tenders
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading PO supply filters.", error = ex.Message });
+            }
+        }
+
+        /// <summary>po_supply.aspx — purchase orders grid.</summary>
+        [HttpGet("po-supply/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierPoSupply(
+            int userId,
+            [FromQuery] int financialYearId = 0,
+            [FromQuery] int tenderId = 0)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT pi.item_id, p.po_id, pi.no_of_consignee, pi.basic_rate, pi.percentage, pi.single_unit_price,
+       pi.quantity, pi.totalPOvalue, p.OUTWARD_NO,
+       p.po_no AS PO_NO,
+       CASE WHEN p.soissueDT IS NULL THEN CONVERT(VARCHAR, p.po_date, 103)
+            ELSE CONVERT(VARCHAR, p.soissueDT, 103) END AS po_date,
+       t.tender_no, pi.CODE, pi.ITEM_NAME, p.status,
+       CASE WHEN sd.sdname IS NOT NULL THEN sd.sdname ELSE 'Not Submitted' END AS SD,
+       pDet.SubmissionStatus
+FROM purchase_order p
+INNER JOIN massuppliers b ON b.supplier_id = p.supplier_id
+INNER JOIN mas_financial_year E ON E.financial_year_id = p.financial_year_id
+INNER JOIN tenders t ON t.tender_id = p.tender_id
+LEFT OUTER JOIN (
+    SELECT COUNT(DISTINCT pi.consignee_id) AS no_of_consignee,
+           R.item_code_as_per_tender AS CODE,
+           R.item_name AS ITEM_NAME,
+           c.basic_rate, c.percentage, c.single_unit_price,
+           SUM(pi.quantity) AS quantity,
+           c.single_unit_price * SUM(pi.quantity) AS totalPOvalue,
+           pi.po_id, pi.item_id
+    FROM po_items pi
+    INNER JOIN purchase_order p ON p.po_id = pi.po_id
+    INNER JOIN masitems R ON R.item_id = pi.item_id
+    INNER JOIN contract_items c ON c.contract_item_id = pi.contract_item_id
+    WHERE p.supplier_id = @SupplierId
+    GROUP BY R.item_code_as_per_tender, R.item_name, c.basic_rate, c.percentage,
+             c.single_unit_price, pi.po_id, pi.item_id
+) pi ON pi.po_id = p.po_id
+LEFT OUTER JOIN (
+    SELECT s.sdname, ps.po_id
+    FROM PO_SDDetails ps
+    INNER JOIN massd s ON s.SDMode = ps.SDMode
+    WHERE SubmissionStatus = 'Y'
+) sd ON sd.po_id = p.po_id
+LEFT OUTER JOIN PO_SDDetails pDet ON pDet.po_id = p.po_id
+WHERE p.supplier_id = @SupplierId
+  AND p.status IN ('Order Placed', 'Partially Received', 'Completed')
+  AND (@FinancialYearId = 0 OR p.financial_year_id = @FinancialYearId)
+  AND (@TenderId = 0 OR p.tender_id = @TenderId)
+ORDER BY p.po_date DESC";
+
+                var rows = new List<SupplierPoSupplyRowDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
+                cmd.Parameters.AddWithValue("@TenderId", tenderId);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    rows.Add(new SupplierPoSupplyRowDto
+                    {
+                        PoId = ReadIntColumn(reader, "po_id"),
+                        ItemId = ReadIntColumn(reader, "item_id"),
+                        OutwardNo = ReadStringColumn(reader, "OUTWARD_NO", "outward_no"),
+                        PoNo = ReadStringColumn(reader, "PO_NO", "po_no"),
+                        PoDate = ReadStringColumn(reader, "po_date"),
+                        ItemCode = ReadStringColumn(reader, "CODE", "code"),
+                        ItemName = ReadStringColumn(reader, "ITEM_NAME", "item_name"),
+                        BasicRate = ReadDecimalColumn(reader, "basic_rate"),
+                        Percentage = ReadDecimalColumn(reader, "percentage"),
+                        Quantity = ReadDecimalColumn(reader, "quantity"),
+                        TotalPoValue = ReadDecimalColumn(reader, "totalPOvalue", "totalPOvalue"),
+                        TenderNo = ReadStringColumn(reader, "tender_no"),
+                        NoOfConsignee = ReadIntColumn(reader, "no_of_consignee"),
+                        Status = ReadStringColumn(reader, "status"),
+                        SdName = ReadStringColumn(reader, "SD", "sd"),
+                        SubmissionStatus = ReadStringColumn(reader, "SubmissionStatus", "submissionStatus")
+                    });
+                }
+
+                return Ok(rows);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading purchase orders.", error = ex.Message });
+            }
+        }
+
         private async Task<int?> ResolveSupplierIdForUserAsync(int userId)
         {
             using SqlConnection con = new SqlConnection(_connectionString);
@@ -618,6 +800,25 @@ namespace EMISAPIS.Controllers
             }
 
             return string.Empty;
+        }
+
+        private static decimal ReadDecimalColumn(SqlDataReader reader, params string[] columnNames)
+        {
+            foreach (string columnName in columnNames)
+            {
+                try
+                {
+                    int ordinal = reader.GetOrdinal(columnName);
+                    if (!reader.IsDBNull(ordinal))
+                        return Convert.ToDecimal(reader.GetValue(ordinal));
+                }
+                catch (IndexOutOfRangeException)
+                {
+                    // try next alias
+                }
+            }
+
+            return 0;
         }
     }
 }
