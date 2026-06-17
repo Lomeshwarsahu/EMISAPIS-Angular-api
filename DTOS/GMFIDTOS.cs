@@ -212,6 +212,90 @@ public class UpdateReceivedDateRequestDto
         public string FileExtension { get; set; } = ".pdf"; // default extension
     }
 
+    public class GridFilterDto
+    {
+        public int FinancialYearId { get; set; }
+        public int? DirectorateId { get; set; } // Nullable because it is optional
+    }
+
+    public class PoFilterModel
+    {
+        public int FinancialYearId { get; set; }
+        public string FromDate { get; set; } // Expected format: 'dd/MM/yyyy'
+        public string ToDate { get; set; }   // Expected format: 'dd/MM/yyyy'
+    }
+    public class SupplierDispatchDto
+    {
+        public string Hsncode { get; set; }
+        public int PoQty { get; set; }
+        public string ItemName { get; set; }
+        public string LocationName { get; set; }
+        public string Pono { get; set; }
+        public string Name { get; set; } // Supplier name mapping
+
+        // CRITICAL FIX: Changed from decimal to string to support alphanumeric GSTIN numbers safely
+        public string InvoiceGst { get; set; }
+
+        public string InvoiceNo { get; set; }
+        public string PoDate { get; set; }
+        public string ChallanNo { get; set; }
+        public string Challandate { get; set; }
+        public string DispatchNo { get; set; }
+        public string DispatchDate { get; set; }
+        public string InvoiceDate { get; set; }
+        public int Supplyqty { get; set; }
+        public string EwayBillno { get; set; }
+        public string EwayBilldt { get; set; }
+        public decimal Tcsvalue { get; set; }
+        public decimal InvoiceAmount { get; set; }
+        public decimal Basicrate { get; set; }
+        public decimal Percentage { get; set; }
+        public decimal TaxableValue { get; set; }
+    }
+
+    public class PaymentStatusDto
+    {
+        public int Sno { get; set; }
+        public int PaidMonth { get; set; }
+        public string OutwardNo { get; set; }
+        public string PoNo { get; set; }
+        public DateTime? PoDate { get; set; }
+        public string SupplierName { get; set; }
+        public string SupGst { get; set; }
+        public string ChequeNo { get; set; }
+        public string ChequeDt { get; set; }
+        public decimal PoValue { get; set; }
+        public decimal ChequeAmt { get; set; }
+        public decimal AdminCharges { get; set; }
+        public decimal GrossWithAdmiChareges { get; set; }
+        public decimal TotalStDeductionIGST { get; set; }
+        public decimal TotalStDeductionCGST { get; set; }
+        public decimal TotalStDeductionSGST { get; set; }
+        public decimal TotalStDeduction194Q { get; set; }
+        public decimal TotalStDeduction { get; set; }
+        public decimal Penalties { get; set; }
+        public decimal TotalAddition { get; set; }
+        public decimal WitheldAmt { get; set; }
+        public string BudgetName { get; set; }
+        public int PaymentId { get; set; }
+        public DateTime? TranDt { get; set; }
+        public int PoId { get; set; }
+    }
+    public class TaxReleaseDto
+    {
+        public int Sno { get; set; }
+        public string Name { get; set; }           // Supplier Name
+        public string AidNo { get; set; }
+        public string PoNo { get; set; }           // outward_no / po_no
+        public string AidDate { get; set; }
+        public int BudgetId { get; set; }
+        public string BudgetName { get; set; }
+        public int SupplierId { get; set; }
+        public decimal ReleaseAmt { get; set; }
+        public decimal RecoveredAmt { get; set; }
+        public string PaidOn { get; set; }
+        public int PaymentId { get; set; }
+    }
 
 
 }
