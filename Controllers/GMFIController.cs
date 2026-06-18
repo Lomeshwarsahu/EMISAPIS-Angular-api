@@ -1,5 +1,6 @@
 ﻿using EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ApplicationModels;
 using Microsoft.Data.SqlClient;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver.Core.Configuration;
@@ -1818,7 +1819,7 @@ where 1=1 order by b.BUDGETNAME";
 
 
 
-      
+
         //[HttpGet("DownloadFundFile/{abgid}")]
         //public async Task<IActionResult> DownloadFundFile(int abgid, [FromQuery] bool forceDownload = false)
         //{
@@ -1903,6 +1904,84 @@ where 1=1 order by b.BUDGETNAME";
         //    }
         //}
 
+        //[HttpGet("DownloadFundFile/{abgid}")]
+        //public async Task<IActionResult> DownloadFundFile(int abgid, [FromQuery] bool forceDownload = false)
+        //{
+        //    if (abgid <= 0)
+        //    {
+        //        return BadRequest(new { message = "Invalid actual entry index identification (abgid)." });
+        //    }
+
+        //    string connectionString = _config.GetConnectionString("DefaultConnection");
+        //    string dbFileName = string.Empty;
+
+        //    string query = "SELECT fileName FROM MASBUDGETDETAILSActualEntry WHERE ABGID = @Abgid";
+
+        //    try
+        //    {
+        //        using (SqlConnection conn = new SqlConnection(connectionString))
+        //        {
+        //            using (SqlCommand cmd = new SqlCommand(query, conn))
+        //            {
+        //                cmd.Parameters.AddWithValue("@Abgid", abgid);
+        //                await conn.OpenAsync();
+        //                object result = await cmd.ExecuteScalarAsync();
+
+        //                if (result != null && result != DBNull.Value)
+        //                {
+        //                    dbFileName = result.ToString().Trim();
+        //                }
+        //            }
+        //        }
+
+        //        if (string.IsNullOrEmpty(dbFileName))
+        //        {
+        //            return NotFound(new { message = "No file footprint registered in database records logs." });
+        //        }
+
+        //        string folderRootPath = Path.Combine(_env.ContentRootPath, "Uploads", "Funds");
+        //        string completePhysicalPath = Path.Combine(folderRootPath, dbFileName + ".pdf");
+        //        completePhysicalPath = Path.GetFullPath(completePhysicalPath);
+
+        //        if (!System.IO.File.Exists(completePhysicalPath))
+        //        {
+        //            string altPath = completePhysicalPath.Replace(".pdf.pdf", ".pdf");
+        //            if (System.IO.File.Exists(altPath))
+        //            {
+        //                completePhysicalPath = altPath;
+        //            }
+        //            else
+        //            {
+        //                return NotFound(new
+        //                {
+        //                    message = $"File '{dbFileName}.pdf' is in database but physically missing in server directories context."
+        //                });
+        //            }
+        //        }
+
+        //        byte[] fileBytes = await System.IO.File.ReadAllBytesAsync(completePhysicalPath);
+
+        //        // CRITICAL FIX: To force inline view in browser, content-type must be exact application/pdf
+        //        string contentType = "application/pdf";
+        //        string outputDownloadName = dbFileName.EndsWith(".pdf") ? dbFileName : dbFileName + ".pdf";
+
+        //        if (forceDownload)
+        //        {
+        //            return File(fileBytes, contentType, outputDownloadName);
+        //        }
+        //        else
+        //        {
+        //            // REMOVED COMPLEX HEADERS: Simple inline assignment forces browsers to render via built-in PDF viewer
+        //            Response.Headers.Clear(); // Clears any caching attachment header block
+        //            Response.Headers.Append("Content-Disposition", "inline");
+        //            return File(fileBytes, contentType);
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, new { message = "Internal error streaming bytes.", error = ex.Message });
+        //    }
+        //}
         [HttpGet("DownloadFundFile/{abgid}")]
         public async Task<IActionResult> DownloadFundFile(int abgid, [FromQuery] bool forceDownload = false)
         {
@@ -1959,20 +2038,23 @@ where 1=1 order by b.BUDGETNAME";
                 }
 
                 byte[] fileBytes = await System.IO.File.ReadAllBytesAsync(completePhysicalPath);
-
-                // CRITICAL FIX: To force inline view in browser, content-type must be exact application/pdf
                 string contentType = "application/pdf";
                 string outputDownloadName = dbFileName.EndsWith(".pdf") ? dbFileName : dbFileName + ".pdf";
 
                 if (forceDownload)
                 {
+                    // Forces download prompt on user local system
                     return File(fileBytes, contentType, outputDownloadName);
                 }
                 else
                 {
-                    // REMOVED COMPLEX HEADERS: Simple inline assignment forces browsers to render via built-in PDF viewer
-                    Response.Headers.Clear(); // Clears any caching attachment header block
-                    Response.Headers.Append("Content-Disposition", "inline");
+                    // FIX: Content-Disposition headers are optimized with filename for strict inline view rendering
+                    Response.Headers.Clear();
+                    Response.Headers.Append("Content-Disposition", $"inline; filename=\"{outputDownloadName}\"");
+
+                    // X-Content-Type-Options tells the browser strictly to treat it as application/pdf without downloading
+                    Response.Headers.Append("X-Content-Type-Options", "nosniff");
+
                     return File(fileBytes, contentType);
                 }
             }
@@ -1981,6 +2063,808 @@ where 1=1 order by b.BUDGETNAME";
                 return StatusCode(500, new { message = "Internal error streaming bytes.", error = ex.Message });
             }
         }
+
+        [HttpPost("GetConsolidatedGridData")]
+        public async Task<IActionResult> GetConsolidatedGridData([FromBody] GridFilterDto filters)
+        {
+            // Validation segment mirroring your legacy selectIndex == 0 logic
+            if (filters == null || filters.FinancialYearId <= 0)
+            {
+                return BadRequest(new { message = "Please Select a Valid Financial Year." });
+            }
+
+            string connectionString = _config.GetConnectionString("DefaultConnection");
+            var resultList = new List<Dictionary<string, object>>();
+
+            // Building dynamic SQL filters securely using parameter tokens
+            string whDirectorate = "";
+            if (filters.DirectorateId.HasValue && filters.DirectorateId.Value > 0)
+            {
+                whDirectorate = " AND i.directorate_id = @DirectorateId ";
+            }
+
+            // Your exact complex inner-outer nested query block mapping legacy views execution
+            string selectSqlQuery = $@"
+                SELECT item_id, Code, item_name, 
+                       SUM(nosconsignee) AS nosconsignee, 
+                       SUM(totalIndentQTY) AS totalIndentQTY, 
+                       SUM(POQTY) AS POQTY, 
+                       RCEndDate, Supplier, PriceIncGST, tender_no,
+                       CASE WHEN tenderDT = '01/01/1900' THEN '' ELSE CONVERT(VARCHAR, tenderDT, 103) END AS TStartDT, 
+                       finalstatus
+                FROM 
+                (
+                    SELECT i.consolidated_date, i.description, m.item_id, m.item_code_as_per_tender AS Code, m.item_name,
+                           SUM(imi.indent_quantity) AS totalIndentQTY, 
+                           COUNT(DISTINCT id.facility_id) AS nosconsignee, 
+                           ISNULL(POQTY, 0) AS POQTY,
+                           ISNULL(rcEndDT, 'RC Not Valid') AS RCEndDate, 
+                           Supplier, 
+                           ISNULL(rc.make, '-') AS make, 
+                           ISNULL(rc.model, '-') AS model, 
+                           PriceIncGST,
+                           CASE WHEN rcEndDT IS NOT NULL THEN '' ELSE t.tenderDT END AS tenderDT, 
+                           CASE WHEN rcEndDT IS NOT NULL THEN '' ELSE t.tender_no END AS tender_no,
+                           CASE WHEN rcEndDT IS NOT NULL THEN '' ELSE t.finalstatus END AS finalstatus
+                    FROM indent_consolidation i 
+                    INNER JOIN indent_cons_items ic ON ic.indent_consolidated_id = i.indent_consolidation_id
+                    INNER JOIN indent id ON id.indent_consolidation_id = i.indent_consolidation_id AND id.indent_cons_items_id = ic.indent_cons_items_id
+                    INNER JOIN indent_items imi ON imi.indent_id = id.indent_id AND imi.item_id = ic.item_id
+                    INNER JOIN masitems m ON m.item_id = imi.item_id AND m.item_id = ic.item_id
+                    LEFT OUTER JOIN 
+                    (
+                        SELECT r.item_id, Supplier, rcStartDT, rcEndDT, make, model, basic_rate, percentage, PriceIncGST 
+                        FROM v_rcvalid r
+                    ) rc ON rc.item_id = m.item_id
+                    LEFT OUTER JOIN 
+                    (
+                        SELECT SUM(pi.quantity) AS POQTY, pi.INDENT_CONSOLIDATION_ID, pi.item_id 
+                        FROM purchase_order p
+                        INNER JOIN po_items pi ON pi.po_id = p.po_id
+                        WHERE p.status IN ('Completed', 'Order Placed', 'Partially Received')
+                        GROUP BY pi.INDENT_CONSOLIDATION_ID, pi.item_id
+                    ) po ON po.INDENT_CONSOLIDATION_ID = i.indent_consolidation_id AND po.item_id = m.item_id
+                    LEFT OUTER JOIN 
+                    (
+                        SELECT t.item_id, t.tenderDT, ti.tender_no, ti.finalstatus
+                        FROM 
+                        (
+                            SELECT item_id, MAX(tender_date) AS tenderDT 
+                            FROM v_Tenderstatus
+                            GROUP BY item_id
+                        ) t
+                        INNER JOIN v_Tenderstatus ti ON ti.item_id = t.item_id AND ti.tender_date = t.tenderDT
+                    ) t ON t.item_id = m.item_id
+                    WHERE i.status = 'C' 
+                      AND i.financial_year_id = @FinancialYearId
+                      {whDirectorate}
+                    GROUP BY i.consolidated_date, i.description, m.item_id, m.item_code_as_per_tender, m.item_name, 
+                             rcEndDT, rc.make, rc.model, PriceIncGST, Supplier, tenderDT, tender_no, finalstatus, POQTY
+                ) b 
+                GROUP BY RCEndDate, Supplier, PriceIncGST, item_id, Code, item_name, tenderDT, tender_no, finalstatus";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(selectSqlQuery, conn))
+                    {
+                        // Safe SQL Parameter Additions
+                        cmd.Parameters.AddWithValue("@FinancialYearId", filters.FinancialYearId);
+                        if (filters.DirectorateId.HasValue && filters.DirectorateId.Value > 0)
+                        {
+                            cmd.Parameters.AddWithValue("@DirectorateId", filters.DirectorateId.Value);
+                        }
+
+                        await conn.OpenAsync();
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var row = new Dictionary<string, object>();
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                                }
+                                resultList.Add(row);
+                            }
+                        }
+                    }
+                }
+
+                // Standard Web API Response JSON Array footprint layout return
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing complex grid dataset aggregation queries.", error = ex.Message });
+            }
+        }
+        [HttpGet("GetUnpaidPoGridData")]
+        public async Task<IActionResult> GetUnpaidPoGridData([FromQuery] int financialYearId, [FromQuery] string fromDate = null, [FromQuery] string toDate = null)
+        {
+            if (financialYearId <= 0)
+            {
+                return BadRequest(new { message = "Please Select a Valid Financial Year." });
+            }
+
+            string connectionString = _config.GetConnectionString("DefaultConnection");
+            var resultList = new List<Dictionary<string, object>>();
+
+            string whereFromToSql = "";
+            bool hasValidDates = !string.IsNullOrWhiteSpace(fromDate) && !string.IsNullOrWhiteSpace(toDate);
+
+            // In do variables mein parsed dates store hongi
+            DateTime parsedFromDate = DateTime.MinValue;
+            DateTime parsedToDate = DateTime.MinValue;
+
+            if (hasValidDates)
+            {
+                try
+                {
+                    // SMART PARSING: Yeh C# framework automatic '6-15-2025' ya '15-06-2025' dono ko sahi detect kar lega
+                    parsedFromDate = DateTime.Parse(fromDate.Trim());
+                    parsedToDate = DateTime.Parse(toDate.Trim());
+
+                    // SQL Query ke liye simple direct comparison filter string banayenge
+                    whereFromToSql = " AND p.po_date BETWEEN @FromDate AND @ToDate ";
+                }
+                catch (Exception)
+                {
+                    return BadRequest(new { message = "Provided date strings could not be parsed into valid date structures." });
+                }
+            }
+
+            string selectSqlQuery = $@"
+        SELECT 
+            v.year, v.po_no, CONVERT(VARCHAR, p.po_Date, 103) AS podate, v.POQTY, v.facility_aut_name, 
+            v.Supplier, v.item_code_as_per_tender, v.itemname, v.POValue, v.Liability, v.potype, 
+            v.SupplierDispatch, v.receiptQTY, v.instalationQty, v.fitunfit, v.EQtype, v.ReasonName, 
+            v.reasonid, t.cancellationdays, DATEADD(DAY, t.cancellationdays, p.po_date) AS date, 
+            v.po_id, p.financial_year_id
+        FROM V_POPaymentStatus v
+        INNER JOIN purchase_order p ON p.po_id = v.po_id
+        LEFT OUTER JOIN tenders t ON t.tender_id = p.tender_id
+        WHERE v.Paymentstatus = 'Unpaid' 
+          AND p.financial_year_id = @FinancialYearId
+          {whereFromToSql}
+        ORDER BY p.po_Date DESC";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(selectSqlQuery, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
+
+                        if (hasValidDates)
+                        {
+                            // SQL Server ke standard database standard format (yyyy-MM-dd HH:mm:ss) mein safely inject karna
+                            cmd.Parameters.AddWithValue("@FromDate", parsedFromDate.ToString("yyyy-MM-dd 00:00:00"));
+                            cmd.Parameters.AddWithValue("@ToDate", parsedToDate.ToString("yyyy-MM-dd 23:59:59"));
+                        }
+
+                        await conn.OpenAsync();
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var row = new Dictionary<string, object>();
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                                }
+                                resultList.Add(row);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing un-paid PO grid record lookups context extraction.", error = ex.Message });
+            }
+        }
+        // URL Testing Pattern Samples:
+        // 1. Specific Year Filters: GET api/GMFI/GetPurchaseOrderGridData?financialYearId=12
+        // 2. All Years Data (Dropdown not selected): GET api/GMFI/GetPurchaseOrderGridData?financialYearId=0
+        [HttpGet("GetPurchaseOrderGridData")]
+        public async Task<IActionResult> GetPurchaseOrderGridData([FromQuery] int financialYearId = 0)
+        {
+            string connectionString = _config.GetConnectionString("DefaultConnection");
+            var resultList = new List<Dictionary<string, object>>();
+
+            // 1. Dynamic Optional Year Clause Mapping (SQL Parameter Injection Safe)
+            string whereCauseYear = "";
+            if (financialYearId > 0)
+            {
+                whereCauseYear = " AND p.financial_year_id = @FinancialYearId ";
+            }
+
+            // 2. Exact Business Logic Multi-Join Nested Query Structure
+            string selectSqlQuery = $@"
+        SELECT 
+            fu.facility_aut_code,
+            pi.item_id,
+            p.po_id,
+            pi.no_of_consignee,
+            pi.basic_rate,
+            pi.percentage,
+            pi.single_unit_price,
+            pi.quantity,
+            pi.totalPOvalue,
+            p.OUTWARD_NO + '/' + p.po_no AS PO_NO,
+            CASE 
+                WHEN p.soissueDT IS NULL THEN CONVERT(VARCHAR, p.po_date, 103) 
+                ELSE CONVERT(VARCHAR, p.soissueDT, 103) 
+            END AS po_date,
+            t.tender_no,
+            pi.CODE,
+            pi.ITEM_NAME,
+            CONVERT(VARCHAR, t.TENDER_DATE, 103) AS TENDER_DATE,
+            E.financial_year_id,
+            p.status
+        FROM purchase_order p
+        INNER JOIN MASSUPPLIERS b ON b.supplier_id = p.SUPPLIER_ID
+        INNER JOIN MAS_FINANCIAL_YEAR E ON E.FINANCIAL_YEAR_ID = p.FINANCIAL_YEAR_ID
+        INNER JOIN tenders t ON t.tender_id = p.tender_id
+        INNER JOIN facility_aut fu ON fu.facility_aut_id = p.directorate_id
+        LEFT OUTER JOIN 
+        (
+            SELECT 
+                COUNT(DISTINCT sub_pi.consignee_id) AS no_of_consignee, 
+                R.ITEM_CODE_AS_PER_TENDER AS CODE,
+                R.item_name AS ITEM_NAME,
+                c.basic_rate,
+                c.percentage,
+                c.single_unit_price,
+                SUM(sub_pi.quantity) AS quantity,
+                c.single_unit_price * SUM(sub_pi.quantity) AS totalPOvalue,
+                sub_pi.po_id,
+                sub_pi.item_id
+            FROM po_items sub_pi 
+            INNER JOIN purchase_order sub_p ON sub_p.po_id = sub_pi.po_id
+            INNER JOIN MASITEMS R ON R.ITEM_ID = sub_pi.item_id	
+            INNER JOIN contract_items c ON c.contract_item_id = sub_pi.contract_item_id
+            GROUP BY R.ITEM_CODE_AS_PER_TENDER, R.item_name, c.basic_rate, c.percentage, c.single_unit_price, sub_pi.po_id, sub_pi.item_id
+        ) pi ON pi.po_id = p.po_id 
+        WHERE p.status IN ('Order Placed', 'Partially Received', 'Completed')
+        {whereCauseYear}
+        ORDER BY p.po_date";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(selectSqlQuery, conn))
+                    {
+                        // Dynamic conditional binding
+                        if (financialYearId > 0)
+                        {
+                            cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
+                        }
+
+                        await conn.OpenAsync();
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var row = new Dictionary<string, object>();
+
+                                // Dynamic Field Count parsing sends ALL query column blocks seamlessly to client
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                                }
+
+                                resultList.Add(row);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing complex purchase order grid data lookup routines.", error = ex.Message });
+            }
+        }
+
+        [HttpGet("GetSupplierDispatchReport")]
+        public async Task<IActionResult> GetSupplierDispatchReport([FromQuery] string poType, [FromQuery] string startDate, [FromQuery] string endDate)
+        {
+            if (string.IsNullOrWhiteSpace(startDate))
+                return BadRequest(new { message = "Please fill Start Date" });
+
+            if (string.IsNullOrWhiteSpace(endDate))
+                return BadRequest(new { message = "Please fill End Date" });
+
+            if (string.IsNullOrWhiteSpace(poType) || (poType != "ID" && poType != "ED"))
+                return BadRequest(new { message = "Invalid PO Type selection logic payload. Expected 'ID' or 'ED'." });
+
+            string connectionString = _config.GetConnectionString("DefaultConnection");
+            var resultList = new List<SupplierDispatchDto>();
+
+            DateTime parsedStart = DateTime.MinValue;
+            DateTime parsedEnd = DateTime.MinValue;
+            string[] supportedFormats = { "yyyy-MM-dd", "dd-MM-yyyy", "dd/MM/yyyy", "MM-dd-yyyy", "MM/dd/yyyy" };
+
+            if (!DateTime.TryParseExact(startDate.Trim(), supportedFormats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out parsedStart) ||
+                !DateTime.TryParseExact(endDate.Trim(), supportedFormats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out parsedEnd))
+            {
+                return BadRequest(new { message = "Provided date strings could not be parsed into valid date structures. Use YYYY-MM-DD standard format." });
+            }
+
+            string whereFromToSql = "";
+            if (poType == "ID")
+            {
+                whereFromToSql = " WHERE d.invoice_date BETWEEN @StartDate AND @EndDate ";
+            }
+            else if (poType == "ED")
+            {
+                whereFromToSql = " WHERE d.supplier_entry BETWEEN @StartDate AND @EndDate ";
+            }
+
+            string selectSqlQuery = $@"
+        SELECT 
+            d.hsncode, 
+            p.quantity AS PO_QTY, 
+            msi.item_name, 
+            ms.location_name, 
+            po.outward_no + '/' + po.po_no AS pono, 
+            mas.name, 
+            d.invoiceGST, 
+            d.invoice_no,
+            CONVERT(VARCHAR, po.po_date, 103) AS po_date,
+            d.challan_no, 
+            CONVERT(VARCHAR, d.challan_date, 103) AS challandate,
+            d.dispatch_no, 
+            CONVERT(VARCHAR, d.dispatch_date, 103) AS dispatch_date,
+            CONVERT(VARCHAR, d.invoice_date, 103) AS invoice_date,
+            SUM(i.Supplyqty) AS Supplyqty, 
+            d.EwayBillno, 
+            CONVERT(VARCHAR, d.EwayBilldt, 103) AS EwayBilldt, 
+            d.tcsvalue,
+            (p.basicrate + (p.basicrate * p.percentage / 100)) * SUM(i.Supplyqty) AS InvoiceAmount, 
+            p.basicrate, 
+            p.percentage, 
+            ROUND((p.basicrate * p.percentage / 100), 0) AS taxable_value 
+        FROM SupplierDispatch d
+        INNER JOIN Issue_item_details i ON i.Issue_id = d.Issue_id
+        INNER JOIN po_items p ON p.po_id = d.po_id AND p.item_id = i.item_id AND p.consignee_id = d.location_id
+        INNER JOIN purchase_order po ON po.po_id = p.po_id
+        INNER JOIN maslocations ms ON ms.location_id = p.consignee_id
+        INNER JOIN massuppliers mas ON mas.supplier_id = po.supplier_id 
+        INNER JOIN masitems msi ON msi.item_id = p.item_id
+        {whereFromToSql}
+        GROUP BY 
+            d.Issue_id, d.Tentative_Sdate, d.remarks, d.status, d.challan_date, d.challan_no,
+            d.dispatch_date, d.invoice_date, d.dispatch_no, d.invoice_no, d.invoiceGST, 
+            d.EwayBillno, d.EwayBilldt, d.hsncode, d.tcsvalue, p.basicrate, p.percentage, 
+            i.Supplyqty, po.po_no, po.po_date, ms.location_name, p.quantity, mas.name, 
+            msi.item_name, po.outward_no";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(selectSqlQuery, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@StartDate", parsedStart.ToString("yyyy-MM-dd 00:00:00.000"));
+                        cmd.Parameters.AddWithValue("@EndDate", parsedEnd.ToString("yyyy-MM-dd 23:59:59.997"));
+
+                        await conn.OpenAsync();
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var rowItem = new SupplierDispatchDto();
+
+                                // 1. Safe String Mappings
+                                rowItem.Hsncode = reader["hsncode"] == DBNull.Value ? "" : reader["hsncode"].ToString().Trim();
+                                rowItem.ItemName = reader["item_name"] == DBNull.Value ? "" : reader["item_name"].ToString().Trim();
+                                rowItem.LocationName = reader["location_name"] == DBNull.Value ? "" : reader["location_name"].ToString().Trim();
+                                rowItem.Pono = reader["pono"] == DBNull.Value ? "" : reader["pono"].ToString().Trim();
+                                rowItem.Name = reader["name"] == DBNull.Value ? "" : reader["name"].ToString().Trim();
+                                rowItem.InvoiceNo = reader["invoice_no"] == DBNull.Value ? "" : reader["invoice_no"].ToString().Trim();
+                                rowItem.PoDate = reader["po_date"] == DBNull.Value ? "" : reader["po_date"].ToString().Trim();
+                                rowItem.ChallanNo = reader["challan_no"] == DBNull.Value ? "" : reader["challan_no"].ToString().Trim();
+                                rowItem.Challandate = reader["challandate"] == DBNull.Value ? "" : reader["challandate"].ToString().Trim();
+                                rowItem.DispatchNo = reader["dispatch_no"] == DBNull.Value ? "" : reader["dispatch_no"].ToString().Trim();
+                                rowItem.DispatchDate = reader["dispatch_date"] == DBNull.Value ? "" : reader["dispatch_date"].ToString().Trim();
+                                rowItem.InvoiceDate = reader["invoice_date"] == DBNull.Value ? "" : reader["invoice_date"].ToString().Trim();
+                                rowItem.EwayBillno = reader["EwayBillno"] == DBNull.Value ? "" : reader["EwayBillno"].ToString().Trim();
+                                rowItem.EwayBilldt = reader["EwayBilldt"] == DBNull.Value ? "" : reader["EwayBilldt"].ToString().Trim();
+
+                                // ==================== FIXED INVOICE_GST STRING PARSER ====================
+                                // Alphanumeric strings (e.g., '22AHNPJ4497N1ZP') are handled seamlessly without conversion crashes
+                                rowItem.InvoiceGst = reader["invoiceGST"] == DBNull.Value ? "" : reader["invoiceGST"].ToString().Trim();
+                                // =========================================================================
+
+                                // 2. Safe Mathematical Numeric Conversions 
+                                rowItem.PoQty = (reader["PO_QTY"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["PO_QTY"].ToString()))
+                                                ? 0 : Convert.ToInt32(reader["PO_QTY"]);
+
+                                rowItem.Supplyqty = (reader["Supplyqty"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["Supplyqty"].ToString()))
+                                                    ? 0 : Convert.ToInt32(reader["Supplyqty"]);
+
+                                rowItem.Tcsvalue = (reader["tcsvalue"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["tcsvalue"].ToString()))
+                                                   ? 0 : Convert.ToDecimal(reader["tcsvalue"]);
+
+                                rowItem.InvoiceAmount = (reader["InvoiceAmount"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["InvoiceAmount"].ToString()))
+                                                        ? 0 : Convert.ToDecimal(reader["InvoiceAmount"]);
+
+                                rowItem.Basicrate = (reader["basicrate"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["basicrate"].ToString()))
+                                                    ? 0 : Convert.ToDecimal(reader["basicrate"]);
+
+                                rowItem.Percentage = (reader["percentage"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["percentage"].ToString()))
+                                                     ? 0 : Convert.ToDecimal(reader["percentage"]);
+
+                                rowItem.TaxableValue = (reader["taxable_value"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["taxable_value"].ToString()))
+                                                       ? 0 : Convert.ToDecimal(reader["taxable_value"]);
+
+                                resultList.Add(rowItem);
+                            }
+                        }
+                    }
+                }
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing automated supplier dispatch reports configurations.", error = ex.Message });
+            }
+        }
+
+        // URL Pattern Example: GET api/PaymentStatus/GetPaymentStatusGrid?fromDate=2025-04-01&toDate=2026-03-31
+        [HttpGet("GetPaymentStatusGrid")]
+        public async Task<IActionResult> GetPaymentStatusGrid([FromQuery] string fromDate, [FromQuery] string toDate)
+        {
+            // 1. URL Parameters validations mimicking legacy alerts
+            if (string.IsNullOrWhiteSpace(fromDate) || string.IsNullOrWhiteSpace(toDate))
+            {
+                return BadRequest(new { message = "Please select Date parameters." });
+            }
+
+            string connectionString = _config.GetConnectionString("DefaultConnection");
+            var resultList = new List<PaymentStatusDto>();
+
+            // 2. Strict Date Parsing for SQL execution blocks mapping
+            DateTime parsedFromDate = DateTime.MinValue;
+            DateTime parsedToDate = DateTime.MinValue;
+            string[] exactFormats = { "yyyy-MM-dd", "dd-MM-yyyy", "dd/MM/yyyy", "MM-dd-yyyy", "MM/dd/yyyy" };
+
+            if (!DateTime.TryParseExact(fromDate.Trim(), exactFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedFromDate) ||
+                !DateTime.TryParseExact(toDate.Trim(), exactFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedToDate))
+            {
+                return BadRequest(new { message = "Provided date strings could not be parsed into valid format. YYYY-MM-DD is highly recommended." });
+            }
+
+            // Standard parameterized dynamic mapping filter injection framework
+            string whereFromToSql = " AND p.AIDDATE BETWEEN @FromDate AND @ToDate ";
+
+            // 3. Exact SQL Script with inner queries calculation metrics preserved natively
+            string selectSqlQuery = $@"
+                SELECT 
+                    MONTH(p.AIDDATE) AS PaidMonth, 
+                    po.outward_no, 
+                    po.po_no,  
+                    (CASE WHEN po.soissueDT IS NULL THEN po.po_date ELSE po.soissueDT END) AS po_date,
+                    sp.name AS SupplierName, 
+                    s.SUPGST, 
+                    p.AIDNO AS Chequeno, 
+                    CONVERT(VARCHAR, p.AIDDATE, 103) AS chequeDT,  
+                    ROUND(pi.totalprice, 0) AS povalue, 
+                    s.chequeAmt, 
+                    s.ADMINCHARGES AS ADMINCHARGES,
+                    (ROUND(pi.totalprice, 0) + s.ADMINCHARGES) AS GrossWithAdmiChareges,
+                    ISNULL(TotalStDeductionIGST, 0) AS TotalStDeductionIGST,
+                    ISNULL(TotalStDeductionCGST, 0) AS TotalStDeductionCGST,
+                    ISNULL(TotalStDeductionSGST, 0) AS TotalStDeductionSGST,
+                    ISNULL(TotalStDeduction194Q, 0) AS TotalStDeduction194Q,
+                    sd.TotalStDeduction, 
+                    ISNULL(Penalties, 0) AS Penalties,
+                    ISNULL(totalAddition, 0) AS totalAddition,
+                    ISNULL(WitheldAmt, 0) AS WitheldAmt, 
+                    b.BUDGETNAME, 
+                    s.PAYMENTID, 
+                    p.AIDDATE AS TranDT, 
+                    s.po_id
+                FROM BLPSANCTIONS s 
+                INNER JOIN MASBUDGET b ON b.BUDGETID = s.BUDGETID
+                INNER JOIN purchase_order po ON po.po_id = s.po_id
+                INNER JOIN facility_aut dir ON dir.facility_aut_id = po.directorate_id
+                INNER JOIN massuppliers sp ON sp.supplier_id = po.supplier_id
+                INNER JOIN BLPPAYMENTS p ON p.PAYMENTID = s.PAYMENTID
+                LEFT OUTER JOIN 
+                (
+                    SELECT pi.po_id, SUM(pi.totalprice) AS totalprice, SUM(pi.quantity) AS poqty   
+                    FROM po_items pi 
+                    GROUP BY pi.po_id
+                ) pi ON pi.po_id = s.po_id
+                LEFT OUTER JOIN 
+                (
+                    SELECT r.po_id, SUM(ri.received_qty) AS paidQTY FROM receipts r 
+                    LEFT OUTER JOIN receipt_item_details ri ON ri.receipt_id = r.receipt_id
+                    INNER JOIN BLPINVOICES inv ON inv.RECEIPTID = r.receipt_id
+                    WHERE inv.STATUS = 'P'
+                    GROUP BY r.po_id
+                ) paid ON paid.po_id = s.po_id
+                LEFT OUTER JOIN 
+                (
+                    SELECT ISNULL(SUM(TAXVALUE), 0) AS TotalStDeduction, SANCTIONID FROM 
+                    (
+                        SELECT bt.TAXTYPENAME, bt.TAXCATEGORY, t.TAXVALUE, t.TAXPER, t.SANCTIONID 
+                        FROM BLPTAXS t
+                        INNER JOIN BLPTAXTYPES bt ON bt.TAXTYPEID = t.TAXTYPEID
+                        WHERE bt.TAXCATEGORY = 'D' AND t.TAXTYPEID NOT IN (250) AND bt.IsMinus_FromGross IS NULL 
+                    ) d GROUP BY SANCTIONID  
+                ) SD ON SD.SANCTIONID = s.SANCTIONID
+                LEFT OUTER JOIN 
+                (
+                    SELECT ISNULL(SUM(TAXVALUE), 0) AS TotalStDeductionIGST, SANCTIONID FROM 
+                    (
+                        SELECT bt.TAXTYPENAME, bt.TAXCATEGORY, t.TAXVALUE, t.TAXPER, t.SANCTIONID 
+                        FROM BLPTAXS t
+                        INNER JOIN BLPTAXTYPES bt ON bt.TAXTYPEID = t.TAXTYPEID
+                        WHERE bt.TAXCATEGORY = 'D' AND t.TAXTYPEID NOT IN (250) AND bt.IsMinus_FromGross IS NULL AND bt.TAXTYPEID = 247
+                    ) d GROUP BY SANCTIONID  
+                ) IGST ON IGST.SANCTIONID = s.SANCTIONID
+                LEFT OUTER JOIN 
+                (
+                    SELECT ISNULL(SUM(TAXVALUE), 0) AS TotalStDeductionCGST, SANCTIONID FROM 
+                    (
+                        SELECT bt.TAXTYPENAME, bt.TAXCATEGORY, t.TAXVALUE, t.TAXPER, t.SANCTIONID 
+                        FROM BLPTAXS t
+                        INNER JOIN BLPTAXTYPES bt ON bt.TAXTYPEID = t.TAXTYPEID
+                        WHERE bt.TAXCATEGORY = 'D' AND t.TAXTYPEID NOT IN (250) AND bt.IsMinus_FromGross IS NULL AND bt.TAXTYPEID = 248
+                    ) d GROUP BY SANCTIONID  
+                ) CGST ON CGST.SANCTIONID = s.SANCTIONID
+                LEFT OUTER JOIN 
+                (
+                    SELECT ISNULL(SUM(TAXVALUE), 0) AS TotalStDeductionSGST, SANCTIONID FROM 
+                    (
+                        SELECT bt.TAXTYPENAME, bt.TAXCATEGORY, t.TAXVALUE, t.TAXPER, t.SANCTIONID 
+                        FROM BLPTAXS t
+                        INNER JOIN BLPTAXTYPES bt ON bt.TAXTYPEID = t.TAXTYPEID
+                        WHERE bt.TAXCATEGORY = 'D' AND t.TAXTYPEID NOT IN (250) AND bt.IsMinus_FromGross IS NULL AND bt.TAXTYPEID = 249
+                    ) d GROUP BY SANCTIONID  
+                ) SGST ON SGST.SANCTIONID = s.SANCTIONID
+                LEFT OUTER JOIN 
+                (
+                    SELECT ISNULL(SUM(TAXVALUE), 0) AS TotalStDeduction194Q, SANCTIONID FROM 
+                    (
+                        SELECT bt.TAXTYPENAME, bt.TAXCATEGORY, t.TAXVALUE, t.TAXPER, t.SANCTIONID 
+                        FROM BLPTAXS t
+                        INNER JOIN BLPTAXTYPES bt ON bt.TAXTYPEID = t.TAXTYPEID
+                        WHERE bt.TAXCATEGORY = 'D' AND t.TAXTYPEID NOT IN (250) AND bt.IsMinus_FromGross IS NULL AND bt.TAXTYPEID = 265
+                    ) d GROUP BY SANCTIONID  
+                ) Q ON Q.SANCTIONID = s.SANCTIONID
+                LEFT OUTER JOIN
+                (
+                    SELECT ISNULL(SUM(TAXVALUE), 0) AS Penalties, SANCTIONID FROM
+                    (
+                        SELECT bt.TAXTYPENAME, bt.TAXCATEGORY, t.TAXVALUE, t.TAXPER, t.SANCTIONID 
+                        FROM BLPTAXS t
+                        INNER JOIN BLPTAXTYPES bt ON bt.TAXTYPEID = t.TAXTYPEID
+                        WHERE bt.TAXCATEGORY = 'D' AND bt.IsMinus_FromGross = 'Y'
+                    ) d GROUP BY SANCTIONID
+                ) pen ON pen.SANCTIONID = s.SANCTIONID
+                LEFT OUTER JOIN 
+                (
+                    SELECT ISNULL(SUM(TAXVALUE), 0) totalAddition, SANCTIONID FROM 
+                    (
+                        SELECT bt.TAXTYPENAME, bt.TAXCATEGORY, t.TAXVALUE, t.TAXPER, t.SANCTIONID 
+                        FROM BLPTAXS t
+                        INNER JOIN BLPTAXTYPES bt ON bt.TAXTYPEID = t.TAXTYPEID
+                        WHERE bt.TAXCATEGORY = 'A'
+                    ) d GROUP BY SANCTIONID 
+                ) AE ON AE.SANCTIONID = s.SANCTIONID
+                LEFT OUTER JOIN 
+                (
+                    SELECT ISNULL(SUM(TAXVALUE), 0) AS WitheldAmt, SANCTIONID FROM 
+                    (
+                        SELECT bt.TAXTYPENAME, bt.TAXCATEGORY, t.TAXVALUE, t.TAXPER, t.SANCTIONID 
+                        FROM BLPTAXS t
+                        INNER JOIN BLPTAXTYPES bt ON bt.TAXTYPEID = t.TAXTYPEID
+                        WHERE bt.TAXCATEGORY = 'D' AND t.TAXTYPEID IN (250) 
+                    ) d GROUP BY SANCTIONID, TAXCATEGORY 
+                ) We ON We.SANCTIONID = s.SANCTIONID
+                WHERE s.STATUS = 'P' {whereFromToSql}
+                ORDER BY p.AIDDATE";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(selectSqlQuery, conn))
+                    {
+                        // Safely linking parameters bypassing timezone overlaps completely
+                        cmd.Parameters.AddWithValue("@FromDate", parsedFromDate.ToString("yyyy-MM-dd 00:00:00.000"));
+                        cmd.Parameters.AddWithValue("@ToDate", parsedToDate.ToString("yyyy-MM-dd 23:59:59.997"));
+
+                        await conn.OpenAsync();
+                        int srNo = 1;
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var itemRow = new PaymentStatusDto();
+
+                                // 4. Sequential NULL-Safe Data Parsing Bindings
+                                itemRow.Sno = srNo++;
+                                itemRow.PaidMonth = reader["PaidMonth"] != DBNull.Value ? Convert.ToInt32(reader["PaidMonth"]) : 0;
+                                itemRow.OutwardNo = reader["outward_no"]?.ToString() ?? "";
+                                itemRow.PoNo = reader["po_no"]?.ToString() ?? "";
+
+                                if (reader["po_date"] != DBNull.Value)
+                                    itemRow.PoDate = Convert.ToDateTime(reader["po_date"]);
+
+                                itemRow.SupplierName = reader["SupplierName"]?.ToString() ?? "";
+                                itemRow.SupGst = reader["SUPGST"]?.ToString() ?? "";
+                                itemRow.ChequeNo = reader["Chequeno"]?.ToString() ?? "";
+                                itemRow.ChequeDt = reader["chequeDT"]?.ToString() ?? "";
+
+                                itemRow.PoValue = reader["povalue"] != DBNull.Value ? Convert.ToDecimal(reader["povalue"]) : 0;
+                                itemRow.ChequeAmt = reader["chequeAmt"] != DBNull.Value ? Convert.ToDecimal(reader["chequeAmt"]) : 0;
+                                itemRow.AdminCharges = reader["ADMINCHARGES"] != DBNull.Value ? Convert.ToDecimal(reader["ADMINCHARGES"]) : 0;
+                                itemRow.GrossWithAdmiChareges = reader["GrossWithAdmiChareges"] != DBNull.Value ? Convert.ToDecimal(reader["GrossWithAdmiChareges"]) : 0;
+
+                                itemRow.TotalStDeductionIGST = reader["TotalStDeductionIGST"] != DBNull.Value ? Convert.ToDecimal(reader["TotalStDeductionIGST"]) : 0;
+                                itemRow.TotalStDeductionCGST = reader["TotalStDeductionCGST"] != DBNull.Value ? Convert.ToDecimal(reader["TotalStDeductionCGST"]) : 0;
+                                itemRow.TotalStDeductionSGST = reader["TotalStDeductionSGST"] != DBNull.Value ? Convert.ToDecimal(reader["TotalStDeductionSGST"]) : 0;
+                                itemRow.TotalStDeduction194Q = reader["TotalStDeduction194Q"] != DBNull.Value ? Convert.ToDecimal(reader["TotalStDeduction194Q"]) : 0;
+
+                                itemRow.TotalStDeduction = reader["TotalStDeduction"] != DBNull.Value ? Convert.ToDecimal(reader["TotalStDeduction"]) : 0;
+                                itemRow.Penalties = reader["Penalties"] != DBNull.Value ? Convert.ToDecimal(reader["Penalties"]) : 0;
+                                itemRow.TotalAddition = reader["totalAddition"] != DBNull.Value ? Convert.ToDecimal(reader["totalAddition"]) : 0;
+                                itemRow.WitheldAmt = reader["WitheldAmt"] != DBNull.Value ? Convert.ToDecimal(reader["WitheldAmt"]) : 0;
+
+                                itemRow.BudgetName = reader["BUDGETNAME"]?.ToString() ?? "";
+                                itemRow.PaymentId = reader["PAYMENTID"] != DBNull.Value ? Convert.ToInt32(reader["PAYMENTID"]) : 0;
+
+                                if (reader["TranDT"] != DBNull.Value)
+                                    itemRow.TranDt = Convert.ToDateTime(reader["TranDT"]);
+
+                                itemRow.PoId = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0;
+
+                                resultList.Add(itemRow);
+                            }
+                        }
+                    }
+                }
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing automated payment statement record mappings.", error = ex.Message });
+            }
+        }
+
+        // URL Pattern Test: GET api/TaxRelease/GetTaxReleaseGrid?poType=NP&fromDate=2025-04-01&toDate=2026-03-31
+        [HttpGet("GetTaxReleaseGrid")]
+        public async Task<IActionResult> GetTaxReleaseGrid([FromQuery] string poType, [FromQuery] string fromDate, [FromQuery] string toDate)
+        {
+            // 1. Date Validation
+            if (string.IsNullOrWhiteSpace(fromDate) || string.IsNullOrWhiteSpace(toDate))
+            {
+                return BadRequest(new { message = "Please select From and To Date parameters." });
+            }
+
+            // Framework string parsing for dates to ignore OS format conflicts
+            DateTime parsedFromDate = DateTime.MinValue;
+            DateTime parsedToDate = DateTime.MinValue;
+            string[] exactFormats = { "yyyy-MM-dd", "dd-MM-yyyy", "dd/MM/yyyy", "MM-dd-yyyy", "MM/dd/yyyy" };
+
+            if (!DateTime.TryParseExact(fromDate.Trim(), exactFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedFromDate) ||
+                !DateTime.TryParseExact(toDate.Trim(), exactFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedToDate))
+            {
+                return BadRequest(new { message = "Invalid date format. Recommended format is YYYY-MM-DD." });
+            }
+
+            string connectionString = _config.GetConnectionString("DefaultConnection");
+            var resultList = new List<TaxReleaseDto>();
+
+            // 2. Dynamic PO Type Condition Binding (NP, CP, All)
+            string whereClause = "";
+            string safePoType = string.IsNullOrWhiteSpace(poType) ? "All" : poType.Trim();
+
+            if (safePoType == "NP")
+            {
+                whereClause = " AND ISNULL(p.potype, 'NP') = 'NP' ";
+            }
+            else if (safePoType == "CP")
+            {
+                whereClause = " AND ISNULL(p.potype, 'NP') = 'CP' ";
+            }
+
+            // 3. Date Filter Binding
+            string whereFromToSql = " AND re.AIDDATE BETWEEN @FromDate AND @ToDate ";
+
+            // 4. Exact Core Query Injection
+            string selectSqlQuery = $@"
+                SELECT 
+                    s.name, 
+                    re.AIDNO, 
+                    p.outward_no + '/' + p.po_no AS po_no, 
+                    CONVERT(VARCHAR, re.AIDDATE, 103) AS AIDDATE, 
+                    b.BUDGETID, 
+                    b.BUDGETNAME, 
+                    p.supplier_id, 
+                    SUM(ReleaseAmt) AS ReleaseAmt, 
+                    SUM(RecoveredAmt) AS RecoveredAmt, 
+                    CONVERT(VARCHAR, re.PAIDON, 103) AS PAIDON, 
+                    re.Paymentid
+                FROM BLPTaxsRelease r
+                INNER JOIN MASBUDGET b ON b.BUDGETID = r.FundId
+                INNER JOIN purchase_order p ON p.po_id = r.po_id
+                INNER JOIN BLPPaymentRelease re ON re.Paymentid = r.Paymentid
+                INNER JOIN massuppliers s ON s.supplier_id = p.supplier_id
+                WHERE 1=1 {whereFromToSql} {whereClause}
+                GROUP BY 
+                    re.SanctionNo, re.Paymentid, re.AIDNO, re.AIDDATE, re.Status, re.PAIDON, 
+                    b.BUDGETID, b.BUDGETNAME, p.po_no, p.po_id, p.supplier_id, s.name, 
+                    p.outward_no
+                ORDER BY re.AIDDATE";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(selectSqlQuery, conn))
+                    {
+                        // Safely applying strict timestamp boundaries
+                        cmd.Parameters.AddWithValue("@FromDate", parsedFromDate.ToString("yyyy-MM-dd 00:00:00.000"));
+                        cmd.Parameters.AddWithValue("@ToDate", parsedToDate.ToString("yyyy-MM-dd 23:59:59.997"));
+
+                        await conn.OpenAsync();
+                        int srNo = 1;
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var itemRow = new TaxReleaseDto();
+
+                                itemRow.Sno = srNo++;
+
+                                // Clean String Binding
+                                itemRow.Name = reader["name"] == DBNull.Value ? "" : reader["name"].ToString().Trim();
+                                itemRow.AidNo = reader["AIDNO"] == DBNull.Value ? "" : reader["AIDNO"].ToString().Trim();
+                                itemRow.PoNo = reader["po_no"] == DBNull.Value ? "" : reader["po_no"].ToString().Trim();
+                                itemRow.AidDate = reader["AIDDATE"] == DBNull.Value ? "" : reader["AIDDATE"].ToString().Trim();
+                                itemRow.BudgetName = reader["BUDGETNAME"] == DBNull.Value ? "" : reader["BUDGETNAME"].ToString().Trim();
+                                itemRow.PaidOn = reader["PAIDON"] == DBNull.Value ? "" : reader["PAIDON"].ToString().Trim();
+
+                                // Null-Safe ID & Math Bindings
+                                itemRow.BudgetId = reader["BUDGETID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["BUDGETID"]);
+                                itemRow.SupplierId = reader["supplier_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["supplier_id"]);
+                                itemRow.PaymentId = reader["Paymentid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["Paymentid"]);
+
+                                itemRow.ReleaseAmt = (reader["ReleaseAmt"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["ReleaseAmt"].ToString()))
+                                                     ? 0 : Convert.ToDecimal(reader["ReleaseAmt"]);
+
+                                itemRow.RecoveredAmt = (reader["RecoveredAmt"] == DBNull.Value || string.IsNullOrWhiteSpace(reader["RecoveredAmt"].ToString()))
+                                                       ? 0 : Convert.ToDecimal(reader["RecoveredAmt"]);
+
+                                resultList.Add(itemRow);
+                            }
+                        }
+                    }
+                }
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing tax release data mapping.", error = ex.Message });
+            }
+        }
+
 
 
     }
