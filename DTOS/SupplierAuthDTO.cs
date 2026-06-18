@@ -76,4 +76,39 @@ namespace EMISAPIS.DTOS
         public int SupplierId { get; set; }
         public string GstNo { get; set; } = string.Empty;
     }
+
+    /// <summary>po_supply.aspx — purchase order desk row.</summary>
+    public class SupplierPoSupplyRowDto
+    {
+        public int PoId { get; set; }
+        public int ItemId { get; set; }
+        public string OutwardNo { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public decimal BasicRate { get; set; }
+        public decimal Percentage { get; set; }
+        public decimal Quantity { get; set; }
+        public decimal TotalPoValue { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+        public int NoOfConsignee { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public string SdName { get; set; } = string.Empty;
+        public string SubmissionStatus { get; set; } = string.Empty;
+    }
+
+    public class SupplierTenderOptionDto
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+    }
+
+    public class SupplierPoSupplyFiltersDto
+    {
+        public int SupplierId { get; set; }
+        public int CurrentFinancialYearId { get; set; }
+        public List<FinancialYearOptionDto> FinancialYears { get; set; } = new();
+        public List<SupplierTenderOptionDto> Tenders { get; set; } = new();
+    }
 }

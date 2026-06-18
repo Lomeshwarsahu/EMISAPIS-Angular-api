@@ -37,4 +37,72 @@ namespace EMISAPIS.DTOS
         public string SuppliedFrom { get; set; } = string.Empty;
         public string Remarks { get; set; } = string.Empty;
     }
+
+    public class EquipmentItemOptionDto
+    {
+        public int ItemId { get; set; }
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public int Pid { get; set; }
+    }
+
+    public class SupplySourceOptionDto
+    {
+        public int SupId { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+
+    public class WardOptionDto
+    {
+        public int WardId { get; set; }
+        public string WardName { get; set; } = string.Empty;
+    }
+
+    public class OpeningStockDetailDto
+    {
+        public int ExistingItemId { get; set; }
+        public int Pid { get; set; }
+        public int ItemId { get; set; }
+        public int SupId { get; set; }
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string SerialNo { get; set; } = string.Empty;
+        public int? Qty { get; set; }
+        public string? ReceiptDate { get; set; }
+        public string? InstallationDate { get; set; }
+        public int? WarrantyYear { get; set; }
+        public string? WarrantyUpto { get; set; }
+        public int WardId { get; set; }
+        public string InstallLocationOther { get; set; } = string.Empty;
+        public string AmcFlag { get; set; } = "N";
+        public string? AmcValidDate { get; set; }
+        public string AmcFirm { get; set; } = string.Empty;
+        public string WorkingStatus { get; set; } = string.Empty;
+        public string Remarks { get; set; } = string.Empty;
+        public bool IsBulkEntry { get; set; }
+    }
+
+    public class OpeningStockSaveDto
+    {
+        public int UserId { get; set; }
+        public int? ExistingItemId { get; set; }
+        public int Pid { get; set; }
+        public int ItemId { get; set; }
+        public int SupId { get; set; }
+        public string Make { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string SerialNo { get; set; } = string.Empty;
+        public int? Qty { get; set; }
+        public string? ReceiptDate { get; set; }
+        public string? InstallationDate { get; set; }
+        public int? WarrantyYear { get; set; }
+        public string? WarrantyUpto { get; set; }
+        public int WardId { get; set; }
+        public string InstallLocationOther { get; set; } = string.Empty;
+        public string AmcFlag { get; set; } = "N";
+        public string? AmcValidDate { get; set; }
+        public string AmcFirm { get; set; } = string.Empty;
+        public string WorkingStatus { get; set; } = string.Empty;
+        public string Remarks { get; set; } = string.Empty;
+    }
 }

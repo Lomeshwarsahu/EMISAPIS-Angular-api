@@ -80,6 +80,10 @@ where GETDATE() between ac.contract_date and ac.contract_end_date";
                     ? " AND GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date"
                     : " AND GETDATE() > ac.contract_end_date";
 
+                string orderBy = req.RcType == "R"
+                    ? "ORDER BY ac.contract_date DESC"
+                    : "ORDER BY ac.contract_end_date DESC";
+
                 string query = @"SELECT  
     c.contract_item_id,
     m.item_id,
@@ -104,12 +108,14 @@ where GETDATE() between ac.contract_date and ac.contract_end_date";
     ISNULL(tt.CMC3,0) CMC3,
     ISNULL(tt.CMC4,0) CMC4,
     ISNULL(tt.CMC5,0) CMC5,
-    t.tender_id
+    t.tender_id,
+    CASE WHEN mu.item_id IS NOT NULL THEN 1 ELSE 0 END AS HasSpecification
 FROM contract_items c
 INNER JOIN masitems m ON m.item_id = c.item_id
 INNER JOIN award_of_contract ac ON ac.award_of_contract_id = c.award_of_contract_id
 INNER JOIN massuppliers s ON s.supplier_id = ac.supplier_id
 INNER JOIN tenders t ON t.tender_id = ac.tender_id
+LEFT JOIN dbo.masitems_upload mu ON mu.item_id = m.item_id
 LEFT JOIN (
     SELECT ti.item_id, ti.tender_id, ltp.supplier_id,
            ltp.CMC1, ltp.CMC2, ltp.CMC3, ltp.CMC4, ltp.CMC5
@@ -122,7 +128,7 @@ AND tt.supplier_id = s.supplier_id
 AND tt.item_id = c.item_id
 WHERE c.isfreezed IS NULL
 " + whereTender + whereCategory + whereRcType + @"
-ORDER BY ac.contract_date DESC";
+" + orderBy;
 
                 using (SqlConnection conn =
                     new SqlConnection(_config.GetConnectionString("DefaultConnection")))
@@ -160,7 +166,9 @@ ORDER BY ac.contract_date DESC";
                                     CMC3 = Convert.ToDecimal(reader["CMC3"]),
                                     CMC4 = Convert.ToDecimal(reader["CMC4"]),
                                     CMC5 = Convert.ToDecimal(reader["CMC5"]),
-                                    TenderId = Convert.ToInt32(reader["tender_id"])
+                                    TenderId = Convert.ToInt32(reader["tender_id"]),
+                                    HasSpecification = reader["HasSpecification"] != DBNull.Value &&
+                                        Convert.ToInt32(reader["HasSpecification"]) == 1
                                 });
                             }
                         }
