@@ -170,4 +170,45 @@ namespace EMISAPIS.DTOS
         public string DeniedStatus { get; set; } = string.Empty;
         public List<SupplierPoReceiptBatchDto> Batches { get; set; } = new();
     }
+
+    /// <summary>RCDetailReportForSupplier.aspx — active RC row.</summary>
+    public class SupplierRcDetailRowDto
+    {
+        public int ContractItemId { get; set; }
+        public int ItemId { get; set; }
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string SupplierName { get; set; } = string.Empty;
+        public string TenderNo { get; set; } = string.Empty;
+        public int TenderId { get; set; }
+        public string ContractDate { get; set; } = string.Empty;
+        public string ContractEndDate { get; set; } = string.Empty;
+        public decimal BasicRate { get; set; }
+        public decimal Percentage { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public bool HasSpecification { get; set; }
+    }
+
+    /// <summary>AcceptedReoprtSupplier.aspx — accepted tender price row.</summary>
+    public class SupplierAcceptedReportRowDto
+    {
+        public int ItemId { get; set; }
+        public int TenderId { get; set; }
+        public int SupplierId { get; set; }
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string SupplierName { get; set; } = string.Empty;
+        public string TenderNo { get; set; } = string.Empty;
+        public string TenderDate { get; set; } = string.Empty;
+        public int TenderQuantity { get; set; }
+        public decimal BasicRate { get; set; }
+        public decimal Gst { get; set; }
+        public decimal AcceptedBasicRate { get; set; }
+    }
+
+    public class SupplierAcceptedSupplierOptionDto
+    {
+        public int SupplierId { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
 }

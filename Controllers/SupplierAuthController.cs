@@ -1083,6 +1083,285 @@ ORDER BY ISNULL(ins.insqty, 0)";
             }
         }
 
+        /// <summary>RCDetailReportForSupplier.aspx — tender dropdown.</summary>
+        [HttpGet("rc-detail-report/tenders/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierRcDetailTenders(int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT DISTINCT t.tender_no, t.tender_id
+FROM contract_items c
+INNER JOIN masitems m ON m.item_id = c.item_id
+INNER JOIN award_of_contract ac ON ac.award_of_contract_id = c.award_of_contract_id
+INNER JOIN massuppliers s ON s.supplier_id = ac.supplier_id
+INNER JOIN tenders t ON t.tender_id = ac.tender_id
+WHERE c.isfreezed IS NULL
+  AND GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date
+  AND s.supplier_id = @SupplierId
+ORDER BY t.tender_no";
+
+                var tenders = new List<SupplierTenderOptionDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    tenders.Add(new SupplierTenderOptionDto
+                    {
+                        TenderId = ReadIntColumn(reader, "tender_id"),
+                        TenderNo = ReadStringColumn(reader, "tender_no"),
+                    });
+                }
+
+                return Ok(tenders);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading RC tenders.", error = ex.Message });
+            }
+        }
+
+        /// <summary>RCDetailReportForSupplier.aspx — grid.</summary>
+        [HttpGet("rc-detail-report/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierRcDetailReport(
+            int userId,
+            [FromQuery] int tenderId = 0)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                string tenderFilter = tenderId > 0 ? " AND t.tender_id = @TenderId" : string.Empty;
+
+                string sql = @"
+SELECT m.item_id, c.contract_item_id,
+       m.item_code_as_per_tender AS item_codeE, m.item_name AS item_nameE,
+       c.basic_rate, c.percentage, c.single_unit_price,
+       CONVERT(VARCHAR, ac.contract_date, 103) AS contract_date,
+       CONVERT(VARCHAR, ac.contract_end_date, 103) AS contract_end_date,
+       s.name, t.tender_no, t.tender_id,
+       CASE WHEN mu.item_id IS NOT NULL THEN 1 ELSE 0 END AS HasSpecification
+FROM contract_items c
+INNER JOIN masitems m ON m.item_id = c.item_id
+INNER JOIN award_of_contract ac ON ac.award_of_contract_id = c.award_of_contract_id
+INNER JOIN massuppliers s ON s.supplier_id = ac.supplier_id
+INNER JOIN tenders t ON t.tender_id = ac.tender_id
+LEFT JOIN masitems_upload mu ON mu.item_id = m.item_id
+WHERE c.isfreezed IS NULL
+  AND GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date
+  AND s.supplier_id = @SupplierId" + tenderFilter + @"
+ORDER BY ac.contract_date DESC";
+
+                var rows = new List<SupplierRcDetailRowDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                if (tenderId > 0)
+                    cmd.Parameters.AddWithValue("@TenderId", tenderId);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    rows.Add(new SupplierRcDetailRowDto
+                    {
+                        ContractItemId = ReadIntColumn(reader, "contract_item_id"),
+                        ItemId = ReadIntColumn(reader, "item_id"),
+                        ItemCode = ReadStringColumn(reader, "item_codeE"),
+                        ItemName = ReadStringColumn(reader, "item_nameE"),
+                        SupplierName = ReadStringColumn(reader, "name"),
+                        TenderNo = ReadStringColumn(reader, "tender_no"),
+                        TenderId = ReadIntColumn(reader, "tender_id"),
+                        ContractDate = ReadStringColumn(reader, "contract_date"),
+                        ContractEndDate = ReadStringColumn(reader, "contract_end_date"),
+                        BasicRate = ReadDecimalColumn(reader, "basic_rate"),
+                        Percentage = ReadDecimalColumn(reader, "percentage"),
+                        SingleUnitPrice = ReadDecimalColumn(reader, "single_unit_price"),
+                        HasSpecification = ReadIntColumn(reader, "HasSpecification") == 1,
+                    });
+                }
+
+                return Ok(rows);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading RC detail report.", error = ex.Message });
+            }
+        }
+
+        /// <summary>AcceptedReoprtSupplier.aspx — tender dropdown.</summary>
+        [HttpGet("accepted-report/tenders/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierAcceptedTenders(int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT DISTINCT t.tender_no, t.tender_id
+FROM live_tender_price tp
+INNER JOIN tender_items ti ON ti.tender_item_id = tp.tender_item_id
+INNER JOIN tenders t ON t.tender_id = ti.tender_id
+INNER JOIN massuppliers s ON s.supplier_id = tp.supplier_id
+INNER JOIN masitems m ON m.item_id = ti.item_id
+WHERE tp.isaccept = 'Y' AND s.supplier_id = @SupplierId
+ORDER BY t.tender_no";
+
+                var tenders = new List<SupplierTenderOptionDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    tenders.Add(new SupplierTenderOptionDto
+                    {
+                        TenderId = ReadIntColumn(reader, "tender_id"),
+                        TenderNo = ReadStringColumn(reader, "tender_no"),
+                    });
+                }
+
+                return Ok(tenders);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading accepted tenders.", error = ex.Message });
+            }
+        }
+
+        /// <summary>AcceptedReoprtSupplier.aspx — logged-in supplier option.</summary>
+        [HttpGet("accepted-report/supplier/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierAcceptedSupplierOption(int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT name, supplier_id
+FROM massuppliers
+WHERE supplier_id = @SupplierId";
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "Supplier not found." });
+
+                return Ok(new SupplierAcceptedSupplierOptionDto
+                {
+                    SupplierId = ReadIntColumn(reader, "supplier_id"),
+                    Name = ReadStringColumn(reader, "name"),
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading supplier.", error = ex.Message });
+            }
+        }
+
+        /// <summary>AcceptedReoprtSupplier.aspx — grid.</summary>
+        [HttpGet("accepted-report/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierAcceptedReport(
+            int userId,
+            [FromQuery] string filterType = "tender",
+            [FromQuery] int tenderId = 0,
+            [FromQuery] int supplierId = 0)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? loggedInSupplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (loggedInSupplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                string tenderFilter = string.Empty;
+                if (string.Equals(filterType, "tender", StringComparison.OrdinalIgnoreCase) && tenderId > 0)
+                    tenderFilter = " AND t.tender_id = @TenderId";
+
+                string sql = @"
+SELECT m.item_code_as_per_tender, m.item_name, s.name, t.tender_no,
+       CONVERT(VARCHAR, t.tender_date, 103) AS tender_date,
+       ti.tender_quantity, tp.basicrate, tp.gst,
+       tp.fbasicrate AS acceptedBasicrate,
+       t.tender_id, tp.supplier_id, ti.item_id
+FROM live_tender_price tp
+INNER JOIN tender_items ti ON ti.tender_item_id = tp.tender_item_id
+INNER JOIN tenders t ON t.tender_id = ti.tender_id
+INNER JOIN massuppliers s ON s.supplier_id = tp.supplier_id
+INNER JOIN masitems m ON m.item_id = ti.item_id
+WHERE tp.isaccept = 'Y' AND tp.supplier_id = @SupplierId" + tenderFilter + @"
+ORDER BY tp.fdate DESC";
+
+                var rows = new List<SupplierAcceptedReportRowDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", loggedInSupplierId.Value);
+                if (!string.IsNullOrEmpty(tenderFilter))
+                    cmd.Parameters.AddWithValue("@TenderId", tenderId);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    rows.Add(new SupplierAcceptedReportRowDto
+                    {
+                        ItemId = ReadIntColumn(reader, "item_id"),
+                        TenderId = ReadIntColumn(reader, "tender_id"),
+                        SupplierId = ReadIntColumn(reader, "supplier_id"),
+                        ItemCode = ReadStringColumn(reader, "item_code_as_per_tender"),
+                        ItemName = ReadStringColumn(reader, "item_name"),
+                        SupplierName = ReadStringColumn(reader, "name"),
+                        TenderNo = ReadStringColumn(reader, "tender_no"),
+                        TenderDate = ReadStringColumn(reader, "tender_date"),
+                        TenderQuantity = ReadIntColumn(reader, "tender_quantity"),
+                        BasicRate = ReadDecimalColumn(reader, "basicrate"),
+                        Gst = ReadDecimalColumn(reader, "gst"),
+                        AcceptedBasicRate = ReadDecimalColumn(reader, "acceptedBasicrate"),
+                    });
+                }
+
+                return Ok(rows);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading accepted report.", error = ex.Message });
+            }
+        }
+
         private async Task<List<SupplierPoReceiptBatchDto>> LoadReceiptBatchesAsync(
             SqlConnection con, int poId, int consigneeId)
         {
