@@ -14,11 +14,17 @@ namespace EMISAPIS.Controllers
     public class SupplierAuthController : ControllerBase
     {
         private readonly string _connectionString;
+        private readonly string _complaintFileRoot;
 
-        public SupplierAuthController(IConfiguration configuration)
+        public SupplierAuthController(IConfiguration configuration, IWebHostEnvironment env)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("DefaultConnection is not configured.");
+
+            var configured = configuration["FileStorage:ComplaintPath"];
+            _complaintFileRoot = string.IsNullOrWhiteSpace(configured)
+                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "ComplainUploads"))
+                : Path.GetFullPath(configured);
         }
 
         [HttpGet("profile/{id:int}")]
@@ -1359,6 +1365,151 @@ ORDER BY tp.fdate DESC";
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Error loading accepted report.", error = ex.Message });
+            }
+        }
+
+        /// <summary>ReceiptComplainSupplier.aspx — complaint grid.</summary>
+        [HttpGet("receipt-complain/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierReceiptComplain(
+            int userId,
+            [FromQuery] string status = "Booked")
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            if (string.IsNullOrWhiteSpace(status))
+                status = "Booked";
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT c.complaint_id, c.complaint_no,
+       CONVERT(VARCHAR, c.complaint_date, 103) AS complaint_date,
+       CONVERT(VARCHAR, c.not_function_date, 103) AS not_function_date,
+       c.complaint_details, c.Serial_no,
+       masitems.item_name, maslocations.location_name,
+       masitems.item_code_as_per_tender,
+       ISNULL(c.ext, '.pdf') AS ext,
+       c.path,
+       p.outward_no + '/' + p.po_no AS pono,
+       CONVERT(VARCHAR, p.po_date, 103) AS po_date,
+       u.storeOfficerMob
+FROM complaints c
+INNER JOIN masitems ON c.item_id = masitems.item_id
+INNER JOIN maslocations ON c.location_id = maslocations.location_id
+INNER JOIN users u ON u.location_id = maslocations.location_id
+LEFT OUTER JOIN receipt_item_details ri ON ri.item_detail_id = c.item_detail_id
+LEFT OUTER JOIN receipts r ON r.receipt_id = ri.receipt_id
+LEFT OUTER JOIN purchase_order p ON p.po_id = r.po_id
+WHERE c.supplier_id = @SupplierId
+  AND c.status = @Status
+ORDER BY c.complaint_date";
+
+                var rows = new List<SupplierReceiptComplainRowDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                cmd.Parameters.AddWithValue("@Status", status);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    string filePath = ReadStringColumn(reader, "path");
+                    string fileExt = ReadStringColumn(reader, "ext");
+                    if (string.IsNullOrWhiteSpace(fileExt))
+                        fileExt = ".pdf";
+
+                    rows.Add(new SupplierReceiptComplainRowDto
+                    {
+                        ComplaintId = ReadIntColumn(reader, "complaint_id"),
+                        ComplaintNo = ReadStringColumn(reader, "complaint_no"),
+                        PoNo = ReadStringColumn(reader, "pono"),
+                        PoDate = ReadStringColumn(reader, "po_date"),
+                        ItemCode = ReadStringColumn(reader, "item_code_as_per_tender"),
+                        ItemName = ReadStringColumn(reader, "item_name"),
+                        SerialNo = ReadStringColumn(reader, "Serial_no", "serial_no"),
+                        ComplaintDate = ReadStringColumn(reader, "complaint_date"),
+                        NotFunctionDate = ReadStringColumn(reader, "not_function_date"),
+                        LocationName = ReadStringColumn(reader, "location_name"),
+                        FacilityContactNo = ReadStringColumn(reader, "storeOfficerMob"),
+                        ComplaintDetails = ReadStringColumn(reader, "complaint_details"),
+                        FilePath = filePath,
+                        FileExt = fileExt,
+                        HasFile = !string.IsNullOrWhiteSpace(filePath),
+                    });
+                }
+
+                return Ok(rows);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading complaints.", error = ex.Message });
+            }
+        }
+
+        /// <summary>ReceiptComplainSupplier.aspx — complain letter download.</summary>
+        [HttpGet("receipt-complain/file/by-user/{userId:int}")]
+        public async Task<IActionResult> DownloadSupplierReceiptComplainFile(
+            int userId,
+            [FromQuery] int complaintId)
+        {
+            if (userId <= 0 || complaintId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT path, ISNULL(ext, '.pdf') AS ext
+FROM complaints
+WHERE complaint_id = @ComplaintId AND supplier_id = @SupplierId";
+
+                string? filePath = null;
+                string fileExt = ".pdf";
+
+                using (SqlConnection con = new SqlConnection(_connectionString))
+                {
+                    await con.OpenAsync();
+                    using SqlCommand cmd = new SqlCommand(sql, con);
+                    cmd.Parameters.AddWithValue("@ComplaintId", complaintId);
+                    cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Complaint not found." });
+
+                    filePath = ReadStringColumn(reader, "path");
+                    fileExt = ReadStringColumn(reader, "ext");
+                }
+
+                if (string.IsNullOrWhiteSpace(filePath))
+                    return NotFound(new { message = "File not found." });
+
+                if (string.IsNullOrWhiteSpace(fileExt))
+                    fileExt = ".pdf";
+
+                string physicalPath = Path.Combine(_complaintFileRoot, filePath + fileExt);
+                if (!System.IO.File.Exists(physicalPath))
+                    return NotFound(new { message = "Complaint file is not available on server." });
+
+                string downloadName = $"Complain_{complaintId}{fileExt}";
+                string contentType = fileExt.Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+                    ? "application/pdf"
+                    : "application/octet-stream";
+
+                return PhysicalFile(physicalPath, contentType, downloadName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading complaint file.", error = ex.Message });
             }
         }
 

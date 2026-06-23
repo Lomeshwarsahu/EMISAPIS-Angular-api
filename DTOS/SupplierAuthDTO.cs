@@ -211,4 +211,24 @@ namespace EMISAPIS.DTOS
         public int SupplierId { get; set; }
         public string Name { get; set; } = string.Empty;
     }
+
+    /// <summary>ReceiptComplainSupplier.aspx — complaint row.</summary>
+    public class SupplierReceiptComplainRowDto
+    {
+        public int ComplaintId { get; set; }
+        public string ComplaintNo { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string SerialNo { get; set; } = string.Empty;
+        public string ComplaintDate { get; set; } = string.Empty;
+        public string NotFunctionDate { get; set; } = string.Empty;
+        public string LocationName { get; set; } = string.Empty;
+        public string FacilityContactNo { get; set; } = string.Empty;
+        public string ComplaintDetails { get; set; } = string.Empty;
+        public string FilePath { get; set; } = string.Empty;
+        public string FileExt { get; set; } = string.Empty;
+        public bool HasFile { get; set; }
+    }
 }
