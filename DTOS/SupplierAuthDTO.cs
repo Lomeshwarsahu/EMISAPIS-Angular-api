@@ -231,4 +231,65 @@ namespace EMISAPIS.DTOS
         public string FileExt { get; set; } = string.Empty;
         public bool HasFile { get; set; }
     }
+
+    public class SupplierEmdDocumentTypeDto
+    {
+        public int DtypeId { get; set; }
+        public string DtypeName { get; set; } = string.Empty;
+    }
+
+    /// <summary>EMDdeposite.aspx — submitted deposit row.</summary>
+    public class SupplierEmdDepositRowDto
+    {
+        public int Id { get; set; }
+        public int SupId { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+        public decimal EmdAmt { get; set; }
+        public string EmdType { get; set; } = string.Empty;
+        public string EmdDocumentNo { get; set; } = string.Empty;
+        public string EmdDepositeDt { get; set; } = string.Empty;
+        public string EmdDocument { get; set; } = string.Empty;
+        public bool HasFile { get; set; }
+    }
+
+    /// <summary>PaymentReport.aspx — paid PO payment row.</summary>
+    public class SupplierPaymentReportRowDto
+    {
+        public int PoId { get; set; }
+        public int SanctionId { get; set; }
+        public int SupplierId { get; set; }
+        public int BudgetId { get; set; }
+        public int PaymentId { get; set; }
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string SupplierName { get; set; } = string.Empty;
+        public decimal GrossAmt { get; set; }
+        public decimal TotalDed { get; set; }
+        public decimal TotalAddition { get; set; }
+        public decimal ChequeAmt { get; set; }
+        public string ChequeDate { get; set; } = string.Empty;
+        public string AidNo { get; set; } = string.Empty;
+        public string PaymentType { get; set; } = string.Empty;
+    }
+
+    /// <summary>BalanceStatussupplier.aspx — pending receipt/installation row.</summary>
+    public class SupplierBalanceStatusRowDto
+    {
+        public int PoId { get; set; }
+        public int DirectorateId { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+        public string Year { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string FacilityAutName { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string Supplier { get; set; } = string.Empty;
+        public decimal PoQty { get; set; }
+        public decimal SupplyQty { get; set; }
+        public decimal ReceiptQty { get; set; }
+        public decimal InstQty { get; set; }
+        public string PoType { get; set; } = string.Empty;
+        public decimal BalanceQty { get; set; }
+    }
 }

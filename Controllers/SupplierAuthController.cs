@@ -15,16 +15,24 @@ namespace EMISAPIS.Controllers
     {
         private readonly string _connectionString;
         private readonly string _complaintFileRoot;
+        private readonly string _emdFileRoot;
 
         public SupplierAuthController(IConfiguration configuration, IWebHostEnvironment env)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("DefaultConnection is not configured.");
 
-            var configured = configuration["FileStorage:ComplaintPath"];
-            _complaintFileRoot = string.IsNullOrWhiteSpace(configured)
+            var complaintConfigured = configuration["FileStorage:ComplaintPath"];
+            _complaintFileRoot = string.IsNullOrWhiteSpace(complaintConfigured)
                 ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "ComplainUploads"))
-                : Path.GetFullPath(configured);
+                : Path.GetFullPath(complaintConfigured);
+
+            var emdConfigured = configuration["FileStorage:EmdDepositPath"];
+            _emdFileRoot = string.IsNullOrWhiteSpace(emdConfigured)
+                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "EMDUploads"))
+                : Path.GetFullPath(emdConfigured);
+
+            Directory.CreateDirectory(_emdFileRoot);
         }
 
         [HttpGet("profile/{id:int}")]
@@ -1511,6 +1519,582 @@ WHERE complaint_id = @ComplaintId AND supplier_id = @SupplierId";
             {
                 return StatusCode(500, new { message = "Error downloading complaint file.", error = ex.Message });
             }
+        }
+
+        /// <summary>EMDdeposite.aspx — tender dropdown (excluding already submitted).</summary>
+        [HttpGet("emd-deposit/tenders/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierEmdDepositTenders(int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT t.tender_id, t.tender_no
+FROM tenders t
+WHERE t.tender_id NOT IN (
+    SELECT e.TenderNo FROM EMDDepositeDetail e WHERE e.SupId = @SupplierId AND e.TenderNo <> 0
+)
+ORDER BY t.tender_id DESC";
+
+                var tenders = new List<SupplierTenderOptionDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    tenders.Add(new SupplierTenderOptionDto
+                    {
+                        TenderId = ReadIntColumn(reader, "tender_id"),
+                        TenderNo = ReadStringColumn(reader, "tender_no"),
+                    });
+                }
+
+                return Ok(tenders);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading tenders.", error = ex.Message });
+            }
+        }
+
+        /// <summary>EMDdeposite.aspx — EMD payment mode dropdown.</summary>
+        [HttpGet("emd-deposit/emd-types")]
+        public async Task<IActionResult> GetSupplierEmdDocumentTypes()
+        {
+            try
+            {
+                const string sql = "SELECT dtypeid, dtypename FROM MASDOCUMENTTYPE ORDER BY dtypename";
+                var types = new List<SupplierEmdDocumentTypeDto>();
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    types.Add(new SupplierEmdDocumentTypeDto
+                    {
+                        DtypeId = ReadIntColumn(reader, "dtypeid"),
+                        DtypeName = ReadStringColumn(reader, "dtypename"),
+                    });
+                }
+
+                return Ok(types);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading EMD types.", error = ex.Message });
+            }
+        }
+
+        /// <summary>EMDdeposite.aspx — submitted deposits grid.</summary>
+        [HttpGet("emd-deposit/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierEmdDeposits(int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT e.Id, e.SupId,
+       CASE WHEN e.OtherTenderNo <> '-' THEN e.OtherTenderNo ELSE t.tender_no END AS TenderNo,
+       e.EMDAmt, d.dtypename AS EMDType, e.EMDDocumentNo,
+       CONVERT(VARCHAR, e.EMDDepositeDt, 103) AS EMDDepositeDt,
+       e.EMDDocument
+FROM EMDDepositeDetail e
+LEFT OUTER JOIN tenders t ON t.tender_id = e.TenderNo
+INNER JOIN MASDOCUMENTTYPE d ON d.dtypeid = e.EMDType
+WHERE e.SupId = @SupplierId
+ORDER BY e.EntryDate";
+
+                var rows = new List<SupplierEmdDepositRowDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    string emdDocument = ReadStringColumn(reader, "EMDDocument");
+                    rows.Add(new SupplierEmdDepositRowDto
+                    {
+                        Id = ReadIntColumn(reader, "Id", "id"),
+                        SupId = ReadIntColumn(reader, "SupId"),
+                        TenderNo = ReadStringColumn(reader, "TenderNo"),
+                        EmdAmt = ReadDecimalColumn(reader, "EMDAmt"),
+                        EmdType = ReadStringColumn(reader, "EMDType"),
+                        EmdDocumentNo = ReadStringColumn(reader, "EMDDocumentNo"),
+                        EmdDepositeDt = ReadStringColumn(reader, "EMDDepositeDt"),
+                        EmdDocument = emdDocument,
+                        HasFile = !string.IsNullOrWhiteSpace(emdDocument),
+                    });
+                }
+
+                return Ok(rows);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading EMD deposits.", error = ex.Message });
+            }
+        }
+
+        /// <summary>EMDdeposite.aspx — save refund request with PDF upload.</summary>
+        [HttpPost("emd-deposit/by-user/{userId:int}")]
+        public async Task<IActionResult> SaveSupplierEmdDeposit(
+            int userId,
+            [FromForm] int tenderId,
+            [FromForm] string? otherTenderNo,
+            [FromForm] decimal emdAmount,
+            [FromForm] int emdType,
+            [FromForm] string emdDocNo,
+            [FromForm] string emdDepositDate,
+            IFormFile? file)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            if (tenderId < 0)
+                return BadRequest(new { message = "Please select tender No." });
+
+            if (tenderId == 0 && string.IsNullOrWhiteSpace(otherTenderNo))
+                return BadRequest(new { message = "Please insert Other Tender No." });
+
+            if (emdAmount <= 0)
+                return BadRequest(new { message = "Please insert EMD Amount." });
+
+            if (emdType <= 0)
+                return BadRequest(new { message = "Please select EMD Type." });
+
+            if (string.IsNullOrWhiteSpace(emdDocNo))
+                return BadRequest(new { message = "Please insert EMD Document Number." });
+
+            if (string.IsNullOrWhiteSpace(emdDepositDate))
+                return BadRequest(new { message = "Please insert EMD Deposite Date." });
+
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Please Upload PDF File for EMD Document/Letter." });
+
+            if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Please upload pdf file only." });
+
+            if (file.Length >= 3_000_000)
+                return BadRequest(new { message = "Your can't upload file more than 3mb." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                if (!TryParseDepositDate(emdDepositDate, out DateTime depositDate))
+                    return BadRequest(new { message = "Invalid date format." });
+
+                if (depositDate.Date > DateTime.Today)
+                    return BadRequest(new { message = "EMD Deposite Date Should not be Greater than today." });
+
+                bool isOther = tenderId == 0;
+                int tenderNoToSave = isOther ? 0 : tenderId;
+                string otherTenderToSave = isOther ? otherTenderNo!.Trim() : "-";
+
+                if (!isOther && !await CheckSupplierParticipatedInTenderAsync(tenderId, supplierId.Value))
+                    return BadRequest(new { message = "Please Check Tender No, Seems You have not Participated in Selected Tender" });
+
+                int depositId;
+                using (SqlConnection con = new SqlConnection(_connectionString))
+                {
+                    await con.OpenAsync();
+                    const string insertSql = @"
+INSERT INTO EMDDepositeDetail (SupId, TenderNo, OtherTenderNo, EMDAmt, EMDType, EMDDocumentNo, EMDDepositeDt)
+OUTPUT INSERTED.Id
+VALUES (@SupId, @TenderNo, @OtherTenderNo, @EmdAmt, @EmdType, @EmdDocNo, @EmdDepositeDt)";
+
+                    using SqlCommand cmd = new SqlCommand(insertSql, con);
+                    cmd.Parameters.AddWithValue("@SupId", supplierId.Value);
+                    cmd.Parameters.AddWithValue("@TenderNo", tenderNoToSave);
+                    cmd.Parameters.AddWithValue("@OtherTenderNo", otherTenderToSave);
+                    cmd.Parameters.AddWithValue("@EmdAmt", emdAmount);
+                    cmd.Parameters.AddWithValue("@EmdType", emdType);
+                    cmd.Parameters.AddWithValue("@EmdDocNo", emdDocNo.Trim());
+                    cmd.Parameters.AddWithValue("@EmdDepositeDt", depositDate);
+
+                    object? idResult = await cmd.ExecuteScalarAsync();
+                    if (idResult == null || idResult == DBNull.Value)
+                        return StatusCode(500, new { message = "Unable to save EMD deposit record." });
+
+                    depositId = Convert.ToInt32(idResult);
+                }
+
+                string fileKey = GenerateEmdFileName(supplierId.Value);
+                string savePath = Path.Combine(_emdFileRoot, fileKey + ".pdf");
+                await using (var stream = new FileStream(savePath, FileMode.Create))
+                {
+                    await file.CopyToAsync(stream);
+                }
+
+                using (SqlConnection con = new SqlConnection(_connectionString))
+                {
+                    await con.OpenAsync();
+                    const string updateSql = "UPDATE EMDDepositeDetail SET EMDDocument = @FileName WHERE Id = @Id AND SupId = @SupId";
+                    using SqlCommand cmd = new SqlCommand(updateSql, con);
+                    cmd.Parameters.AddWithValue("@FileName", fileKey);
+                    cmd.Parameters.AddWithValue("@Id", depositId);
+                    cmd.Parameters.AddWithValue("@SupId", supplierId.Value);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new { message = "Record Successfully Inserted", depositId });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving EMD deposit.", error = ex.Message });
+            }
+        }
+
+        /// <summary>EMDdeposite.aspx — document download.</summary>
+        [HttpGet("emd-deposit/file/by-user/{userId:int}")]
+        public async Task<IActionResult> DownloadSupplierEmdDepositFile(int userId, [FromQuery] int depositId)
+        {
+            if (userId <= 0 || depositId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT EMDDocument FROM EMDDepositeDetail
+WHERE Id = @Id AND SupId = @SupId";
+
+                string? fileName = null;
+                using (SqlConnection con = new SqlConnection(_connectionString))
+                {
+                    await con.OpenAsync();
+                    using SqlCommand cmd = new SqlCommand(sql, con);
+                    cmd.Parameters.AddWithValue("@Id", depositId);
+                    cmd.Parameters.AddWithValue("@SupId", supplierId.Value);
+
+                    object? result = await cmd.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                        return NotFound(new { message = "EMD deposit not found." });
+
+                    fileName = result.ToString();
+                }
+
+                if (string.IsNullOrWhiteSpace(fileName))
+                    return NotFound(new { message = "File not found." });
+
+                string physicalPath = Path.Combine(_emdFileRoot, fileName + ".pdf");
+                if (!System.IO.File.Exists(physicalPath))
+                    return NotFound(new { message = "EMD document is not available on server." });
+
+                return PhysicalFile(physicalPath, "application/pdf", fileName + ".pdf");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading EMD document.", error = ex.Message });
+            }
+        }
+
+        /// <summary>PaymentReport.aspx — paid purchase order report.</summary>
+        [HttpGet("payment-report/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierPaymentReport(
+            int userId,
+            [FromQuery] string poType = "NP")
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                string poTypeFilter = string.Empty;
+                if (string.Equals(poType, "NP", StringComparison.OrdinalIgnoreCase))
+                    poTypeFilter = " AND ISNULL(p.potype, 'NP') = 'NP' ";
+                else if (string.Equals(poType, "CP", StringComparison.OrdinalIgnoreCase))
+                    poTypeFilter = " AND ISNULL(p.potype, 'NP') = 'CP' ";
+
+                string sql = @"
+SELECT p.po_no,
+       CASE WHEN p.soissueDT IS NULL THEN CONVERT(VARCHAR, p.po_date, 103) ELSE CONVERT(VARCHAR, p.soissueDT, 103) END AS po_date,
+       sp.name,
+       s.SANCTIONEDAMOUNT AS GrossAmt,
+       ISNULL(s.DEDUCTIONS, 0) AS totalDed,
+       ISNULL(s.addition, 0) AS totalAddition,
+       s.chequeAmt AS ChequeAmt,
+       py.AIDNO,
+       CONVERT(VARCHAR, py.AIDDATE, 103) AS chequedate,
+       b.BUDGETID,
+       s.SANCTIONID,
+       sp.supplier_id,
+       p.po_id,
+       s.PAYMENTID,
+       'PO Payment' AS typeP
+FROM BLPSANCTIONS s
+INNER JOIN BLPPAYMENTS py ON py.PAYMENTID = s.PAYMENTID
+INNER JOIN MASBUDGET b ON b.BUDGETID = s.BUDGETID
+INNER JOIN purchase_order p ON s.po_id = p.po_id
+LEFT OUTER JOIN (
+    SELECT b.SANCTIONID, mp.PType, b.po_id
+    FROM BLPINVOICES b
+    LEFT OUTER JOIN MasPStatus mp ON mp.PType = b.status
+    WHERE mp.PType IN ('P')
+    GROUP BY po_id, mp.PType, b.SANCTIONID
+) bi ON bi.po_id = p.po_id AND bi.SANCTIONID = s.SANCTIONID
+LEFT OUTER JOIN MasPStatus mp ON mp.PType = bi.PType
+INNER JOIN massuppliers sp ON sp.supplier_id = p.supplier_id
+WHERE s.STATUS IN ('P') AND sp.supplier_id = @SupplierId" + poTypeFilter + @"
+
+UNION ALL
+
+SELECT p.po_no,
+       CASE WHEN p.soissueDT IS NULL THEN CONVERT(VARCHAR, p.po_date, 103) ELSE CONVERT(VARCHAR, p.soissueDT, 103) END AS po_date,
+       sp.name,
+       t.RELEASEAMT AS GrossAmt,
+       0 AS totalDed,
+       0 AS totalAddition,
+       t.RELEASEAMT AS ChequeAmt,
+       py.AIDNO,
+       CONVERT(VARCHAR, py.AIDDATE, 103) AS chequedate,
+       b.BUDGETID,
+       s.SANCTIONID,
+       sp.supplier_id,
+       p.po_id,
+       py.PAYMENTID,
+       'Release Witheld' AS typeP
+FROM BLPTAXS t
+INNER JOIN BLPSANCTIONS s ON s.SANCTIONID = t.SANCTIONID
+INNER JOIN MASBUDGET b ON b.BUDGETID = s.BUDGETID
+INNER JOIN purchase_order p ON p.po_id = s.po_id
+INNER JOIN massuppliers sp ON sp.supplier_id = p.supplier_id
+INNER JOIN BLPPAYMENTS py ON py.paymentid = t.paymentid
+LEFT OUTER JOIN MasPStatus mp ON mp.PType = py.status
+WHERE py.STATUS = 'P' AND t.TAXTYPEID = 250 AND sp.supplier_id = @SupplierId" + poTypeFilter + @"
+
+ORDER BY PAYMENTID";
+
+                var rows = new List<SupplierPaymentReportRowDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    rows.Add(new SupplierPaymentReportRowDto
+                    {
+                        PoNo = ReadStringColumn(reader, "po_no"),
+                        PoDate = ReadStringColumn(reader, "po_date"),
+                        SupplierName = ReadStringColumn(reader, "name"),
+                        GrossAmt = ReadDecimalColumn(reader, "GrossAmt"),
+                        TotalDed = ReadDecimalColumn(reader, "totalDed"),
+                        TotalAddition = ReadDecimalColumn(reader, "totalAddition"),
+                        ChequeAmt = ReadDecimalColumn(reader, "ChequeAmt"),
+                        AidNo = ReadStringColumn(reader, "AIDNO"),
+                        ChequeDate = ReadStringColumn(reader, "chequedate"),
+                        BudgetId = ReadIntColumn(reader, "BUDGETID"),
+                        SanctionId = ReadIntColumn(reader, "SANCTIONID"),
+                        SupplierId = ReadIntColumn(reader, "supplier_id"),
+                        PoId = ReadIntColumn(reader, "po_id"),
+                        PaymentId = ReadIntColumn(reader, "PAYMENTID"),
+                        PaymentType = ReadStringColumn(reader, "typeP"),
+                    });
+                }
+
+                return Ok(rows);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading payment report.", error = ex.Message });
+            }
+        }
+
+        /// <summary>BalanceStatussupplier.aspx — pending receipt/installation report.</summary>
+        [HttpGet("balance-status/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierBalanceStatus(
+            int userId,
+            [FromQuery] string balanceType = "R")
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            string normalizedType = string.IsNullOrWhiteSpace(balanceType) ? "R" : balanceType.Trim().ToUpperInvariant();
+            if (normalizedType is not ("R" or "I" or "D"))
+                return BadRequest(new { message = "Invalid balance type." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                string whereCause;
+                string balanceExpression;
+                switch (normalizedType)
+                {
+                    case "I":
+                        whereCause = " AND re.receiptQTY > ins.insqty";
+                        balanceExpression = "re.receiptQTY - ins.insqty";
+                        break;
+                    case "D":
+                        whereCause = " AND pi.quantity > ISNULL(Supplyqty, 0)";
+                        balanceExpression = "pi.quantity - ISNULL(Supplyqty, 0)";
+                        break;
+                    default:
+                        whereCause = " AND Supplyqty > re.receiptQTY";
+                        balanceExpression = "Supplyqty - re.receiptQTY";
+                        break;
+                }
+
+                string sql = $@"
+SELECT p.po_id, t.tender_no, f.year, p.po_no,
+       CONVERT(VARCHAR, p.po_date, 103) AS po_date, p.directorate_id,
+       dir.facility_aut_name, m.item_code_as_per_tender, m.item_name,
+       sp.name AS Supplier, pi.quantity AS POQTY, Supplyqty, re.receiptQTY,
+       ins.insqty,
+       CASE WHEN ISNULL(p.potype, 'NP') = 'NP' THEN 'Normal PO' ELSE 'Covid Po' END AS potype,
+       {balanceExpression} AS balanceQty
+FROM purchase_order p
+INNER JOIN massuppliers sp ON sp.supplier_id = p.supplier_id
+INNER JOIN mas_financial_year f ON f.financial_year_id = p.financial_year_id
+LEFT OUTER JOIN (
+    SELECT SUM(pi.quantity) AS quantity, pi.po_id, pi.item_id
+    FROM po_items pi
+    GROUP BY pi.po_id, pi.item_id
+) pi ON pi.po_id = p.po_id
+INNER JOIN tenders t ON t.tender_id = p.tender_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+INNER JOIN facility_aut dir ON dir.facility_aut_id = p.directorate_id
+LEFT OUTER JOIN (
+    SELECT po_id, ISNULL(SUM(Supplyqty), 0) AS Supplyqty
+    FROM SupplierDispatch d
+    INNER JOIN Issue_item_details i ON d.Issue_id = i.Issue_id
+    INNER JOIN maslocations u ON u.location_id = d.location_id
+    WHERE d.status = 'C'
+    GROUP BY po_id
+) AS sup ON sup.po_id = pi.po_id
+LEFT OUTER JOIN (
+    SELECT ISNULL(SUM(r.receipt_qty), 0) AS receiptQTY, r.po_id
+    FROM receipts r
+    WHERE r.recieved_date IS NOT NULL AND r.status IN ('C', 'Received')
+    GROUP BY po_id
+) AS re ON re.po_id = pi.po_id
+LEFT OUTER JOIN (
+    SELECT SUM(ri.received_qty) AS insqty, r.po_id
+    FROM receipts r
+    LEFT OUTER JOIN receipt_item_details ri ON ri.receipt_id = r.receipt_id
+    WHERE r.recieved_date IS NOT NULL AND r.status IN ('C')
+    GROUP BY r.po_id
+) AS ins ON ins.po_id = pi.po_id
+WHERE sp.supplier_id = @SupplierId
+  AND p.status IN ('Order Placed'){whereCause}
+ORDER BY p.po_date DESC";
+
+                var rows = new List<SupplierBalanceStatusRowDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    rows.Add(new SupplierBalanceStatusRowDto
+                    {
+                        PoId = ReadIntColumn(reader, "po_id"),
+                        DirectorateId = ReadIntColumn(reader, "directorate_id"),
+                        TenderNo = ReadStringColumn(reader, "tender_no"),
+                        Year = ReadStringColumn(reader, "year"),
+                        PoNo = ReadStringColumn(reader, "po_no"),
+                        PoDate = ReadStringColumn(reader, "po_date"),
+                        FacilityAutName = ReadStringColumn(reader, "facility_aut_name"),
+                        ItemCode = ReadStringColumn(reader, "item_code_as_per_tender"),
+                        ItemName = ReadStringColumn(reader, "item_name"),
+                        Supplier = ReadStringColumn(reader, "Supplier"),
+                        PoQty = ReadDecimalColumn(reader, "POQTY"),
+                        SupplyQty = ReadDecimalColumn(reader, "Supplyqty"),
+                        ReceiptQty = ReadDecimalColumn(reader, "receiptQTY"),
+                        InstQty = ReadDecimalColumn(reader, "insqty"),
+                        PoType = ReadStringColumn(reader, "potype"),
+                        BalanceQty = ReadDecimalColumn(reader, "balanceQty"),
+                    });
+                }
+
+                return Ok(rows);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading balance status report.", error = ex.Message });
+            }
+        }
+
+        private static string GenerateEmdFileName(int supplierId)
+        {
+            return $"{supplierId}_{DateTime.Now:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}";
+        }
+
+        private static bool TryParseDepositDate(string input, out DateTime depositDate)
+        {
+            depositDate = default;
+            if (string.IsNullOrWhiteSpace(input))
+                return false;
+
+            string[] formats = { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "dd-MM-yyyy" };
+            return DateTime.TryParseExact(
+                input.Trim(),
+                formats,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out depositDate)
+                || DateTime.TryParse(input.Trim(), out depositDate);
+        }
+
+        private async Task<bool> CheckSupplierParticipatedInTenderAsync(int tenderId, int supplierId)
+        {
+            const string tenderSql = @"
+SELECT 1 FROM tenders WHERE tender_id = @TenderId AND tender_date > '2022-04-01'";
+
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+
+            using (SqlCommand tenderCmd = new SqlCommand(tenderSql, con))
+            {
+                tenderCmd.Parameters.AddWithValue("@TenderId", tenderId);
+                object? tenderResult = await tenderCmd.ExecuteScalarAsync();
+                if (tenderResult == null || tenderResult == DBNull.Value)
+                    return true;
+            }
+
+            const string participantSql = @"
+SELECT 1 FROM masschemesstatusdetails
+WHERE SCHEMEID = @TenderId AND SUPPLIERID = @SupplierId";
+
+            using SqlCommand participantCmd = new SqlCommand(participantSql, con);
+            participantCmd.Parameters.AddWithValue("@TenderId", tenderId);
+            participantCmd.Parameters.AddWithValue("@SupplierId", supplierId);
+
+            object? participantResult = await participantCmd.ExecuteScalarAsync();
+            return participantResult != null && participantResult != DBNull.Value;
         }
 
         private async Task<List<SupplierPoReceiptBatchDto>> LoadReceiptBatchesAsync(
