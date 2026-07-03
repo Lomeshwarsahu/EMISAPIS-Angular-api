@@ -361,4 +361,62 @@ namespace EMISAPIS.DTOS
         public string PoType { get; set; } = string.Empty;
         public decimal BalanceQty { get; set; }
     }
+
+    /// <summary>SDdetailSupplier.aspx — MasSD payment mode option.</summary>
+    public class SupplierSdPaymentModeDto
+    {
+        public string SdMode { get; set; } = string.Empty;
+        public string SdName { get; set; } = string.Empty;
+    }
+
+    /// <summary>SDdetailSupplier.aspx — load/save SD security deposit detail.</summary>
+    public class SupplierPoSdDetailDto
+    {
+        public int PoId { get; set; }
+        public int SupplierId { get; set; }
+        public int ItemId { get; set; }
+        public string EquipmentName { get; set; } = string.Empty;
+        public decimal GrossValue { get; set; }
+        public decimal SdAmount { get; set; }
+        public bool HasExisting { get; set; }
+        public bool HasFile { get; set; }
+        public string? PaymentMode { get; set; }
+        public string? IssueDate { get; set; }
+        public string? MaturityDate { get; set; }
+        public string? DocumentNo { get; set; }
+        public List<SupplierSdPaymentModeDto> PaymentModes { get; set; } = new();
+    }
+
+    /// <summary>ApplyForExtension.aspx — extension history row.</summary>
+    public class SupplierPoExtensionRowDto
+    {
+        public int ExtensionId { get; set; }
+        public int PoId { get; set; }
+        public string Remark { get; set; } = string.Empty;
+        public int Days { get; set; }
+        public string ExtendedDate { get; set; } = string.Empty;
+        public string PoEndDate { get; set; } = string.Empty;
+        public bool HasFile { get; set; }
+        public string LetterDate { get; set; } = string.Empty;
+        public string LetterNo { get; set; } = string.Empty;
+        public string ApplyDate { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+    }
+
+    /// <summary>ApplyForExtension.aspx — header + extension list.</summary>
+    public class SupplierPoExtensionPageDto
+    {
+        public int PoId { get; set; }
+        public int SupplierId { get; set; }
+        public string EquipmentName { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public int SupplyDays { get; set; }
+        public string PoEndDate { get; set; } = string.Empty;
+        public string BaseEndDate { get; set; } = string.Empty;
+        public bool HasSdRecord { get; set; }
+        public bool CanApply { get; set; }
+        public bool HasPendingExtension { get; set; }
+        public List<SupplierPoExtensionRowDto> Extensions { get; set; } = new();
+    }
 }

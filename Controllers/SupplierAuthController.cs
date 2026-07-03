@@ -16,6 +16,8 @@ namespace EMISAPIS.Controllers
         private readonly string _connectionString;
         private readonly string _complaintFileRoot;
         private readonly string _emdFileRoot;
+        private readonly string _sdFileRoot;
+        private readonly string _extensionFileRoot;
 
         public SupplierAuthController(IConfiguration configuration, IWebHostEnvironment env)
         {
@@ -32,7 +34,19 @@ namespace EMISAPIS.Controllers
                 ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "EMDUploads"))
                 : Path.GetFullPath(emdConfigured);
 
+            var sdConfigured = configuration["FileStorage:SdDetailPath"];
+            _sdFileRoot = string.IsNullOrWhiteSpace(sdConfigured)
+                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "Upload_SDdeatil"))
+                : Path.GetFullPath(sdConfigured);
+
+            var extensionConfigured = configuration["FileStorage:PoExtensionPath"];
+            _extensionFileRoot = string.IsNullOrWhiteSpace(extensionConfigured)
+                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "PO_Ext_Docs"))
+                : Path.GetFullPath(extensionConfigured);
+
             Directory.CreateDirectory(_emdFileRoot);
+            Directory.CreateDirectory(_sdFileRoot);
+            Directory.CreateDirectory(_extensionFileRoot);
         }
 
         [HttpGet("profile/{id:int}")]
@@ -759,6 +773,616 @@ ORDER BY p.po_date DESC";
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Error loading purchase orders.", error = ex.Message });
+            }
+        }
+
+        /// <summary>SDdetailSupplier.aspx — load SD detail form.</summary>
+        [HttpGet("po-sd-detail/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierPoSdDetail(
+            int userId,
+            [FromQuery] int poId,
+            [FromQuery] int itemId,
+            [FromQuery] decimal grossValue = 0)
+        {
+            if (userId <= 0 || poId <= 0 || itemId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                string equipmentName = string.Empty;
+                const string itemSql = "SELECT item_name FROM masitems WHERE item_id = @ItemId";
+                using (SqlCommand itemCmd = new SqlCommand(itemSql, con))
+                {
+                    itemCmd.Parameters.AddWithValue("@ItemId", itemId);
+                    object? itemResult = await itemCmd.ExecuteScalarAsync();
+                    equipmentName = itemResult?.ToString() ?? string.Empty;
+                }
+
+                decimal sdAmount = Math.Round(grossValue * 0.05m, 0, MidpointRounding.AwayFromZero);
+                var paymentModes = await LoadSdPaymentModesAsync(con);
+
+                bool hasExisting = false;
+                bool hasFile = false;
+                string? paymentMode = null;
+                string? issueDate = null;
+                string? maturityDate = null;
+                string? documentNo = null;
+
+                const string sdSql = @"
+SELECT SDMode,
+       CONVERT(VARCHAR, IssueDT, 103) AS IssueDT,
+       CONVERT(VARCHAR, MaturityDT, 103) AS MaturityDT,
+       SDDoctPath,
+       DocumentNo
+FROM PO_SDDetails
+WHERE po_id = @PoId";
+
+                using (SqlCommand sdCmd = new SqlCommand(sdSql, con))
+                {
+                    sdCmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader reader = await sdCmd.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        hasExisting = true;
+                        paymentMode = ReadStringColumn(reader, "SDMode");
+                        issueDate = ReadStringColumn(reader, "IssueDT");
+                        maturityDate = ReadStringColumn(reader, "MaturityDT");
+                        documentNo = ReadStringColumn(reader, "DocumentNo");
+                        string docPath = ReadStringColumn(reader, "SDDoctPath");
+                        hasFile = !string.IsNullOrWhiteSpace(docPath);
+                        if (hasExisting && sdAmount <= 0)
+                        {
+                            // gross value may be omitted on edit reload — amount still shown from DB on client
+                        }
+                    }
+                }
+
+                return Ok(new SupplierPoSdDetailDto
+                {
+                    PoId = poId,
+                    SupplierId = supplierId.Value,
+                    ItemId = itemId,
+                    EquipmentName = equipmentName,
+                    GrossValue = grossValue,
+                    SdAmount = sdAmount,
+                    HasExisting = hasExisting,
+                    HasFile = hasFile,
+                    PaymentMode = paymentMode,
+                    IssueDate = issueDate,
+                    MaturityDate = string.IsNullOrWhiteSpace(maturityDate) ? null : maturityDate,
+                    DocumentNo = documentNo,
+                    PaymentModes = paymentModes,
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading SD detail.", error = ex.Message });
+            }
+        }
+
+        /// <summary>SDdetailSupplier.aspx — submit new SD detail.</summary>
+        [HttpPost("po-sd-detail/by-user/{userId:int}")]
+        public async Task<IActionResult> SaveSupplierPoSdDetail(
+            int userId,
+            [FromForm] int poId,
+            [FromForm] int itemId,
+            [FromForm] int supplierId,
+            [FromForm] string paymentMode,
+            [FromForm] string issueDate,
+            [FromForm] decimal sdAmount,
+            [FromForm] string documentNo,
+            [FromForm] string? maturityDate,
+            IFormFile? file)
+        {
+            if (userId <= 0 || poId <= 0 || itemId <= 0 || supplierId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            if (string.IsNullOrWhiteSpace(paymentMode) || paymentMode == "0")
+                return BadRequest(new { message = "Please select Payment mode." });
+
+            if (string.IsNullOrWhiteSpace(issueDate))
+                return BadRequest(new { message = "Please fill Issue Date" });
+
+            if (sdAmount <= 0)
+                return BadRequest(new { message = "Please fill Amount" });
+
+            if (string.IsNullOrWhiteSpace(documentNo))
+                return BadRequest(new { message = "Please SD Document Ref. No" });
+
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Please select document to be uplaoded." });
+
+            if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Please upload pdf file only." });
+
+            if (file.Length > 3_000_000)
+                return BadRequest(new { message = "Your can't upload file more than 3mb." });
+
+            try
+            {
+                int? loggedInSupplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (loggedInSupplierId == null || loggedInSupplierId.Value != supplierId)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                if (!TryParseSdDate(issueDate, out DateTime parsedIssueDate))
+                    return BadRequest(new { message = "Invalid issue date format." });
+
+                DateTime? parsedMaturityDate = null;
+                if (!string.IsNullOrWhiteSpace(maturityDate))
+                {
+                    if (!TryParseSdDate(maturityDate, out DateTime maturityParsed))
+                        return BadRequest(new { message = "Invalid maturity date format." });
+
+                    if (parsedIssueDate > maturityParsed)
+                        return BadRequest(new { message = "Issue Date Cannot be greater than Maturity Date." });
+
+                    parsedMaturityDate = maturityParsed;
+                }
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                const string existsSql = "SELECT 1 FROM PO_SDDetails WHERE po_id = @PoId";
+                using (SqlCommand existsCmd = new SqlCommand(existsSql, con))
+                {
+                    existsCmd.Parameters.AddWithValue("@PoId", poId);
+                    object? exists = await existsCmd.ExecuteScalarAsync();
+                    if (exists != null && exists != DBNull.Value)
+                        return BadRequest(new { message = "SD detail already exists for this PO." });
+                }
+
+                string fileName = $"{itemId}-{poId}-{supplierId}-{paymentMode}-SdDoc.pdf";
+                string virtualPath = $"~/Upload_SDdeatil/{fileName}";
+                string savePath = Path.Combine(_sdFileRoot, fileName);
+                await using (var stream = new FileStream(savePath, FileMode.Create))
+                {
+                    await file.CopyToAsync(stream);
+                }
+
+                string insertSql = parsedMaturityDate.HasValue
+                    ? @"INSERT INTO PO_SDDetails(po_id, SDMode, SDAmount, SDDoctPath, entryDT, IssueDT, MaturityDT, SubmissionStatus, DocumentNo)
+VALUES (@PoId, @SdMode, @SdAmount, @DocPath, @EntryDt, @IssueDt, @MaturityDt, 'Y', @DocumentNo)"
+                    : @"INSERT INTO PO_SDDetails(po_id, SDMode, SDAmount, SDDoctPath, entryDT, IssueDT, SubmissionStatus, DocumentNo)
+VALUES (@PoId, @SdMode, @SdAmount, @DocPath, @EntryDt, @IssueDt, 'Y', @DocumentNo)";
+
+                using SqlCommand insertCmd = new SqlCommand(insertSql, con);
+                insertCmd.Parameters.AddWithValue("@PoId", poId);
+                insertCmd.Parameters.AddWithValue("@SdMode", paymentMode.Trim());
+                insertCmd.Parameters.AddWithValue("@SdAmount", sdAmount);
+                insertCmd.Parameters.AddWithValue("@DocPath", virtualPath);
+                insertCmd.Parameters.AddWithValue("@EntryDt", DateTime.Now.Date);
+                insertCmd.Parameters.AddWithValue("@IssueDt", parsedIssueDate);
+                insertCmd.Parameters.AddWithValue("@DocumentNo", documentNo.Trim());
+                if (parsedMaturityDate.HasValue)
+                    insertCmd.Parameters.AddWithValue("@MaturityDt", parsedMaturityDate.Value);
+
+                await insertCmd.ExecuteNonQueryAsync();
+                return Ok(new { message = "Successfully Saved." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving SD detail.", error = ex.Message });
+            }
+        }
+
+        /// <summary>SDdetailSupplier.aspx — update existing SD detail.</summary>
+        [HttpPost("po-sd-detail/update/by-user/{userId:int}")]
+        public async Task<IActionResult> UpdateSupplierPoSdDetail(
+            int userId,
+            [FromForm] int poId,
+            [FromForm] int itemId,
+            [FromForm] int supplierId,
+            [FromForm] string paymentMode,
+            [FromForm] string issueDate,
+            [FromForm] decimal sdAmount,
+            [FromForm] string? maturityDate,
+            [FromForm] string fileMode,
+            IFormFile? file)
+        {
+            if (userId <= 0 || poId <= 0 || itemId <= 0 || supplierId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            if (string.IsNullOrWhiteSpace(paymentMode) || paymentMode == "0")
+                return BadRequest(new { message = "Please select Payment mode." });
+
+            if (string.IsNullOrWhiteSpace(issueDate))
+                return BadRequest(new { message = "Please fill Issue Date" });
+
+            if (sdAmount <= 0)
+                return BadRequest(new { message = "Please fill Amount" });
+
+            bool uploadNewFile = string.Equals(fileMode, "UPLOAD", StringComparison.OrdinalIgnoreCase);
+            if (uploadNewFile)
+            {
+                if (file == null || file.Length == 0)
+                    return BadRequest(new { message = "Please select document to be uplaoded." });
+
+                if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { message = "Please upload pdf file only." });
+
+                if (file.Length > 3_000_000)
+                    return BadRequest(new { message = "Your can't upload file more than 3mb." });
+            }
+
+            try
+            {
+                int? loggedInSupplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (loggedInSupplierId == null || loggedInSupplierId.Value != supplierId)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                if (!TryParseSdDate(issueDate, out DateTime parsedIssueDate))
+                    return BadRequest(new { message = "Invalid issue date format." });
+
+                DateTime? parsedMaturityDate = null;
+                if (!string.IsNullOrWhiteSpace(maturityDate))
+                {
+                    if (!TryParseSdDate(maturityDate, out DateTime maturityParsed))
+                        return BadRequest(new { message = "Invalid maturity date format." });
+
+                    if (parsedIssueDate > maturityParsed)
+                        return BadRequest(new { message = "Issue Date Cannot be greater than Maturity Date." });
+
+                    parsedMaturityDate = maturityParsed;
+                }
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                string? virtualPath = null;
+                if (uploadNewFile)
+                {
+                    string fileName = $"{itemId}-{poId}-{supplierId}-{paymentMode}-SdDoc.pdf";
+                    virtualPath = $"~/Upload_SDdeatil/{fileName}";
+                    string savePath = Path.Combine(_sdFileRoot, fileName);
+                    await using (var stream = new FileStream(savePath, FileMode.Create))
+                    {
+                        await file!.CopyToAsync(stream);
+                    }
+                }
+
+                string updateSql;
+                if (uploadNewFile && parsedMaturityDate.HasValue)
+                {
+                    updateSql = @"UPDATE PO_SDDetails
+SET SDMode = @SdMode, SDAmount = @SdAmount, SDDoctPath = @DocPath, entryDT = @EntryDt,
+    IssueDT = @IssueDt, MaturityDT = @MaturityDt, SubmissionStatus = 'Y'
+WHERE po_id = @PoId";
+                }
+                else if (uploadNewFile)
+                {
+                    updateSql = @"UPDATE PO_SDDetails
+SET SDMode = @SdMode, SDAmount = @SdAmount, SDDoctPath = @DocPath, entryDT = @EntryDt,
+    IssueDT = @IssueDt, MaturityDT = NULL, SubmissionStatus = 'Y'
+WHERE po_id = @PoId";
+                }
+                else if (parsedMaturityDate.HasValue)
+                {
+                    updateSql = @"UPDATE PO_SDDetails
+SET SDMode = @SdMode, SDAmount = @SdAmount, entryDT = @EntryDt,
+    IssueDT = @IssueDt, MaturityDT = @MaturityDt, SubmissionStatus = 'Y'
+WHERE po_id = @PoId";
+                }
+                else
+                {
+                    updateSql = @"UPDATE PO_SDDetails
+SET SDMode = @SdMode, SDAmount = @SdAmount, entryDT = @EntryDt,
+    IssueDT = @IssueDt, MaturityDT = NULL, SubmissionStatus = 'Y'
+WHERE po_id = @PoId";
+                }
+
+                using SqlCommand updateCmd = new SqlCommand(updateSql, con);
+                updateCmd.Parameters.AddWithValue("@PoId", poId);
+                updateCmd.Parameters.AddWithValue("@SdMode", paymentMode.Trim());
+                updateCmd.Parameters.AddWithValue("@SdAmount", sdAmount);
+                updateCmd.Parameters.AddWithValue("@EntryDt", DateTime.Now.Date);
+                updateCmd.Parameters.AddWithValue("@IssueDt", parsedIssueDate);
+                if (uploadNewFile)
+                    updateCmd.Parameters.AddWithValue("@DocPath", virtualPath!);
+                if (parsedMaturityDate.HasValue)
+                    updateCmd.Parameters.AddWithValue("@MaturityDt", parsedMaturityDate.Value);
+
+                int rows = await updateCmd.ExecuteNonQueryAsync();
+                if (rows == 0)
+                    return NotFound(new { message = "SD detail not found." });
+
+                return Ok(new { message = "Successfully Saved." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error updating SD detail.", error = ex.Message });
+            }
+        }
+
+        /// <summary>SDdetailSupplier.aspx — SD document download.</summary>
+        [HttpGet("po-sd-detail/file/by-user/{userId:int}")]
+        public async Task<IActionResult> DownloadSupplierPoSdFile(int userId, [FromQuery] int poId)
+        {
+            if (userId <= 0 || poId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                const string sql = "SELECT SDDoctPath FROM PO_SDDetails WHERE po_id = @PoId";
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@PoId", poId);
+
+                object? result = await cmd.ExecuteScalarAsync();
+                if (result == null || result == DBNull.Value)
+                    return NotFound(new { message = "File Not Found." });
+
+                string? virtualPath = result.ToString();
+                string physicalPath = ResolveLegacyUploadPath(virtualPath, _sdFileRoot);
+                if (!System.IO.File.Exists(physicalPath))
+                    return NotFound(new { message = "File Not Found." });
+
+                string downloadName = Path.GetFileName(physicalPath);
+                return PhysicalFile(physicalPath, "application/pdf", downloadName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading SD document.", error = ex.Message });
+            }
+        }
+
+        /// <summary>ApplyForExtension.aspx — load extension page.</summary>
+        [HttpGet("po-extension/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierPoExtensionPage(int userId, [FromQuery] int poId)
+        {
+            if (userId <= 0 || poId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                bool hasSdRecord = await PoSdDetailExistsAsync(con, poId);
+                if (!hasSdRecord)
+                    return NotFound(new { message = "PO Id not found." });
+
+                const string headerSql = @"
+SELECT TOP 1
+       m.item_name,
+       p.PO_NO,
+       CONVERT(VARCHAR, p.po_date, 103) AS po_date,
+       PT.tranche_days,
+       CONVERT(VARCHAR, DATEADD(DAY, PT.tranche_days, p.po_date), 103) AS po_end_date
+FROM purchase_order p
+INNER JOIN po_items pi ON pi.po_id = p.po_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+INNER JOIN po_tranche PT ON PT.po_id = p.po_id
+WHERE p.po_id = @PoId AND p.supplier_id = @SupplierId";
+
+                string equipmentName = string.Empty;
+                string poNo = string.Empty;
+                string poDate = string.Empty;
+                int supplyDays = 0;
+                string poEndDate = string.Empty;
+
+                using (SqlCommand headerCmd = new SqlCommand(headerSql, con))
+                {
+                    headerCmd.Parameters.AddWithValue("@PoId", poId);
+                    headerCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    using SqlDataReader reader = await headerCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "PO Id not found." });
+
+                    equipmentName = ReadStringColumn(reader, "item_name");
+                    poNo = ReadStringColumn(reader, "PO_NO");
+                    poDate = ReadStringColumn(reader, "po_date");
+                    supplyDays = ReadIntColumn(reader, "tranche_days");
+                    poEndDate = ReadStringColumn(reader, "po_end_date");
+                }
+
+                string baseEndDate = await GetExtensionBaseEndDateAsync(con, poId, poEndDate);
+                bool hasPending = await HasPendingPoExtensionAsync(con, poId);
+                var extensions = await LoadPoExtensionsAsync(con, poId);
+
+                return Ok(new SupplierPoExtensionPageDto
+                {
+                    PoId = poId,
+                    SupplierId = supplierId.Value,
+                    EquipmentName = equipmentName,
+                    PoNo = poNo,
+                    PoDate = poDate,
+                    SupplyDays = supplyDays,
+                    PoEndDate = poEndDate,
+                    BaseEndDate = baseEndDate,
+                    HasSdRecord = hasSdRecord,
+                    CanApply = !hasPending,
+                    HasPendingExtension = hasPending,
+                    Extensions = extensions,
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading extension page.", error = ex.Message });
+            }
+        }
+
+        /// <summary>ApplyForExtension.aspx — submit extension request.</summary>
+        [HttpPost("po-extension/by-user/{userId:int}")]
+        public async Task<IActionResult> SaveSupplierPoExtension(
+            int userId,
+            [FromForm] int poId,
+            [FromForm] int extensionDays,
+            [FromForm] string letterDate,
+            [FromForm] string remark,
+            IFormFile? file)
+        {
+            if (userId <= 0 || poId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            if (extensionDays <= 0)
+                return BadRequest(new { message = "Extension Days Should Not be Zero." });
+
+            if (string.IsNullOrWhiteSpace(letterDate))
+                return BadRequest(new { message = "Letter Date Should Not be Empty." });
+
+            if (string.IsNullOrWhiteSpace(remark))
+                return BadRequest(new { message = "Remark Should Not be Empty" });
+
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "You are not selected any File yet." });
+
+            if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Please upload pdf file only." });
+
+            if (file.Length > 1_000_000)
+                return BadRequest(new { message = "Your can't upload file more than 1mb." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                if (!TryParseLetterDate(letterDate, out DateTime parsedLetterDate))
+                    return BadRequest(new { message = "Invalid Format. Use DD-MM-YYYY" });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                if (!await PoSdDetailExistsAsync(con, poId))
+                    return NotFound(new { message = "PO Id not found." });
+
+                if (await HasPendingPoExtensionAsync(con, poId))
+                    return BadRequest(new { message = "An extension request is already pending for this PO." });
+
+                string poEndDateDisplay = string.Empty;
+                const string headerSql = @"
+SELECT TOP 1 CONVERT(VARCHAR, DATEADD(DAY, PT.tranche_days, p.po_date), 103) AS po_end_date
+FROM purchase_order p
+INNER JOIN po_tranche PT ON PT.po_id = p.po_id
+WHERE p.po_id = @PoId AND p.supplier_id = @SupplierId";
+
+                using (SqlCommand headerCmd = new SqlCommand(headerSql, con))
+                {
+                    headerCmd.Parameters.AddWithValue("@PoId", poId);
+                    headerCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    object? headerResult = await headerCmd.ExecuteScalarAsync();
+                    poEndDateDisplay = headerResult?.ToString() ?? string.Empty;
+                }
+
+                string baseEndDateDisplay = await GetExtensionBaseEndDateAsync(con, poId, poEndDateDisplay);
+                if (!TryParseSdDate(baseEndDateDisplay, out DateTime baseEndDate))
+                    return BadRequest(new { message = "Unable to determine PO end date." });
+
+                int randomSuffix = Random.Shared.Next(100, 1000);
+                string letterNo = $"{randomSuffix}-{poId}-{supplierId.Value}-Extension";
+                string fileName = $"{letterNo}.pdf";
+                string virtualPath = $"~/PO_Ext_Docs/{fileName}";
+                string savePath = Path.Combine(_extensionFileRoot, fileName);
+
+                await using (var stream = new FileStream(savePath, FileMode.Create))
+                {
+                    await file.CopyToAsync(stream);
+                }
+
+                const string insertSql = @"
+INSERT INTO PO_extension_detail
+    (po_id, remark, days, extended_date, po_end_date, path, letter_date, letter_no, sys_gen_apply_date, status, isrequestedby)
+VALUES
+    (@PoId, @Remark, @Days, DATEADD(DAY, @Days, @PoEndDate), @PoEndDate, @Path, @LetterDate, @LetterNo, @SysDate, 'P', 'S')";
+
+                using SqlCommand insertCmd = new SqlCommand(insertSql, con);
+                insertCmd.Parameters.AddWithValue("@PoId", poId);
+                insertCmd.Parameters.AddWithValue("@Remark", remark.Trim());
+                insertCmd.Parameters.AddWithValue("@Days", extensionDays);
+                insertCmd.Parameters.AddWithValue("@PoEndDate", baseEndDate);
+                insertCmd.Parameters.AddWithValue("@Path", virtualPath);
+                insertCmd.Parameters.AddWithValue("@LetterDate", parsedLetterDate);
+                insertCmd.Parameters.AddWithValue("@LetterNo", letterNo);
+                insertCmd.Parameters.AddWithValue("@SysDate", DateTime.Now.Date);
+
+                await insertCmd.ExecuteNonQueryAsync();
+                return Ok(new { message = "Successfully Saved." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving extension request.", error = ex.Message });
+            }
+        }
+
+        /// <summary>ApplyForExtension.aspx — extension document download.</summary>
+        [HttpGet("po-extension/file/by-user/{userId:int}")]
+        public async Task<IActionResult> DownloadSupplierPoExtensionFile(int userId, [FromQuery] int extensionId)
+        {
+            if (userId <= 0 || extensionId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT ped.path
+FROM PO_extension_detail ped
+INNER JOIN purchase_order p ON p.po_id = ped.po_id
+WHERE ped.extensionId = @ExtensionId AND p.supplier_id = @SupplierId";
+
+                string? virtualPath = null;
+                using (SqlConnection con = new SqlConnection(_connectionString))
+                {
+                    await con.OpenAsync();
+                    using SqlCommand cmd = new SqlCommand(sql, con);
+                    cmd.Parameters.AddWithValue("@ExtensionId", extensionId);
+                    cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                    object? result = await cmd.ExecuteScalarAsync();
+                    if (result == null || result == DBNull.Value)
+                        return NotFound(new { message = "File Not Found." });
+
+                    virtualPath = result.ToString();
+                }
+
+                string physicalPath = ResolveLegacyUploadPath(virtualPath, _extensionFileRoot);
+                if (!System.IO.File.Exists(physicalPath))
+                    return NotFound(new { message = "File Not Found." });
+
+                return PhysicalFile(physicalPath, "application/pdf", Path.GetFileName(physicalPath));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading extension document.", error = ex.Message });
             }
         }
 
@@ -2540,6 +3164,142 @@ GROUP BY re.receipt_id, d.Issue_id, dispatch_date, d.status, d.po_id, d.location
             }
 
             return 0;
+        }
+
+        private static async Task<List<SupplierSdPaymentModeDto>> LoadSdPaymentModesAsync(SqlConnection con)
+        {
+            var modes = new List<SupplierSdPaymentModeDto>();
+            const string sql = "SELECT SDMode, SDNAME FROM MasSD ORDER BY SDNAME";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                modes.Add(new SupplierSdPaymentModeDto
+                {
+                    SdMode = ReadStringColumn(reader, "SDMode"),
+                    SdName = ReadStringColumn(reader, "SDNAME"),
+                });
+            }
+
+            return modes;
+        }
+
+        private static async Task<bool> PoSdDetailExistsAsync(SqlConnection con, int poId)
+        {
+            const string sql = "SELECT 1 FROM PO_SDDetails WHERE po_id = @PoId";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<bool> HasPendingPoExtensionAsync(SqlConnection con, int poId)
+        {
+            const string sql = "SELECT 1 FROM PO_extension_detail WHERE status = 'P' AND po_id = @PoId";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<string> GetExtensionBaseEndDateAsync(SqlConnection con, int poId, string defaultPoEndDate)
+        {
+            const string sql = @"
+SELECT TOP 1 CONVERT(VARCHAR, extended_date, 103) AS extended_date
+FROM PO_extension_detail
+WHERE po_id = @PoId AND status IN ('A', 'E')
+ORDER BY extended_date DESC";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            object? result = await cmd.ExecuteScalarAsync();
+            if (result == null || result == DBNull.Value)
+                return defaultPoEndDate;
+
+            return result.ToString() ?? defaultPoEndDate;
+        }
+
+        private static async Task<List<SupplierPoExtensionRowDto>> LoadPoExtensionsAsync(SqlConnection con, int poId)
+        {
+            var rows = new List<SupplierPoExtensionRowDto>();
+            const string sql = @"
+SELECT ped.extensionId, ped.po_id, ped.remark, ped.days,
+       CONVERT(VARCHAR, ped.extended_date, 105) AS extended_date,
+       CONVERT(VARCHAR, ped.po_end_date, 105) AS po_end_date,
+       ped.path,
+       CONVERT(VARCHAR, ped.letter_date, 105) AS letter_date,
+       ped.letter_no,
+       CONVERT(VARCHAR, ped.sys_gen_apply_date, 105) AS sys_gen_apply_date,
+       s.status
+FROM PO_extension_detail ped
+INNER JOIN master_po_extension_detail_status s ON ped.status = s.id
+WHERE ped.po_id = @PoId
+ORDER BY ped.extensionId DESC";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                string path = ReadStringColumn(reader, "path");
+                rows.Add(new SupplierPoExtensionRowDto
+                {
+                    ExtensionId = ReadIntColumn(reader, "extensionId"),
+                    PoId = ReadIntColumn(reader, "po_id"),
+                    Remark = ReadStringColumn(reader, "remark"),
+                    Days = ReadIntColumn(reader, "days"),
+                    ExtendedDate = ReadStringColumn(reader, "extended_date"),
+                    PoEndDate = ReadStringColumn(reader, "po_end_date"),
+                    HasFile = !string.IsNullOrWhiteSpace(path),
+                    LetterDate = ReadStringColumn(reader, "letter_date"),
+                    LetterNo = ReadStringColumn(reader, "letter_no"),
+                    ApplyDate = ReadStringColumn(reader, "sys_gen_apply_date"),
+                    Status = ReadStringColumn(reader, "status"),
+                });
+            }
+
+            return rows;
+        }
+
+        private static string ResolveLegacyUploadPath(string? virtualPath, string fileRoot)
+        {
+            if (string.IsNullOrWhiteSpace(virtualPath))
+                return string.Empty;
+
+            string fileName = Path.GetFileName(virtualPath.Replace('\\', '/'));
+            return Path.Combine(fileRoot, fileName);
+        }
+
+        private static bool TryParseSdDate(string input, out DateTime parsedDate)
+        {
+            parsedDate = default;
+            if (string.IsNullOrWhiteSpace(input))
+                return false;
+
+            string[] formats = { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd" };
+            return DateTime.TryParseExact(
+                input.Trim(),
+                formats,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out parsedDate)
+                || DateTime.TryParse(input.Trim(), out parsedDate);
+        }
+
+        private static bool TryParseLetterDate(string input, out DateTime parsedDate)
+        {
+            parsedDate = default;
+            if (string.IsNullOrWhiteSpace(input))
+                return false;
+
+            string[] formats = { "dd-MM-yyyy", "d-M-yyyy", "dd/MM/yyyy", "yyyy-MM-dd" };
+            return DateTime.TryParseExact(
+                input.Trim(),
+                formats,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out parsedDate)
+                || DateTime.TryParse(input.Trim(), out parsedDate);
         }
     }
 }
