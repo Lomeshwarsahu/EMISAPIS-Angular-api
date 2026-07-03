@@ -394,20 +394,47 @@ WHERE user_name = @Username
                 message = "Login Successful"
             });
         }
-
         private static string TryReadOptionalString(SqlDataReader reader, string columnName)
         {
-            try
-            {
-                int ordinal = reader.GetOrdinal(columnName);
-                return reader.IsDBNull(ordinal)
-                    ? string.Empty
-                    : reader.GetValue(ordinal)?.ToString() ?? string.Empty;
-            }
-            catch (IndexOutOfRangeException)
+        
+            if (!HasColumn(reader, columnName))
             {
                 return string.Empty;
             }
+
+          
+            int ordinal = reader.GetOrdinal(columnName);
+
+            return reader.IsDBNull(ordinal)
+                ? string.Empty
+                : reader.GetValue(ordinal)?.ToString() ?? string.Empty;
         }
+
+     
+        private static bool HasColumn(SqlDataReader reader, string columnName)
+        {
+            for (int i = 0; i < reader.FieldCount; i++)
+            {
+                if (reader.GetName(i).Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        //private static string TryReadOptionalString(SqlDataReader reader, string columnName)
+        //{
+        //    try
+        //    {
+        //        int ordinal = reader.GetOrdinal(columnName);
+        //        return reader.IsDBNull(ordinal)
+        //            ? string.Empty
+        //            : reader.GetValue(ordinal)?.ToString() ?? string.Empty;
+        //    }
+        //    catch (IndexOutOfRangeException)
+        //    {
+        //        return string.Empty;
+        //    }
+        //}
     }
 }

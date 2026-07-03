@@ -297,5 +297,126 @@ public class UpdateReceivedDateRequestDto
         public int PaymentId { get; set; }
     }
 
+    public class ForwardFileRequestDto
+    {
+        public int PoNoId { get; set; }           // ViewState["gvIndex"]
+        public string FileNo { get; set; } = string.Empty; // ViewState["FileId"]
+        public int SendToUserId { get; set; }     // ddlSendTo
+        public int FromUserId { get; set; }       // sDet.DistId
+        public string ForwardDate { get; set; } = string.Empty; // txtFDate.Text (YYYY-MM-DD)
+        public string Remarks { get; set; } = string.Empty;     // txtremarks.Text
+        public string Flag { get; set; } = string.Empty;        // rdbsenflag (S/B)
+    }
+
+    // Reason Save karne ke liye DTO (btnReasonYes_click ka replacement)
+    public class SaveReasonRequestDto
+    {
+        public int PoNoId { get; set; }           // ViewState["gvIndex"]
+        public int ReasonId { get; set; }         // ddlReason
+        public string Remarks { get; set; } = string.Empty; // txtReson.Text
+        public int UserId { get; set; }           // sDet.DistId
+    }
+
+    // Document links fetch karne ke liye DTO
+    public class ReceiptDocumentsDto
+    {
+        public string InstalationReportFile { get; set; } = string.Empty;
+        public string InstalationPhoto { get; set; } = string.Empty;
+        public string Challanfile { get; set; } = string.Empty;
+        public string WarrantyCardFile { get; set; } = string.Empty;
+    }
+
+
+    public class DashboardGridResponseDto
+    {
+        public long PoId { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string Supplier { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string FacilityAutName { get; set; } = string.Empty;
+        public string ItemCodeAsPerTender { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public long PoQty { get; set; }
+        public long PoValue { get; set; }
+        public long SupplyQty { get; set; }
+        public long InsQty { get; set; }
+        public long ReceiptQty { get; set; }
+        public string LastRDate { get; set; } = string.Empty;
+        public string PoType { get; set; } = string.Empty;
+        public string FileNo { get; set; } = string.Empty;
+        public string FileDt { get; set; } = string.Empty;
+        public string PresentFile { get; set; } = string.Empty;
+        public int PresentUserId { get; set; }
+        public int ToUserId { get; set; }
+        public decimal PenaltyPercent { get; set; }
+        public string ReasonName { get; set; } = string.Empty;
+        public string IsSolved { get; set; } = string.Empty;
+        public int ReasonId { get; set; }
+        public string SiteStatus { get; set; } = string.Empty;
+        public long RowNo { get; set; }
+        public long ToBePaid { get; set; }
+        public string ToDate { get; set; } = string.Empty;
+        public string EntDt { get; set; } = string.Empty;
+        public string Conditond { get; set; } = string.Empty;
+        public decimal FinalRate { get; set; }
+        public decimal ToPaidValue { get; set; }
+        public string FinRemarks { get; set; } = string.Empty;
+        public int FacilityAutId { get; set; }
+    }
+
+
+        public class SupplierGstDropdownDto
+        {
+            public int GstId { get; set; }
+            public string GstNo { get; set; } = string.Empty;
+        }
+    namespace EMISAPIS.DTOS
+    {
+        public class PoItemDetailsDto
+        {
+            public int ItemId { get; set; }
+            public string ItemCode { get; set; } = string.Empty;
+            public string ItemName { get; set; } = string.Empty;
+            public decimal PercentValue { get; set; }
+            public decimal BasicRate { get; set; }
+            public string SchemeName { get; set; } = string.Empty;
+            public string PoDate { get; set; } = string.Empty;
+            public string AccYear { get; set; } = string.Empty;
+            public string SupplierName { get; set; } = string.Empty;
+            public string PoNo { get; set; } = string.Empty;
+            public decimal FinalRate { get; set; }
+            public long PoQty { get; set; }
+            public decimal PoValue { get; set; }
+            public int SupplierId { get; set; }
+            public int TenderId { get; set; }
+            public int PoNoId { get; set; }
+            public int AccYrSetId { get; set; }
+            public string InvoiceGst { get; set; } = string.Empty;
+            public string HsnCode { get; set; } = string.Empty;
+            public string Ext { get; set; } = ".pdf";
+            public string FacilityAutName { get; set; } = string.Empty;
+            public int FacilityAutId { get; set; }
+            public int ReasonId { get; set; }
+            public long UnexQty { get; set; }
+        }
+    }
+
+    public class PoPenaltyAndTrancheDto
+    {
+        public int PoId { get; set; }
+        public string PoDate { get; set; } = string.Empty;
+        public int TrancheDays { get; set; }
+        public string IsLdPenalty { get; set; } = string.Empty;
+        public string ExtendedDate { get; set; } = string.Empty;
+        public string PenaltyType { get; set; } = string.Empty;
+        public int CancellationDays { get; set; }
+        public decimal CancellationPercentage { get; set; }
+        public decimal PenaltyPercent { get; set; }
+        public int ImportDays { get; set; }
+        public int DomesticDays { get; set; }
+        public decimal LogoCharges { get; set; }
+        public decimal LogoChargesUpper { get; set; }
+    }
 
 }
