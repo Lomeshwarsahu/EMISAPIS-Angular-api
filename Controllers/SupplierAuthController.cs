@@ -957,6 +957,120 @@ ORDER BY c1.location_name";
             }
         }
 
+        /// <summary>rptDispatchDetails.aspx — printable dispatch report for a completed issue.</summary>
+        [HttpGet("dispatch-report/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierDispatchReport(
+            int userId,
+            [FromQuery] int poId,
+            [FromQuery] int locId,
+            [FromQuery] int issueId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (poId <= 0 || locId <= 0 || issueId <= 0)
+                return BadRequest(new { message = "PO id, location id and issue id are required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found for this supplier." });
+
+                const string headerSql = @"
+SELECT a.PO_ID, CONVERT(VARCHAR, a.po_date, 103) AS po_date, a.PO_NO,
+       c.TENDER_NO, R.item_name AS ITEM_NAME, R.item_code_as_per_tender AS CODE,
+       pi.quantity AS POQTY, l.location_name,
+       pi.percentage, pi.basicrate, pi.totalbasicPrice, pi.totalprice,
+       ci.make, ci.model, pt.tranche_days
+FROM purchase_order a
+LEFT OUTER JOIN po_items pi ON pi.po_id = a.po_id
+LEFT OUTER JOIN po_tranche pt ON pt.po_id = a.po_id AND pt.po_id = pi.po_id
+LEFT OUTER JOIN contract_items ci ON ci.contract_item_id = pi.contract_item_id AND ci.item_id = pi.item_id
+LEFT OUTER JOIN masitems R ON R.item_id = pi.item_id
+LEFT OUTER JOIN tenders c ON c.tender_id = a.tender_id
+LEFT OUTER JOIN maslocations l ON l.location_id = pi.consignee_id
+WHERE a.po_id = @PoId AND pi.consignee_id = @LocId AND a.supplier_id = @SupplierId";
+
+                const string dispatchSql = @"
+SELECT d.Issue_id,
+       d.remarks,
+       CONVERT(VARCHAR, d.challan_date, 103) AS challandate,
+       d.challan_no,
+       CONVERT(VARCHAR, d.dispatch_date, 103) AS dispatch_date,
+       CONVERT(VARCHAR, d.invoice_date, 103) AS invoice_date,
+       d.dispatch_no,
+       d.invoice_no
+FROM SupplierDispatch d
+INNER JOIN Issue_item_details i ON i.Issue_id = d.Issue_id
+WHERE d.po_id = @PoId AND d.location_id = @LocId AND d.Issue_id = @IssueId";
+
+                SupplierDispatchReportDto? report = null;
+
+                using (SqlCommand headerCmd = new SqlCommand(headerSql, con))
+                {
+                    headerCmd.Parameters.AddWithValue("@PoId", poId);
+                    headerCmd.Parameters.AddWithValue("@LocId", locId);
+                    headerCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                    using SqlDataReader reader = await headerCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Dispatch report header not found." });
+
+                    report = new SupplierDispatchReportDto
+                    {
+                        PoId = poId,
+                        LocationId = locId,
+                        IssueId = issueId,
+                        ItemCode = ReadStringColumn(reader, "CODE", "code"),
+                        ItemName = ReadStringColumn(reader, "ITEM_NAME", "item_name"),
+                        PoNo = ReadStringColumn(reader, "PO_NO", "po_no"),
+                        PoDate = ReadStringColumn(reader, "po_date"),
+                        TenderNo = ReadStringColumn(reader, "TENDER_NO", "tender_no"),
+                        ConsigneeName = ReadStringColumn(reader, "location_name"),
+                        ModelNo = ReadStringColumn(reader, "model"),
+                        Make = ReadStringColumn(reader, "make"),
+                        BasicRate = ReadDecimalColumn(reader, "basicrate"),
+                        TotalNetPoValue = ReadDecimalColumn(reader, "totalbasicPrice"),
+                        TotalGrossPoValue = ReadDecimalColumn(reader, "totalprice"),
+                        PoQtyForConsignee = ReadDecimalColumn(reader, "POQTY", "poqty"),
+                        SupplyDays = ReadStringColumn(reader, "tranche_days"),
+                        TaxPercent = ReadDecimalColumn(reader, "percentage"),
+                    };
+                }
+
+                using (SqlCommand dispatchCmd = new SqlCommand(dispatchSql, con))
+                {
+                    dispatchCmd.Parameters.AddWithValue("@PoId", poId);
+                    dispatchCmd.Parameters.AddWithValue("@LocId", locId);
+                    dispatchCmd.Parameters.AddWithValue("@IssueId", issueId);
+
+                    using SqlDataReader reader = await dispatchCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Dispatch issue not found." });
+
+                    report!.DispatchNo = ReadStringColumn(reader, "dispatch_no");
+                    report.DispatchDate = ReadStringColumn(reader, "dispatch_date");
+                    report.ChallanNo = ReadStringColumn(reader, "challan_no");
+                    report.ChallanDate = ReadStringColumn(reader, "challandate");
+                    report.InvoiceNo = ReadStringColumn(reader, "invoice_no");
+                    report.InvoiceDate = ReadStringColumn(reader, "invoice_date");
+                    report.Remarks = ReadStringColumn(reader, "remarks");
+                }
+
+                return Ok(report);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading dispatch report.", error = ex.Message });
+            }
+        }
+
         /// <summary>Facilitypo_supply_ReceiptSUP.aspx — financial years for receipt desk.</summary>
         [HttpGet("po-supply-receipt/filters/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierPoReceiptFilters(int userId)
@@ -2194,6 +2308,19 @@ WHERE SCHEMEID = @TenderId AND SUPPLIERID = @SupplierId";
 
             object? participantResult = await participantCmd.ExecuteScalarAsync();
             return participantResult != null && participantResult != DBNull.Value;
+        }
+
+        private static async Task<bool> PoBelongsToSupplierAsync(SqlConnection con, int poId, int supplierId)
+        {
+            const string sql = @"
+SELECT 1 FROM purchase_order WHERE po_id = @PoId AND supplier_id = @SupplierId";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@SupplierId", supplierId);
+
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
         }
 
         private static async Task<bool> CanAddDispatchAsync(SqlConnection con, int poId, int consigneeId)

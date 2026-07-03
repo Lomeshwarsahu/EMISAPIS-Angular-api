@@ -170,6 +170,35 @@ namespace EMISAPIS.DTOS
         public string SupplyStatus { get; set; } = string.Empty;
     }
 
+    /// <summary>rptDispatchDetails.aspx — printable dispatch report.</summary>
+    public class SupplierDispatchReportDto
+    {
+        public int PoId { get; set; }
+        public int LocationId { get; set; }
+        public int IssueId { get; set; }
+        public string DispatchNo { get; set; } = string.Empty;
+        public string DispatchDate { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string TenderNo { get; set; } = string.Empty;
+        public string ConsigneeName { get; set; } = string.Empty;
+        public string ModelNo { get; set; } = string.Empty;
+        public string Make { get; set; } = string.Empty;
+        public decimal BasicRate { get; set; }
+        public decimal TotalNetPoValue { get; set; }
+        public decimal TotalGrossPoValue { get; set; }
+        public decimal PoQtyForConsignee { get; set; }
+        public string SupplyDays { get; set; } = string.Empty;
+        public decimal TaxPercent { get; set; }
+        public string ChallanNo { get; set; } = string.Empty;
+        public string ChallanDate { get; set; } = string.Empty;
+        public string InvoiceNo { get; set; } = string.Empty;
+        public string InvoiceDate { get; set; } = string.Empty;
+        public string Remarks { get; set; } = string.Empty;
+    }
+
     /// <summary>Facilitypo_supply_ReceiptSUP.aspx — PO dropdown option.</summary>
     public class SupplierPoReceiptOptionDto
     {
