@@ -1,4 +1,5 @@
 ﻿using EMISAPIS.DTOS;
+using EMISAPIS.DTOS.EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
 using Microsoft.Data.SqlClient;
@@ -2862,6 +2863,800 @@ where 1=1 order by b.BUDGETNAME";
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Error executing tax release data mapping.", error = ex.Message });
+            }
+        }
+
+        //file gridview 
+        [HttpGet("GetDashboardGrid")]
+        public async Task<IActionResult> GetDashboardGrid(
+    [FromQuery] string poType = "All",
+    [FromQuery] string fitUnfit = "All",
+    [FromQuery] string eqType = "0",
+    [FromQuery] int authorityId = 0)
+        {
+            string connectionString = _config.GetConnectionString("DefaultConnection");
+            var resultList = new List<DashboardGridResponseDto>();
+
+            // Dynamic Filter Clauses Initialization
+            string whereclause = "";
+            string whereclauseDir = "";
+            string ftunft = "";
+            string eqtypeStr = "";
+            string whFileMyDesk = " and isnull(pres.user_id,0) in (5,29)";
+
+            // 1. PO Type Logic
+            if (poType == "NP") whereclause += " and isnull(p.potype,'NP')='NP' ";
+            else if (poType == "CP") whereclause += " and isnull(p.potype,'NP')='CP' ";
+            else whereclause += " "; // All
+
+            // 2. Fit/Unfit Logic (Exact mapping of your having clause)
+            if (fitUnfit == "FP")
+            {
+                ftunft += " having((  case when (SUM(POQTY)=(isnull(SUM(insqty),0)+isnull(sum(deniedqty),0)) and SUM(POQTY)=(isnull(SUM(receiptQTY),0)+isnull(SUM(DenRec),0))  and (reasonid=11 or reasonid=13 or reasonid is null) ) then 'Fit' else  case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11) ) then 'Fit' else  case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (isLC = 'Y') ) then 'Fit'  else  case when (SUM(POQTY) ! =isnull(SUM(receiptQTY),0) and (reasonid=16) ) then 'Fit' else   'Non Fit' end end end end)= 'Fit')";
+            }
+            else if (fitUnfit == "NFP")
+            {
+                ftunft += " having( (  case when (SUM(POQTY)=(isnull(SUM(insqty),0)+isnull(sum(deniedqty),0)) and SUM(POQTY)=(isnull(SUM(receiptQTY),0)+isnull(SUM(DenRec),0))  and (reasonid=11 or reasonid=13 or reasonid is null) ) then 'Fit' else  case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11) ) then 'Fit' else    case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11) ) then 'Fit' else 'Non Fit' end end end)= 'Non Fit')";
+            }
+            else
+            {
+                ftunft += " ";
+            }
+
+            // 3. Equipment Type Logic
+            if (eqType == "1") eqtypeStr += "  and (m.categoryId =1 or  m.categoryId is null) ";
+            else if (eqType == "2") eqtypeStr += " and m.categoryId  in (2)  ";
+            else eqtypeStr += " ";
+
+            // 4. Authority Logic
+            if (authorityId != 0)
+            {
+                whereclauseDir = " and dir.facility_aut_id= @AuthorityId ";
+            }
+
+            // Complete Complex SQL Query
+            string selectSqlQuery = $@" 
+        select a.po_id,tender_no,outward_no+'/'+po_no as po_no ,Supplier, CONVERT(varchar,po_date,103)as po_date,facility_aut_name,item_code_as_per_tender,item_name
+        ,SUM(POQTY) as POQTY,cast(sum(totalprice) as bigint) POValue,SUM(Supplyqty)as Supplyqty, isnull(SUM(insqty),0)  as insQty,isnull(SUM(receiptQTY),0)  receiptQTY,CONVERT(varchar,LastRDate,103) as LastRDate1,potype
+        ,fileno,CONVERT(varchar,filedt,103) as filedt,isnull(pres.user_name,'TPO(V)') PresentFile,isnull(pres.user_id,383) as presentuserid,isnull(pres.TOUSERID,383) as TOUSERID,isnull(penaltypercent,0)penaltypercent
+        ,ReasonName,isnull(issolved,'Y') as issolved,reasonid 
+        ,dbo.GetSiteNotReady(po_id) as SiteStatus
+        ,ROW_NUMBER() OVER(ORDER BY LastRDaterow ) AS Rowno
+        ,tobePaid,isnull(todate,'NA') as  todate
+        ,isnull(entDT,'NA') as  entDT
+        ,case when (SUM(POQTY)=(isnull(SUM(insqty),0)+isnull(sum(deniedqty),0)) and SUM(POQTY)=(isnull(SUM(receiptQTY),0)+isnull(SUM(DenRec),0))  and (reasonid=11 or reasonid=13 or reasonid is null) ) then 'Fit'
+        else  case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11) ) then 'Fit' 
+        else  case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (isLC = 'Y') ) then 'Fit'
+        else  case when (SUM(POQTY)! =isnull(SUM(receiptQTY),0) and (reasonid=16) ) then 'Fit' 
+        else   'Non Fit' end end end end as Conditond
+        ,FinalRate,round(FinalRate*tobePaid,0) as topaidValue
+        ,FinREmarks
+        ,facility_aut_id
+        from (
+        select t.penaltypercent, p.po_id,t.tender_no,p.outward_no,p.po_no,p.isLC,p.po_date,p.directorate_id,dir.facility_aut_name,m.item_code_as_per_tender,m.item_name,sp.name as Supplier,pi.quantity as POQTY,pi.totalprice,Supplyqty,re.receiptQTY,
+        red.LastRDate ,case when  isnull(rpo.reasonid,0) =13 then red.LastRDate  else case when isnull(rpo.reasonid,0) !=0 then getdate()  else red.LastRDate end end as LastRDaterow
+        ,ins.insqty, den.deniedqty,DenR.DenRec, paid.paidQTY,
+        pi.quantity-isnull(paid.paidQTY,0) tobePaid,   case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype
+        ,p.fileno,p.filedt,rpo.ReasonName,rpo.issolved AS issolved,rpo.reasonid,FinalRate,
+        case when SancP_PONOID is not null then 'Sanction Prepared' else case when   sancCP.SancCP_PONOID is not null then 'Cheque Prepared'
+        else case when SancFP_PONOID is not null then 'Cheque To be Prepared' 
+        else 'Sanction To be Prepared'
+        end end end as FinREmarks
+        ,dir.facility_aut_id
+        from  purchase_order p 
+         inner join massuppliers sp on sp.supplier_id=p.supplier_id
+         left outer join 
+         (
+        select sum(pi.quantity) as quantity,pi.po_id,pi.item_id,sum(pi.totalprice) as totalprice,round(pi.basicrate+(pi.basicrate* pi.percentage/100),2) as FinalRate   from po_items pi 
+        group by pi.po_id,pi.item_id,pi.basicrate,pi.percentage
+        ) pi on pi.po_id=p.po_id
+         inner join tenders t on t.tender_id=p.tender_id
+         inner join masitems m on m.item_id=pi.item_id
+         inner join facility_aut dir on dir.facility_aut_id=p.directorate_id
+          left outer join 
+         (  
+         select po_id,isnull(sum(Supplyqty),0) as Supplyqty  from SupplierDispatch d
+        inner join Issue_item_details i on d.Issue_id=i.Issue_id
+        inner  join maslocations u on u.location_id= d.location_id
+        where d.status='C'  
+        group by po_id
+         ) as sup on sup.po_id=pi.po_id 
+         left outer join 
+         (
+         select isnull(sum(r.receipt_qty),0) as receiptQTY ,r.po_id 
+         from receipts r
+        where r.recieved_date is not null and r.status in ('C','Received') 
+        group by po_id
+         )as re on re.po_id=pi.po_id 
+          left outer join 
+         (
+         select sum(ri.received_qty) as insqty,r.po_id from receipts r
+        left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+        where r.recieved_date is not null and r.status in ('C') 
+        group by r.po_id
+         )as ins on ins.po_id=pi.po_id 
+          left outer join 
+         (
+         select max(r.recieved_date)LastRDate,r.po_id from receipts r
+        left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+        where r.recieved_date is not null and r.status in ('C','Received') 
+        group by r.po_id
+         ) as red on red.po_id=pi.po_id 
+
+         left outer join 
+           (
+           select Max(SORID) SRID,r.PONOID as   rpo_id
+           from SOORDERREASON r 
+           inner join ReasonMaster rm on rm.reasonid=r.reasonid 
+           where  r.reasonid not in (1) 
+           group by r.PONOID
+           ) rpo1 on rpo1.rpo_id=p.po_id
+
+           left outer join 
+           (
+            select  r.SORID,r.reasonid,rm.ReasonName,remarks, case when r.reasonid=13 then 'Y' else 'N' end as issolved
+           from SOORDERREASON r 
+           inner join ReasonMaster rm on rm.reasonid=r.reasonid 
+           where  r.reasonid not in (1) 
+           ) rpo  on rpo.SORID=rpo1.SRID
+
+          left outer join 
+         (
+        select sum (deniedqty) as deniedqty ,ponoid from descrepency where issolved is null 
+        group by ponoid
+         )as Den on Den.ponoid=pi.po_id
+
+            left outer join 
+         (
+         select sum (deniedqty) as DenRec,ponoid from descrepency where receiptid is null and issolved is null
+         group by ponoid
+         )as DenR on DenR.ponoid=pi.po_id 
+
+          left outer join 
+           (
+           select r.po_id,sum(ri.received_qty) as paidQTY from receipts r 
+           left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+           inner join BLPINVOICES inv on inv.RECEIPTID=r.receipt_id
+           where inv.STATUS='P' and  r.SiteNotFlag is null
+           group by r.po_id
+           ) paid on paid.po_id=p.po_id
+
+          left outer join 
+           (
+             select max(s.po_id) SancP_PONOID from BLPSANCTIONS s 
+             where s.STATUS='IN'
+             group by s.po_id
+           ) sancP on sancP.SancP_PONOID=p.po_id
+
+              left outer join 
+           (
+             select max(s.po_id) SancFP_PONOID from BLPSANCTIONS s 
+             where s.STATUS='FP'
+             group by s.po_id
+           ) sancFP on sancFP.SancFP_PONOID=p.po_id
+
+                 left outer join 
+           (
+             select max(s.po_id) SancCP_PONOID from BLPSANCTIONS s 
+             where s.STATUS='CP'
+             group by s.po_id
+           ) sancCP on sancCP.SancCP_PONOID=p.po_id
+
+         where  1=1  and p.status in ('Completed','Order Placed','Partially Received') and p.Ispayment is null {whereclauseDir} and Supplyqty>0   {eqtypeStr} and  LastRDate is not null  {whereclause}   
+
+         ) a
+          left outer join 
+         (
+         select u.user_name,m.PONOID,u.user_id,m.TOUSERID,convert(varchar, m.todate,103) as todate,convert(varchar, m.ENTRYDT, 100) as entDT  from users u 
+        inner join masfilemovement m on m.TOUSERID=u.user_id and m.PRESENTFILEFLAG='Y'
+         ) pres on pres.PONOID=a.po_id
+         where 1=1 and  tobePaid>0 {whFileMyDesk}
+         group by  entDT,todate, a.tobePaid, outward_no,pres.user_name,pres.user_id,potype,po_no,isLC,po_date,facility_aut_name,facility_aut_id,item_code_as_per_tender,item_name,LastRDate,LastRDaterow,Supplier,po_id,tender_no,fileno,filedt,pres.TOUSERID,penaltypercent,ReasonName,issolved ,reasonid, FinalRate,FinREmarks
+        {ftunft}
+         order by ROW_NUMBER() OVER(ORDER BY LastRDaterow )";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(selectSqlQuery, conn))
+                    {
+                        cmd.CommandTimeout = 120;
+                        if (authorityId != 0)
+                        {
+                            cmd.Parameters.AddWithValue("@AuthorityId", authorityId);
+                        }
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var rowItem = new DashboardGridResponseDto();
+
+                                rowItem.PoId = reader["po_id"] == DBNull.Value ? 0 : Convert.ToInt64(reader["po_id"]);
+                                rowItem.TenderNo = reader["tender_no"]?.ToString() ?? "";
+                                rowItem.PoNo = reader["po_no"]?.ToString() ?? "";
+                                rowItem.Supplier = reader["Supplier"]?.ToString() ?? "";
+                                rowItem.PoDate = reader["po_date"]?.ToString() ?? "";
+                                rowItem.FacilityAutName = reader["facility_aut_name"]?.ToString() ?? "";
+                                rowItem.ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? "";
+                                rowItem.ItemName = reader["item_name"]?.ToString() ?? "";
+
+                                rowItem.PoQty = reader["POQTY"] == DBNull.Value ? 0 : Convert.ToInt64(reader["POQTY"]);
+                                rowItem.PoValue = reader["POValue"] == DBNull.Value ? 0 : Convert.ToInt64(reader["POValue"]);
+                                rowItem.SupplyQty = reader["Supplyqty"] == DBNull.Value ? 0 : Convert.ToInt64(reader["Supplyqty"]);
+                                rowItem.InsQty = reader["insQty"] == DBNull.Value ? 0 : Convert.ToInt64(reader["insQty"]);
+                                rowItem.ReceiptQty = reader["receiptQTY"] == DBNull.Value ? 0 : Convert.ToInt64(reader["receiptQTY"]);
+
+                                rowItem.LastRDate = reader["LastRDate1"]?.ToString() ?? "";
+                                rowItem.PoType = reader["potype"]?.ToString() ?? "";
+                                rowItem.FileNo = reader["fileno"]?.ToString() ?? "";
+                                rowItem.FileDt = reader["filedt"]?.ToString() ?? "";
+                                rowItem.PresentFile = reader["PresentFile"]?.ToString() ?? "";
+
+                                rowItem.PresentUserId = reader["presentuserid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["presentuserid"]);
+                                rowItem.ToUserId = reader["TOUSERID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["TOUSERID"]);
+                                rowItem.PenaltyPercent = reader["penaltypercent"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["penaltypercent"]);
+
+                                rowItem.ReasonName = reader["ReasonName"]?.ToString() ?? "";
+                                rowItem.IsSolved = reader["issolved"]?.ToString() ?? "";
+                                rowItem.ReasonId = reader["reasonid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["reasonid"]);
+                                rowItem.SiteStatus = reader["SiteStatus"]?.ToString() ?? "";
+
+                                rowItem.RowNo = reader["Rowno"] == DBNull.Value ? 0 : Convert.ToInt64(reader["Rowno"]);
+                                rowItem.ToBePaid = reader["tobePaid"] == DBNull.Value ? 0 : Convert.ToInt64(reader["tobePaid"]);
+                                rowItem.ToDate = reader["todate"]?.ToString() ?? "";
+                                rowItem.EntDt = reader["entDT"]?.ToString() ?? "";
+                                rowItem.Conditond = reader["Conditond"]?.ToString() ?? "";
+
+                                rowItem.FinalRate = reader["FinalRate"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["FinalRate"]);
+                                rowItem.ToPaidValue = reader["topaidValue"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["topaidValue"]);
+                                rowItem.FinRemarks = reader["FinREmarks"]?.ToString() ?? "";
+                                rowItem.FacilityAutId = reader["facility_aut_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["facility_aut_id"]);
+
+                                resultList.Add(rowItem);
+                            }
+                        }
+                    }
+                }
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing grid fetch operation.", error = ex.Message });
+            }
+        }
+
+
+
+        [HttpPost("ForwardFile")]
+        public async Task<IActionResult> ForwardFile([FromBody] ForwardFileRequestDto request)
+        {
+            if (request == null || request.PoNoId <= 0 || request.SendToUserId <= 0)
+            {
+                return BadRequest(new { message = "Please select Send to Officer and provide valid PO ID." });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Remarks))
+            {
+                return BadRequest(new { message = "Please Write Remarks/Comments for this File." });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.ForwardDate))
+            {
+                return BadRequest(new { message = "Choose Forward Date." });
+            }
+
+            // Date Parsing
+            DateTime forwardDt;
+            string[] exactFormats = { "yyyy-MM-dd", "dd-MM-yyyy", "MM/dd/yyyy" };
+            if (!DateTime.TryParseExact(request.ForwardDate.Trim(), exactFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out forwardDt))
+            {
+                return BadRequest(new { message = "Invalid Forward Date format." });
+            }
+
+            // Simple validation: forward date should not be greater than today (as per your commented out logic)
+            if (forwardDt.Date > DateTime.Now.Date)
+            {
+                return BadRequest(new { message = "Forward date is not Greater then todays date." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        // 1. Update Existing Movement (Check and Update)
+                        string checkExistingSql = "SELECT COUNT(*) FROM MASFILEMOVEMENT WHERE presentfileflag='Y' AND ponoid= @PoNoId";
+                        using (SqlCommand chkCmd = new SqlCommand(checkExistingSql, conn, trans))
+                        {
+                            chkCmd.Parameters.AddWithValue("@PoNoId", request.PoNoId);
+                            int exists = Convert.ToInt32(await chkCmd.ExecuteScalarAsync());
+
+                            if (exists > 0)
+                            {
+                                string updateSql = "UPDATE MASFILEMOVEMENT SET presentfileflag='N' WHERE ponoid= @PoNoId";
+                                using (SqlCommand updCmd = new SqlCommand(updateSql, conn, trans))
+                                {
+                                    updCmd.Parameters.AddWithValue("@PoNoId", request.PoNoId);
+                                    await updCmd.ExecuteNonQueryAsync();
+                                }
+                            }
+                        }
+
+                        // 2. Insert New Movement
+                        string insertSql = @"
+                            INSERT INTO MASFILEMOVEMENT(userid, todate, entryDT, remarks, Flag, presentfileflag, touserid, ponoid, fileid)
+                            VALUES(@UserId, @ToDate, GETDATE(), @Remarks, @Flag, 'Y', @ToUserId, @PoNoId, @FileId)";
+
+                        using (SqlCommand insCmd = new SqlCommand(insertSql, conn, trans))
+                        {
+                            insCmd.Parameters.AddWithValue("@UserId", request.FromUserId);
+                            insCmd.Parameters.AddWithValue("@ToDate", forwardDt.ToString("yyyy-MM-dd HH:mm:ss"));
+                            insCmd.Parameters.AddWithValue("@Remarks", request.Remarks);
+                            insCmd.Parameters.AddWithValue("@Flag", request.Flag);
+                            insCmd.Parameters.AddWithValue("@ToUserId", request.SendToUserId);
+                            insCmd.Parameters.AddWithValue("@PoNoId", request.PoNoId);
+                            insCmd.Parameters.AddWithValue("@FileId", request.FileNo.Trim());
+
+                            await insCmd.ExecuteNonQueryAsync();
+                        }
+
+                        await trans.CommitAsync();
+                        return Ok(new { message = "File Forwarded Successfully !!!" });
+                    }
+                    catch (Exception ex)
+                    {
+                        await trans.RollbackAsync();
+                        return StatusCode(500, new { message = "Transaction failed during file forwarding.", error = ex.Message });
+                    }
+                }
+            }
+        }
+
+        // ========================================================
+        // 2. SAVE REASON API (Purana btnReasonYes_click)
+        // ========================================================
+        [HttpPost("SaveReason")]
+        public async Task<IActionResult> SaveReason([FromBody] SaveReasonRequestDto request)
+        {
+            if (request == null || request.PoNoId <= 0 || request.ReasonId <= 0)
+            {
+                return BadRequest(new { message = "Please select a valid Reason and PO ID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        // 1. Insert Reason
+                        string insertReasonSql = @"
+                            INSERT INTO SOORDERREASON(USERID, REASONID, PONOID, remarks, ENTRYDATE) 
+                            VALUES(@UserId, @ReasonId, @PoNoId, @Remarks, GETDATE())";
+
+                        using (SqlCommand insCmd = new SqlCommand(insertReasonSql, conn, trans))
+                        {
+                            insCmd.Parameters.AddWithValue("@UserId", request.UserId);
+                            insCmd.Parameters.AddWithValue("@ReasonId", request.ReasonId);
+                            insCmd.Parameters.AddWithValue("@PoNoId", request.PoNoId);
+                            insCmd.Parameters.AddWithValue("@Remarks", request.Remarks);
+
+                            await insCmd.ExecuteNonQueryAsync();
+                        }
+
+                        // 2. Update Purchase Order if ReasonId is 1
+                        if (request.ReasonId == 1)
+                        {
+                            string updatePoSql = "UPDATE purchase_order SET Ispayment='Y' WHERE po_id= @PoNoId";
+                            using (SqlCommand updCmd = new SqlCommand(updatePoSql, conn, trans))
+                            {
+                                updCmd.Parameters.AddWithValue("@PoNoId", request.PoNoId);
+                                await updCmd.ExecuteNonQueryAsync();
+                            }
+                        }
+
+                        await trans.CommitAsync();
+                        return Ok(new { message = "Reason updated successfully." });
+                    }
+                    catch (Exception ex)
+                    {
+                        await trans.RollbackAsync();
+                        return StatusCode(500, new { message = "Transaction failed during saving reason.", error = ex.Message });
+                    }
+                }
+            }
+        }
+
+        // ========================================================
+        // 3. FETCH DOCUMENT PATHS (Purana Challan/Photo View buttons)
+        // ========================================================
+        [HttpGet("GetReceiptDocuments/{receiptItemId}")]
+        public async Task<IActionResult> GetReceiptDocuments(int receiptItemId)
+        {
+            if (receiptItemId <= 0)
+            {
+                return BadRequest(new { message = "Invalid Receipt Item ID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            string sqlQuery = @"
+                SELECT InstalationReportFile, InstalationPhoto, Challanfile, WarrantyCardFile 
+                FROM receipt_item_details 
+                WHERE item_detail_id = @ItemId";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@ItemId", receiptItemId);
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            if (await dr.ReadAsync())
+                            {
+                                var docs = new ReceiptDocumentsDto
+                                {
+                                    InstalationReportFile = dr["InstalationReportFile"]?.ToString() ?? "",
+                                    InstalationPhoto = dr["InstalationPhoto"]?.ToString() ?? "",
+                                    Challanfile = dr["Challanfile"]?.ToString() ?? "",
+                                    WarrantyCardFile = dr["WarrantyCardFile"]?.ToString() ?? ""
+                                };
+                                return Ok(docs);
+                            }
+                        }
+                    }
+                }
+                return NotFound(new { message = "Documents not found for this receipt." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching document paths.", error = ex.Message });
+            }
+        }
+
+
+
+        //      public async Task<List<SupplierGstDropdownDto>> GetGstNumbersByPoIdAsync(int poId)
+        //        {
+        //        var gstList = new List<SupplierGstDropdownDto>();
+
+        //        string sqlQuery = @"
+        //        SELECT g.GSTID, g.GSTNO 
+        //        FROM MassupplierGST g
+        //        INNER JOIN purchase_order p ON g.supplierid = p.supplier_id
+        //        WHERE p.po_id = @PoId";
+
+        //            string connString = _config.GetConnectionString("DefaultConnection");
+
+        //            using (SqlConnection conn = new SqlConnection(connString))
+        //            {
+        //            using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+        //            {
+        //                cmd.Parameters.AddWithValue("@PoId", poId);
+
+        //                await conn.OpenAsync();
+
+        //                using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+        //                {
+        //                    while (await dr.ReadAsync())
+        //                    {
+        //                        gstList.Add(new SupplierGstDropdownDto
+        //                        {
+        //                            GstId = dr["GSTID"] == DBNull.Value ? 0 : Convert.ToInt32(dr["GSTID"]),
+        //                            GstNo = dr["GSTNO"]?.ToString() ?? string.Empty
+        //                        });
+        //                    }
+        //                }
+        //            }
+        //        }
+
+        //        return gstList;
+        //    }
+
+
+
+        //[HttpGet("GetGstNumbersByPoId/{poId}")]
+        //    public async Task<IActionResult> GetGstNumbersByPoId(int poId)
+        //    {
+        //        if (poId <= 0)
+        //        {
+        //            return BadRequest(new { message = "Please provide a valid Purchase Order ID." });
+        //        }
+
+        //        try
+        //        {
+        //            var data = await _repository.GetGstNumbersByPoIdAsync(poId);
+
+
+        //            return Ok(data);
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            return StatusCode(500, new { message = "Error fetching GST numbers for the selected PO.", error = ex.Message });
+        //        }
+        //    }
+
+        [HttpGet("GetGstNumbersByPoId/{poId}")]
+        public async Task<IActionResult> GetGstNumbersByPoId(int poId)
+        {
+            // 1. Parameter Validation
+            if (poId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Purchase Order ID." });
+            }
+
+            var gstList = new List<SupplierGstDropdownDto>();
+
+            // 2. SQL Query
+            string sqlQuery = @"
+        SELECT g.GSTID, g.GSTNO 
+        FROM MassupplierGST g
+        INNER JOIN purchase_order p ON g.supplierid = p.supplier_id
+        WHERE p.po_id = @PoId";
+
+            try
+            {
+                string connString = _config.GetConnectionString("DefaultConnection");
+
+                // 3. Database Execution
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@PoId", poId);
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await dr.ReadAsync())
+                            {
+                                gstList.Add(new SupplierGstDropdownDto
+                                {
+                                    GstId = dr["GSTID"] == DBNull.Value ? 0 : Convert.ToInt32(dr["GSTID"]),
+                                    GstNo = dr["GSTNO"]?.ToString() ?? string.Empty
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // 4. Return Data
+                return Ok(gstList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching GST numbers for the selected PO.", error = ex.Message });
+            }
+        }
+
+        [HttpGet("GetPoItemDetails/{poId}")]
+        public async Task<IActionResult> GetPoItemDetails(int poId)
+        {
+            if (poId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Purchase Order ID." });
+            }
+
+            var resultList = new List<PoItemDetailsDto>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // Optimized and parameterized SQL Que
+
+            string sqlQuery = @"
+        SELECT 
+            pi.item_id,
+            m.item_code_as_per_tender AS itemcode,
+            m.item_name AS itemname,
+            pi.percentage AS percentvalue,
+            pi.basicrate AS basicrate, 
+            t.tender_no AS SchemeName,
+            CONVERT(VARCHAR, (CASE WHEN soissueDT IS NULL THEN po_date ELSE soissueDT END), 105) AS PoDate,
+            f.year AS AccYear,
+            s.name AS SupplierName,
+            p.po_no AS PoNo, 
+            ROUND(pi.basicrate + ((pi.basicrate * pi.percentage) / 100), 2) AS finalrate,
+            SUM(pi.quantity) AS poqty,
+            ROUND((SUM(pi.quantity) * basicrate), 0) + ROUND((SUM(pi.quantity) * basicrate * pi.percentage) / 100, 0) AS poValue,
+            s.supplier_id AS SupplierID,
+            t.tender_id,
+            p.po_id AS PONOID,
+            f.financial_year_id AS AccYrSetID,
+            ISNULL(dp.invoiceGst, '-') AS invoiceGst, 
+            ISNULL(hsncode, '-') AS hsncode,
+            '.pdf' AS ext,
+            dir.facility_aut_name,
+            dir.facility_aut_id,
+            ISNULL(rid.REASONID, 0) AS REASONID, 
+            CASE WHEN rid.REASONID = 16 THEN SUM(pi.quantity) - ISNULL(dispatch, 0) ELSE 0 END AS unexQTY
+        FROM purchase_order p WITH (NOLOCK)
+        INNER JOIN po_items pi WITH (NOLOCK) ON pi.po_id = p.po_id
+        INNER JOIN tenders t WITH (NOLOCK) ON t.tender_id = p.tender_id
+        INNER JOIN masitems m WITH (NOLOCK) ON m.item_id = pi.item_id
+        INNER JOIN mas_financial_year f WITH (NOLOCK) ON f.financial_year_id = p.financial_year_id
+        INNER JOIN massuppliers s WITH (NOLOCK) ON s.supplier_id = p.supplier_id
+        INNER JOIN facility_aut dir WITH (NOLOCK) ON dir.facility_aut_id = p.directorate_id
+        LEFT OUTER JOIN (
+            SELECT DISTINCT po_id, invoiceGst, hsncode FROM SupplierDispatch WITH (NOLOCK) WHERE invoiceGst IS NOT NULL
+        ) dp ON dp.po_id = p.po_id
+        LEFT OUTER JOIN (
+            SELECT d.po_id, SUM(i.Supplyqty) AS dispatch FROM SupplierDispatch d WITH (NOLOCK)
+            INNER JOIN Issue_item_details i WITH (NOLOCK) ON i.Issue_id = d.Issue_id
+            GROUP BY d.po_id
+        ) dis ON dis.po_id = p.po_id
+        LEFT OUTER JOIN (
+            SELECT MAX(r.SORID) AS sorid, r.PONOID, ri.REASONID FROM SOORDERREASON r WITH (NOLOCK)
+            LEFT OUTER JOIN (
+                SELECT PONOID, REASONID FROM SOORDERREASON WITH (NOLOCK)
+            ) ri ON ri.PONOID = r.PONOID
+            GROUP BY r.PONOID, ri.REASONID
+        ) rid ON rid.PONOID = p.po_id
+        WHERE p.po_id = @PoId
+        GROUP BY 
+            dp.invoiceGst, hsncode, pi.item_id, m.item_code_as_per_tender, m.item_name, pi.percentage, pi.basicrate,
+            p.po_date, t.tender_no, t.tender_date, f.year, s.name, p.po_no, s.supplier_id, t.tender_id, p.po_id, 
+            f.financial_year_id, dir.facility_aut_name, dir.facility_aut_id, soissueDT, rid.REASONID, dispatch";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                      
+                        cmd.Parameters.AddWithValue("@PoId", poId);
+                        cmd.CommandTimeout = 120;
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var itemRow = new PoItemDetailsDto();
+
+                                itemRow.ItemId = reader["item_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["item_id"]);
+                                itemRow.ItemCode = reader["itemcode"]?.ToString() ?? "";
+                                itemRow.ItemName = reader["itemname"]?.ToString() ?? "";
+
+                                itemRow.PercentValue = reader["percentvalue"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["percentvalue"]);
+                                itemRow.BasicRate = reader["basicrate"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["basicrate"]);
+
+                                itemRow.SchemeName = reader["SchemeName"]?.ToString() ?? "";
+                                itemRow.PoDate = reader["PoDate"]?.ToString() ?? "";
+                                itemRow.AccYear = reader["AccYear"]?.ToString() ?? "";
+                                itemRow.SupplierName = reader["SupplierName"]?.ToString() ?? "";
+                                itemRow.PoNo = reader["PoNo"]?.ToString() ?? "";
+
+                                itemRow.FinalRate = reader["finalrate"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["finalrate"]);
+                                itemRow.PoQty = reader["poqty"] == DBNull.Value ? 0 : Convert.ToInt64(reader["poqty"]);
+                                itemRow.PoValue = reader["poValue"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["poValue"]);
+
+                                itemRow.SupplierId = reader["SupplierID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["SupplierID"]);
+                                itemRow.TenderId = reader["tender_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["tender_id"]);
+                                itemRow.PoNoId = reader["PONOID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["PONOID"]);
+                                itemRow.AccYrSetId = reader["AccYrSetID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["AccYrSetID"]);
+
+                                itemRow.InvoiceGst = reader["invoiceGst"]?.ToString() ?? "-";
+                                itemRow.HsnCode = reader["hsncode"]?.ToString() ?? "-";
+                                itemRow.Ext = reader["ext"]?.ToString() ?? ".pdf";
+
+                                itemRow.FacilityAutName = reader["facility_aut_name"]?.ToString() ?? "";
+                                itemRow.FacilityAutId = reader["facility_aut_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["facility_aut_id"]);
+                                itemRow.ReasonId = reader["REASONID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["REASONID"]);
+                                itemRow.UnexQty = reader["unexQTY"] == DBNull.Value ? 0 : Convert.ToInt64(reader["unexQTY"]);
+
+                                resultList.Add(itemRow);
+                            }
+                        }
+                    }
+                }
+                return Ok(resultList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching PO item details.", error = ex.Message });
+            }
+        }
+
+        [HttpGet("GetPoPenaltyDetails/{poId}")]
+        public async Task<IActionResult> GetPoPenaltyDetails(int poId)
+        {
+            if (poId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Purchase Order ID." });
+            }
+
+            var resultDetails = new PoPenaltyAndTrancheDto();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // The SQL query with the hardcoded 2747 replaced by a parameter (@PoId)
+            // WITH (NOLOCK) is added to prevent database locking issues.
+            string sqlQuery = @"
+        SELECT 
+            p.po_id, 
+            (CASE WHEN p.soissueDT IS NULL THEN p.po_date ELSE p.soissueDT END) AS po_date,
+            CASE WHEN p.Potype IS NULL THEN dbo.GetAllowedDays(pt.tranche_days, (CASE WHEN p.soissueDT IS NULL THEN p.po_date ELSE p.soissueDT END)) ELSE pt.tranche_days END AS tranche_days,
+            ISNULL(p.isldpenality, '0') AS isldpenality,
+            CONVERT(VARCHAR, ISNULL(p.extendeddate, ''), 105) AS extendeddate,
+            t.penaltytype,
+            CASE WHEN p.Potype IS NULL THEN dbo.GetMaxAllowedDays(t.cancellationdays, (CASE WHEN p.soissueDT IS NULL THEN p.po_date ELSE p.soissueDT END)) ELSE t.cancellationdays END AS cancellationdays,
+            t.cancellationpercentage,
+            t.penaltypercent,
+            t.import_days,
+            t.domestic_days,
+            t.logocharges,
+            t.logochargesUpper
+        FROM purchase_order p WITH (NOLOCK)
+        INNER JOIN tenders t WITH (NOLOCK) ON p.tender_id = t.tender_id
+        INNER JOIN po_tranche pt WITH (NOLOCK) ON pt.po_id = p.po_id
+        WHERE p.po_id = @PoId";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        // Securing against SQL Injection
+                        cmd.Parameters.AddWithValue("@PoId", poId);
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            if (await reader.ReadAsync())
+                            {
+                                // Mapping data and safely handling potential NULL values from the database
+                                resultDetails.PoId = reader["po_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_id"]);
+
+                                if (reader["po_date"] != DBNull.Value)
+                                {
+                                    resultDetails.PoDate = Convert.ToDateTime(reader["po_date"]).ToString("yyyy-MM-dd"); // Format as needed
+                                }
+
+                                resultDetails.TrancheDays = reader["tranche_days"] == DBNull.Value ? 0 : Convert.ToInt32(reader["tranche_days"]);
+                                resultDetails.IsLdPenalty = reader["isldpenality"]?.ToString() ?? "0";
+                                resultDetails.ExtendedDate = reader["extendeddate"]?.ToString() ?? "";
+                                resultDetails.PenaltyType = reader["penaltytype"]?.ToString() ?? "";
+                                resultDetails.CancellationDays = reader["cancellationdays"] == DBNull.Value ? 0 : Convert.ToInt32(reader["cancellationdays"]);
+
+                                resultDetails.CancellationPercentage = reader["cancellationpercentage"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["cancellationpercentage"]);
+                                resultDetails.PenaltyPercent = reader["penaltypercent"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["penaltypercent"]);
+
+                                resultDetails.ImportDays = reader["import_days"] == DBNull.Value ? 0 : Convert.ToInt32(reader["import_days"]);
+                                resultDetails.DomesticDays = reader["domestic_days"] == DBNull.Value ? 0 : Convert.ToInt32(reader["domestic_days"]);
+
+                                resultDetails.LogoCharges = reader["logocharges"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["logocharges"]);
+                                resultDetails.LogoChargesUpper = reader["logochargesUpper"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["logochargesUpper"]);
+
+                                return Ok(resultDetails);
+                            }
+                            else
+                            {
+                                // Return a 404 Not Found if the PO ID does not exist in the database
+                                return NotFound(new { message = $"Purchase Order details not found for ID: {poId}" });
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "An error occurred while fetching PO penalty details.", error = ex.Message });
             }
         }
 
