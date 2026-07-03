@@ -130,6 +130,46 @@ namespace EMISAPIS.DTOS
         public string SupplyStatus { get; set; } = string.Empty;
     }
 
+    /// <summary>po_supply_edit.aspx — dispatch equipment desk header + consignee rows.</summary>
+    public class SupplierPoDispatchEditDto
+    {
+        public int PoId { get; set; }
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public List<SupplierPoDispatchEditRowDto> Rows { get; set; } = new();
+    }
+
+    public class SupplierPoDispatchEditRowDto
+    {
+        public int PoItemId { get; set; }
+        public int PoId { get; set; }
+        public int ItemId { get; set; }
+        public int ConsigneeId { get; set; }
+        public int CategoryId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = string.Empty;
+        public string LocationName { get; set; } = string.Empty;
+        public decimal UnitPrice { get; set; }
+        public decimal Quantity { get; set; }
+        public decimal TotalPrice { get; set; }
+        public bool CanAddDispatch { get; set; }
+        public List<SupplierPoDispatchEditBatchDto> Batches { get; set; } = new();
+    }
+
+    public class SupplierPoDispatchEditBatchDto
+    {
+        public int IssueId { get; set; }
+        public int PoId { get; set; }
+        public int LocationId { get; set; }
+        public int CategoryId { get; set; }
+        public string DispatchNo { get; set; } = string.Empty;
+        public string DispatchDate { get; set; } = string.Empty;
+        public string TentativeSupplyDate { get; set; } = string.Empty;
+        public string ReceivedDate { get; set; } = string.Empty;
+        public decimal Quantity { get; set; }
+        public string SupplyStatus { get; set; } = string.Empty;
+    }
+
     /// <summary>Facilitypo_supply_ReceiptSUP.aspx — PO dropdown option.</summary>
     public class SupplierPoReceiptOptionDto
     {

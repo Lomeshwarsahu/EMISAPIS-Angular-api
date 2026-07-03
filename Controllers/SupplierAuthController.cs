@@ -858,6 +858,105 @@ ORDER BY po_date";
             }
         }
 
+        /// <summary>po_supply_edit.aspx — dispatch equipment desk for a PO.</summary>
+        [HttpGet("po-supply-edit/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierPoDispatchEdit(
+            int userId,
+            [FromQuery] int poId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (poId <= 0)
+                return BadRequest(new { message = "PO id is required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT a.po_id, a.po_item_id, a.item_id, a.quantity, a.consignee_id,
+       c.item_name, c.item_code_as_per_tender AS item_code, c.categoryid,
+       x.single_unit_price, c1.location_name,
+       x.single_unit_price * a.quantity AS Total_Price,
+       CONVERT(VARCHAR, b.po_date, 103) AS po_date, b.PO_NO
+FROM po_items a
+INNER JOIN purchase_order b ON a.po_id = b.po_id
+LEFT OUTER JOIN maslocations c1 ON c1.location_id = a.consignee_id
+LEFT OUTER JOIN masitems c ON a.item_id = c.item_id
+LEFT OUTER JOIN (
+    SELECT D.item_id, F.tender_id, F.supplier_id, D.single_unit_price
+    FROM award_of_contract F
+    INNER JOIN contract_items D ON D.award_of_contract_id = F.award_of_contract_id
+) x ON x.item_id = a.item_id AND x.tender_id = b.tender_id AND x.supplier_id = b.supplier_id
+WHERE a.po_id = @PoId AND b.supplier_id = @SupplierId
+ORDER BY c1.location_name";
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                string poNo = string.Empty;
+                string poDate = string.Empty;
+                var pendingRows = new List<(SupplierPoDispatchEditRowDto Row, int ConsigneeId)>();
+
+                using (SqlCommand cmd = new SqlCommand(sql, con))
+                {
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (string.IsNullOrEmpty(poNo))
+                        {
+                            poNo = ReadStringColumn(reader, "PO_NO", "po_no");
+                            poDate = ReadStringColumn(reader, "po_date");
+                        }
+
+                        int consigneeId = ReadIntColumn(reader, "consignee_id");
+                        pendingRows.Add((new SupplierPoDispatchEditRowDto
+                        {
+                            PoItemId = ReadIntColumn(reader, "po_item_id"),
+                            PoId = ReadIntColumn(reader, "po_id"),
+                            ItemId = ReadIntColumn(reader, "item_id"),
+                            ConsigneeId = consigneeId,
+                            CategoryId = ReadIntColumn(reader, "categoryid"),
+                            ItemName = ReadStringColumn(reader, "item_name"),
+                            ItemCode = ReadStringColumn(reader, "item_code"),
+                            LocationName = ReadStringColumn(reader, "location_name"),
+                            UnitPrice = ReadDecimalColumn(reader, "single_unit_price"),
+                            Quantity = ReadDecimalColumn(reader, "quantity"),
+                            TotalPrice = ReadDecimalColumn(reader, "Total_Price", "total_price"),
+                        }, consigneeId));
+                    }
+                }
+
+                if (pendingRows.Count == 0)
+                    return NotFound(new { message = "Purchase order not found for this supplier." });
+
+                var rows = new List<SupplierPoDispatchEditRowDto>();
+                foreach (var entry in pendingRows)
+                {
+                    entry.Row.CanAddDispatch = await CanAddDispatchAsync(con, poId, entry.ConsigneeId);
+                    entry.Row.Batches = await LoadDispatchEditBatchesAsync(con, poId, entry.ConsigneeId);
+                    rows.Add(entry.Row);
+                }
+
+                return Ok(new SupplierPoDispatchEditDto
+                {
+                    PoId = poId,
+                    PoNo = poNo,
+                    PoDate = poDate,
+                    Rows = rows
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading dispatch equipment desk.", error = ex.Message });
+            }
+        }
+
         /// <summary>Facilitypo_supply_ReceiptSUP.aspx — financial years for receipt desk.</summary>
         [HttpGet("po-supply-receipt/filters/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierPoReceiptFilters(int userId)
@@ -2095,6 +2194,93 @@ WHERE SCHEMEID = @TenderId AND SUPPLIERID = @SupplierId";
 
             object? participantResult = await participantCmd.ExecuteScalarAsync();
             return participantResult != null && participantResult != DBNull.Value;
+        }
+
+        private static async Task<bool> CanAddDispatchAsync(SqlConnection con, int poId, int consigneeId)
+        {
+            const string sql = @"
+SELECT pi.quantity, ISNULL(SUM(i.Supplyqty), 0) AS supplied
+FROM purchase_order po
+INNER JOIN po_items pi ON pi.po_id = po.po_id
+LEFT OUTER JOIN SupplierDispatch d ON d.po_id = pi.po_id AND d.location_id = pi.consignee_id
+LEFT OUTER JOIN Issue_item_details i ON i.Issue_id = d.Issue_id
+WHERE pi.po_id = @PoId AND pi.consignee_id = @ConsigneeId
+GROUP BY pi.quantity";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@ConsigneeId", consigneeId);
+
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return true;
+
+            decimal orderQty = ReadDecimalColumn(reader, "quantity");
+            decimal supplied = ReadDecimalColumn(reader, "supplied");
+            return orderQty - supplied != 0;
+        }
+
+        private async Task<List<SupplierPoDispatchEditBatchDto>> LoadDispatchEditBatchesAsync(
+            SqlConnection con, int poId, int consigneeId)
+        {
+            const string sql = @"
+SELECT d.Issue_id,
+       CONVERT(VARCHAR, d.Tentative_Sdate, 103) AS Tentative_Sdate,
+       CONVERT(VARCHAR, d.dispatch_date, 103) AS dispatch_date,
+       CASE WHEN d.status = 'I' THEN 'Incomplete' ELSE 'Complete' END AS SupplyStatusN,
+       d.dispatch_no,
+       SUM(i.Supplyqty) AS quantity,
+       d.po_id,
+       d.location_id,
+       CASE WHEN re.recieved_date IS NOT NULL THEN re.recieved_date ELSE 'Not Receipt' END AS recieved_date,
+       m.categoryid
+FROM SupplierDispatch d
+LEFT OUTER JOIN Issue_item_details i ON d.Issue_id = i.Issue_id
+INNER JOIN purchase_order po ON po.po_id = d.po_id
+LEFT OUTER JOIN (
+    SELECT DISTINCT pi.item_id, pi.po_id FROM po_items pi
+) pi ON pi.po_id = po.po_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+LEFT OUTER JOIN (
+    SELECT r.issue_id, CONVERT(VARCHAR, r.recieved_date, 103) AS recieved_date,
+           r.po_id, r.location_id
+    FROM receipts r
+    INNER JOIN maslocations l ON l.location_id = r.location_id
+    LEFT OUTER JOIN (
+        SELECT SUM(ri.received_qty) AS received_qty, ri.receipt_id
+        FROM receipt_item_details ri
+        GROUP BY ri.receipt_id
+    ) ri ON ri.receipt_id = r.receipt_id
+    WHERE ri.received_qty IS NOT NULL
+) re ON re.issue_id = d.Issue_id AND re.po_id = d.po_id
+WHERE d.po_id = @PoId AND d.location_id = @ConsigneeId
+GROUP BY d.Issue_id, d.dispatch_date, d.Tentative_Sdate, d.status, d.dispatch_no,
+         d.po_id, d.location_id, re.recieved_date, m.categoryid";
+
+            var batches = new List<SupplierPoDispatchEditBatchDto>();
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@ConsigneeId", consigneeId);
+
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                batches.Add(new SupplierPoDispatchEditBatchDto
+                {
+                    IssueId = ReadIntColumn(reader, "Issue_id", "issue_id"),
+                    PoId = ReadIntColumn(reader, "po_id"),
+                    LocationId = ReadIntColumn(reader, "location_id"),
+                    CategoryId = ReadIntColumn(reader, "categoryid"),
+                    DispatchNo = ReadStringColumn(reader, "dispatch_no"),
+                    DispatchDate = ReadStringColumn(reader, "dispatch_date"),
+                    TentativeSupplyDate = ReadStringColumn(reader, "Tentative_Sdate", "tentative_sdate"),
+                    ReceivedDate = ReadStringColumn(reader, "recieved_date"),
+                    Quantity = ReadDecimalColumn(reader, "quantity"),
+                    SupplyStatus = ReadStringColumn(reader, "SupplyStatusN", "supplyStatusN"),
+                });
+            }
+
+            return batches;
         }
 
         private async Task<List<SupplierPoReceiptBatchDto>> LoadReceiptBatchesAsync(
