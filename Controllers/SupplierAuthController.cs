@@ -361,8 +361,6 @@ namespace EMISAPIS.Controllers
                 return BadRequest(new { message = "Please insert Mobile Number." });
             if (string.IsNullOrWhiteSpace(request.Email))
                 return BadRequest(new { message = "Please insert Email Id." });
-            if (string.IsNullOrWhiteSpace(request.GstNo))
-                return BadRequest(new { message = "Please insert GST No." });
             if (string.IsNullOrWhiteSpace(request.PhoneNo))
                 return BadRequest(new { message = "Please insert Phone No." });
             if (string.IsNullOrWhiteSpace(request.Address))
@@ -376,13 +374,9 @@ namespace EMISAPIS.Controllers
             if (email.Length > 50)
                 return BadRequest(new { message = "The limit of Email Id is 50 characters." });
 
-            string gst = request.GstNo.Trim();
-            if (gst.Length > 15)
-                return BadRequest(new { message = "The limit of GST No is 15 characters." });
-
             string phone = request.PhoneNo.Trim();
             if (phone.Length < 10 || phone.Length > 11)
-                return BadRequest(new { message = "The limit of phn No is 11 digits." });
+                return BadRequest(new { message = "The limit of phn No is 10 digits." });
 
             try
             {
@@ -395,9 +389,6 @@ namespace EMISAPIS.Controllers
                           email_id = @Email,
                           ph_no = @PhoneNo,
                           address = @Address,
-                          GST_no = @GstNo,
-                          GST_no2 = @GstNo2,
-                          GST_no3 = @GstNo3,
                           update_date = GETDATE()
                       WHERE supplier_id = @SupplierId", con);
                 updateCmd.Parameters.AddWithValue("@SupplierId", request.SupplierId);
@@ -405,9 +396,6 @@ namespace EMISAPIS.Controllers
                 updateCmd.Parameters.AddWithValue("@Email", email);
                 updateCmd.Parameters.AddWithValue("@PhoneNo", phone);
                 updateCmd.Parameters.AddWithValue("@Address", request.Address.Trim());
-                updateCmd.Parameters.AddWithValue("@GstNo", gst);
-                updateCmd.Parameters.AddWithValue("@GstNo2", request.GstNo2?.Trim() ?? string.Empty);
-                updateCmd.Parameters.AddWithValue("@GstNo3", request.GstNo3?.Trim() ?? string.Empty);
 
                 int rows = await updateCmd.ExecuteNonQueryAsync();
                 if (rows == 0)
@@ -935,6 +923,10 @@ WHERE po_id = @PoId";
                 if (!await PoBelongsToSupplierAsync(con, poId, supplierId))
                     return NotFound(new { message = "Purchase order not found." });
 
+                string sdModeName = await GetSdPaymentModeNameAsync(con, paymentMode);
+                if (!IsSdMaturityOptional(sdModeName) && string.IsNullOrWhiteSpace(maturityDate))
+                    return BadRequest(new { message = "Please fill Maturity Date" });
+
                 const string existsSql = "SELECT 1 FROM PO_SDDetails WHERE po_id = @PoId";
                 using (SqlCommand existsCmd = new SqlCommand(existsSql, con))
                 {
@@ -1043,6 +1035,10 @@ VALUES (@PoId, @SdMode, @SdAmount, @DocPath, @EntryDt, @IssueDt, 'Y', @DocumentN
 
                 if (!await PoBelongsToSupplierAsync(con, poId, supplierId))
                     return NotFound(new { message = "Purchase order not found." });
+
+                string sdModeName = await GetSdPaymentModeNameAsync(con, paymentMode);
+                if (!IsSdMaturityOptional(sdModeName) && string.IsNullOrWhiteSpace(maturityDate))
+                    return BadRequest(new { message = "Please fill Maturity Date" });
 
                 string? virtualPath = null;
                 if (uploadNewFile)
@@ -1894,30 +1890,33 @@ ORDER BY ISNULL(ins.insqty, 0)";
                 var rows = new List<SupplierPoReceiptRowDto>();
                 using SqlConnection con = new SqlConnection(_connectionString);
                 await con.OpenAsync();
-                using SqlCommand cmd = new SqlCommand(sql, con);
-                cmd.Parameters.AddWithValue("@PoId", poId);
-                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
 
                 var pendingRows = new List<(SupplierPoReceiptRowDto Row, int ConsigneeId)>();
-                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
+                using (SqlCommand cmd = new SqlCommand(sql, con))
                 {
-                    int consigneeId = ReadIntColumn(reader, "consignee_id");
-                    pendingRows.Add((new SupplierPoReceiptRowDto
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
                     {
-                        PoItemId = ReadIntColumn(reader, "po_item_id"),
-                        PoId = ReadIntColumn(reader, "po_id"),
-                        ConsigneeId = consigneeId,
-                        LocationName = ReadStringColumn(reader, "location_name"),
-                        ItemName = ReadStringColumn(reader, "item_name"),
-                        ItemCode = ReadStringColumn(reader, "item_code"),
-                        Quantity = ReadDecimalColumn(reader, "quantity"),
-                        SupplyQty = ReadDecimalColumn(reader, "Supplyqty"),
-                        ReceiptQty = ReadDecimalColumn(reader, "receiptQTY"),
-                        InstQty = ReadDecimalColumn(reader, "insqty"),
-                        DeniedQty = ReadDecimalColumn(reader, "Deniedqty"),
-                        DeniedStatus = ReadStringColumn(reader, "DeniedStatus", "deniedstatus"),
-                    }, consigneeId));
+                        int consigneeId = ReadIntColumn(reader, "consignee_id");
+                        pendingRows.Add((new SupplierPoReceiptRowDto
+                        {
+                            PoItemId = ReadIntColumn(reader, "po_item_id"),
+                            PoId = ReadIntColumn(reader, "po_id"),
+                            ConsigneeId = consigneeId,
+                            LocationName = ReadStringColumn(reader, "location_name"),
+                            ItemName = ReadStringColumn(reader, "item_name"),
+                            ItemCode = ReadStringColumn(reader, "item_code"),
+                            Quantity = ReadDecimalColumn(reader, "quantity"),
+                            SupplyQty = ReadDecimalColumn(reader, "Supplyqty"),
+                            ReceiptQty = ReadDecimalColumn(reader, "receiptQTY"),
+                            InstQty = ReadDecimalColumn(reader, "insqty"),
+                            DeniedQty = ReadDecimalColumn(reader, "Deniedqty"),
+                            DeniedStatus = ReadStringColumn(reader, "DeniedStatus", "deniedstatus"),
+                        }, consigneeId));
+                    }
                 }
 
                 foreach (var entry in pendingRows)
@@ -3056,7 +3055,7 @@ LEFT OUTER JOIN (
 ) re ON re.issue_id = d.Issue_id AND re.po_id = d.po_id AND re.location_id = d.location_id
 WHERE d.po_id = @PoId AND d.location_id = @ConsigneeId
 GROUP BY re.receipt_id, d.Issue_id, dispatch_date, d.status, d.po_id, d.location_id,
-         re.recieved_date, re.status, re.receipt_no";
+         re.recieved_date, re.status";
 
             var batches = new List<SupplierPoReceiptBatchDto>();
             using SqlCommand cmd = new SqlCommand(sql, con);
@@ -3174,14 +3173,34 @@ GROUP BY re.receipt_id, d.Issue_id, dispatch_date, d.status, d.po_id, d.location
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
+                string sdName = ReadStringColumn(reader, "SDNAME");
                 modes.Add(new SupplierSdPaymentModeDto
                 {
                     SdMode = ReadStringColumn(reader, "SDMode"),
-                    SdName = ReadStringColumn(reader, "SDNAME"),
+                    SdName = sdName,
+                    MaturityOptional = IsSdMaturityOptional(sdName),
                 });
             }
 
             return modes;
+        }
+
+        private static async Task<string> GetSdPaymentModeNameAsync(SqlConnection con, string sdMode)
+        {
+            const string sql = "SELECT SDNAME FROM MasSD WHERE SDMode = @SdMode";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@SdMode", sdMode.Trim());
+            object? result = await cmd.ExecuteScalarAsync();
+            return result?.ToString() ?? string.Empty;
+        }
+
+        private static bool IsSdMaturityOptional(string sdName)
+        {
+            if (string.IsNullOrWhiteSpace(sdName))
+                return false;
+
+            string upper = sdName.ToUpperInvariant();
+            return upper.Contains("NEFT") || upper.Contains("RTGS");
         }
 
         private static async Task<bool> PoSdDetailExistsAsync(SqlConnection con, int poId)

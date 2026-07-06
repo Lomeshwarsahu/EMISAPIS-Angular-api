@@ -367,6 +367,7 @@ namespace EMISAPIS.DTOS
     {
         public string SdMode { get; set; } = string.Empty;
         public string SdName { get; set; } = string.Empty;
+        public bool MaturityOptional { get; set; }
     }
 
     /// <summary>SDdetailSupplier.aspx — load/save SD security deposit detail.</summary>
