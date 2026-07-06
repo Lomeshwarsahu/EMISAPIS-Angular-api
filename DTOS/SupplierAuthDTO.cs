@@ -420,4 +420,61 @@ namespace EMISAPIS.DTOS
         public bool HasPendingExtension { get; set; }
         public List<SupplierPoExtensionRowDto> Extensions { get; set; } = new();
     }
+
+    /// <summary>Facility_InstallationReportSUP.aspx — receipt item row.</summary>
+    public class SupplierInstallationReportRowDto
+    {
+        public int SlNo { get; set; }
+        public int ItemDetailId { get; set; }
+        public string SerialNo { get; set; } = string.Empty;
+        public string InstallationDate { get; set; } = string.Empty;
+        public string WarrantyFrom { get; set; } = string.Empty;
+        public string WarrantyTo { get; set; } = string.Empty;
+        public decimal ReceivedQty { get; set; }
+        public string WarrantyCardNo { get; set; } = string.Empty;
+        public string InstallationLocation { get; set; } = string.Empty;
+        public bool IsMongo { get; set; }
+        public bool HasInstallationReport { get; set; }
+        public bool HasInstallationPhoto { get; set; }
+        public bool HasWarrantyCard { get; set; }
+        public bool HasChallan { get; set; }
+    }
+
+    /// <summary>Facility_InstallationReportSUP.aspx — page payload.</summary>
+    public class SupplierInstallationReportPageDto
+    {
+        public int ReceiptId { get; set; }
+        public string ReceivedDate { get; set; } = string.Empty;
+        public bool BulkInst { get; set; }
+        public bool HasBulkInstallationReport { get; set; }
+        public bool HasBulkInstallationPhoto { get; set; }
+        public bool HasBulkWarrantyCard { get; set; }
+        public bool HasBulkChallan { get; set; }
+        public List<SupplierInstallationReportRowDto> Rows { get; set; } = new();
+    }
+
+    /// <summary>InstalationReport.aspx — printable installation certificate.</summary>
+    public class SupplierInstallationPrintDto
+    {
+        public int ItemDetailId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+        public string SupplierName { get; set; } = string.Empty;
+        public string SupplyQty { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string SerialNo { get; set; } = string.Empty;
+        public string ConsigneeAddress { get; set; } = string.Empty;
+        public string ReceiptDate { get; set; } = string.Empty;
+        public string InstallationLocation { get; set; } = string.Empty;
+        public string TrainingItemName { get; set; } = string.Empty;
+        public string WarrantyValidity { get; set; } = string.Empty;
+        public string CgmscLogoPrinted { get; set; } = string.Empty;
+        public string ServiceManualProvided { get; set; } = string.Empty;
+        public string OperatingManualProvided { get; set; } = string.Empty;
+        public string CalibrationCertificateProvided { get; set; } = string.Empty;
+        public string OriginalWarrantyCardReceived { get; set; } = string.Empty;
+        public string OtherStatutoryDocuments { get; set; } = string.Empty;
+        public string AllAccessoriesReceived { get; set; } = string.Empty;
+        public string DispatchNo { get; set; } = string.Empty;
+        public string DispatchDate { get; set; } = string.Empty;
+    }
 }

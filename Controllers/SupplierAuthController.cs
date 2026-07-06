@@ -18,6 +18,8 @@ namespace EMISAPIS.Controllers
         private readonly string _emdFileRoot;
         private readonly string _sdFileRoot;
         private readonly string _extensionFileRoot;
+        private readonly string _emsRoleRoot;
+        private readonly MongoService _mongoService;
 
         public SupplierAuthController(IConfiguration configuration, IWebHostEnvironment env)
         {
@@ -43,6 +45,9 @@ namespace EMISAPIS.Controllers
             _extensionFileRoot = string.IsNullOrWhiteSpace(extensionConfigured)
                 ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "PO_Ext_Docs"))
                 : Path.GetFullPath(extensionConfigured);
+
+            _emsRoleRoot = Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole"));
+            _mongoService = new MongoService();
 
             Directory.CreateDirectory(_emdFileRoot);
             Directory.CreateDirectory(_sdFileRoot);
@@ -1933,6 +1938,356 @@ ORDER BY ISNULL(ins.insqty, 0)";
             }
         }
 
+        /// <summary>Facility_InstallationReportSUP.aspx — installation report grid for a receipt.</summary>
+        [HttpGet("installation-report/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierInstallationReport(
+            int userId,
+            [FromQuery] int receiptId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (receiptId <= 0)
+                return BadRequest(new { message = "Receipt id is required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await ReceiptBelongsToSupplierAsync(con, receiptId, supplierId.Value))
+                    return NotFound(new { message = "Receipt not found for this supplier." });
+
+                const string headerSql = @"
+SELECT receipt_id,
+       CONVERT(VARCHAR, recieved_date, 103) AS received_date,
+       ISNULL(BulkInst, 'N') AS BulkInst,
+       ISNULL(InstalationReportFile, 'N') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, 'N') AS InstalationPhoto,
+       ISNULL(Challanfile, 'N') AS Challanfile,
+       ISNULL(WarrantyCardFile, 'N') AS WarrantyCardFile
+FROM receipts
+WHERE receipt_id = @ReceiptId";
+
+                const string rowsSql = @"
+SELECT ri.item_detail_id,
+       ri.make_no,
+       CONVERT(VARCHAR, ri.installation_date, 103) AS installation_date,
+       CONVERT(VARCHAR, ri.warenty_from, 103) AS warenty_from,
+       CONVERT(VARCHAR, ri.warenty_to, 103) AS warenty_to,
+       ri.received_qty,
+       ri.warranty_certificate_no,
+       ri.installation_location,
+       ISNULL(ri.ISmongo, 'N') AS ISmongo,
+       ISNULL(ri.InstalationReportFile, '') AS InstalationReportFile,
+       ISNULL(ri.InstalationPhoto, '') AS InstalationPhoto,
+       ISNULL(ri.Challanfile, '') AS Challanfile,
+       ISNULL(ri.WarrantyCardFile, '') AS WarrantyCardFile
+FROM receipt_item_details ri
+WHERE ri.receipt_id = @ReceiptId
+ORDER BY ri.item_detail_id";
+
+                SupplierInstallationReportPageDto page = new()
+                {
+                    ReceiptId = receiptId,
+                };
+
+                using (SqlCommand headerCmd = new SqlCommand(headerSql, con))
+                {
+                    headerCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    using SqlDataReader reader = await headerCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Receipt not found." });
+
+                    page.ReceivedDate = ReadStringColumn(reader, "received_date");
+                    page.BulkInst = ReadStringColumn(reader, "BulkInst").Equals("Y", StringComparison.OrdinalIgnoreCase);
+                    page.HasBulkInstallationReport = HasInstallationFileValue(
+                        ReadStringColumn(reader, "InstalationReportFile"));
+                    page.HasBulkInstallationPhoto = HasInstallationFileValue(
+                        ReadStringColumn(reader, "InstalationPhoto"));
+                    page.HasBulkWarrantyCard = HasInstallationFileValue(
+                        ReadStringColumn(reader, "WarrantyCardFile"));
+                    page.HasBulkChallan = HasInstallationFileValue(
+                        ReadStringColumn(reader, "Challanfile"));
+                }
+
+                int slNo = 0;
+                using (SqlCommand rowsCmd = new SqlCommand(rowsSql, con))
+                {
+                    rowsCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    using SqlDataReader reader = await rowsCmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        slNo++;
+                        bool isMongo = ReadStringColumn(reader, "ISmongo")
+                            .Equals("Y", StringComparison.OrdinalIgnoreCase);
+
+                        page.Rows.Add(new SupplierInstallationReportRowDto
+                        {
+                            SlNo = slNo,
+                            ItemDetailId = ReadIntColumn(reader, "item_detail_id"),
+                            SerialNo = ReadStringColumn(reader, "make_no"),
+                            InstallationDate = ReadStringColumn(reader, "installation_date"),
+                            WarrantyFrom = ReadStringColumn(reader, "warenty_from"),
+                            WarrantyTo = ReadStringColumn(reader, "warenty_to"),
+                            ReceivedQty = ReadDecimalColumn(reader, "received_qty"),
+                            WarrantyCardNo = ReadStringColumn(reader, "warranty_certificate_no"),
+                            InstallationLocation = ReadStringColumn(reader, "installation_location"),
+                            IsMongo = isMongo,
+                            HasInstallationReport = HasInstallationFileValue(
+                                ReadStringColumn(reader, "InstalationReportFile")),
+                            HasInstallationPhoto = HasInstallationFileValue(
+                                ReadStringColumn(reader, "InstalationPhoto")),
+                            HasWarrantyCard = HasInstallationFileValue(
+                                ReadStringColumn(reader, "WarrantyCardFile")),
+                            HasChallan = HasInstallationFileValue(
+                                ReadStringColumn(reader, "Challanfile")),
+                        });
+                    }
+                }
+
+                return Ok(page);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading installation report.", error = ex.Message });
+            }
+        }
+
+        /// <summary>InstalationReport.aspx — printable installation certificate.</summary>
+        [HttpGet("installation-report/print/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierInstallationPrintReport(
+            int userId,
+            [FromQuery] int receiptItemId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (receiptItemId <= 0)
+                return BadRequest(new { message = "Receipt item id is required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                const string sql = @"
+SELECT po.po_no,
+       mi.item_name,
+       s.name,
+       ii.Supplyqty,
+       l.location_name,
+       l.address_1 + ' ' + ISNULL(l.address_2, '') + ' ' + ISNULL(l.address_3, '') AS Addresss,
+       CONVERT(VARCHAR, r.recieved_date, 103) AS recieved_date,
+       ri.item_detail_id,
+       ri.make_no,
+       ri.installation_location,
+       mi.item_name AS training_item_name,
+       CASE WHEN ri.warranty_validity = 'Y' THEN 'YES' ELSE 'NO' END AS warranty_validity,
+       CASE WHEN ri.cgmsc_log_printed = 'Y' THEN 'YES' ELSE 'NO' END AS cgmsc_log_printed,
+       CASE WHEN ri.manual_provided = 'Y' THEN 'YES' ELSE 'NO' END AS manual_provided,
+       CASE WHEN ri.opening_manual_provided = 'Y' THEN 'YES' ELSE 'NO' END AS opening_manual_provided,
+       CASE WHEN ri.calibration_certificate_prov = 'Y' THEN 'YES' ELSE 'NO' END AS calibration_certificate_prov,
+       CASE WHEN ri.org_warranty_card_rec = 'Y' THEN 'YES' ELSE 'NO' END AS org_warranty_card_rec,
+       CASE WHEN ri.other_statutory = 'Y' THEN 'YES' ELSE 'NO' END AS other_statutory,
+       CASE WHEN ri.inticated_po_are_received = 'Y' THEN 'YES' ELSE 'NO' END AS inticated_po_are_received,
+       r.dispatch_no,
+       CONVERT(VARCHAR, r.dispatch_date, 103) AS dispatch_date
+FROM receipt_item_details ri
+INNER JOIN receipts r ON r.receipt_id = ri.receipt_id
+INNER JOIN Issue_item_details ii ON ii.issue_detail_id = ri.issue_detail_id
+INNER JOIN SupplierDispatch d ON d.Issue_id = ii.Issue_id
+INNER JOIN purchase_order po ON po.po_id = d.po_id
+INNER JOIN masitems mi ON mi.item_id = ii.item_id
+INNER JOIN massuppliers s ON s.supplier_id = po.supplier_id
+INNER JOIN maslocations l ON l.location_id = r.location_id
+WHERE ri.item_detail_id = @ReceiptItemId AND po.supplier_id = @SupplierId";
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@ReceiptItemId", receiptItemId);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "Installation report not found." });
+
+                string dispatchNo = ReadStringColumn(reader, "dispatch_no").Trim();
+                var report = new SupplierInstallationPrintDto
+                {
+                    ItemDetailId = receiptItemId,
+                    ItemName = ReadStringColumn(reader, "item_name"),
+                    SupplierName = ReadStringColumn(reader, "name"),
+                    SupplyQty = ReadStringColumn(reader, "Supplyqty"),
+                    PoNo = ReadStringColumn(reader, "po_no"),
+                    SerialNo = ReadStringColumn(reader, "make_no"),
+                    ConsigneeAddress = ReadStringColumn(reader, "Addresss"),
+                    ReceiptDate = ReadStringColumn(reader, "recieved_date"),
+                    InstallationLocation = ReadStringColumn(reader, "installation_location"),
+                    TrainingItemName = ReadStringColumn(reader, "training_item_name"),
+                    WarrantyValidity = ReadStringColumn(reader, "warranty_validity"),
+                    CgmscLogoPrinted = ReadStringColumn(reader, "cgmsc_log_printed"),
+                    ServiceManualProvided = ReadStringColumn(reader, "manual_provided"),
+                    OperatingManualProvided = ReadStringColumn(reader, "opening_manual_provided"),
+                    CalibrationCertificateProvided = ReadStringColumn(reader, "calibration_certificate_prov"),
+                    OriginalWarrantyCardReceived = ReadStringColumn(reader, "org_warranty_card_rec"),
+                    OtherStatutoryDocuments = ReadStringColumn(reader, "other_statutory"),
+                    AllAccessoriesReceived = ReadStringColumn(reader, "inticated_po_are_received"),
+                    DispatchNo = dispatchNo.Length > 0 ? $"DispatchNo:{dispatchNo}" : string.Empty,
+                    DispatchDate = dispatchNo.Length > 0
+                        ? $"Dispatch Date :{ReadStringColumn(reader, "dispatch_date")}"
+                        : string.Empty,
+                };
+
+                return Ok(report);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading installation print report.", error = ex.Message });
+            }
+        }
+
+        /// <summary>Facility_InstallationReportSUP.aspx — view/download installation documents.</summary>
+        [HttpGet("installation-report/file/by-user/{userId:int}")]
+        public async Task<IActionResult> DownloadSupplierInstallationFile(
+            int userId,
+            [FromQuery] int receiptId,
+            [FromQuery] string fileType,
+            [FromQuery] int itemDetailId = 0,
+            [FromQuery] bool bulk = false)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (receiptId <= 0)
+                return BadRequest(new { message = "Receipt id is required." });
+            if (!bulk && itemDetailId <= 0)
+                return BadRequest(new { message = "Item detail id is required." });
+
+            string normalizedType = (fileType ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalizedType is not ("insreport" or "insphoto" or "waranty" or "chalan"))
+                return BadRequest(new { message = "Invalid file type." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await ReceiptBelongsToSupplierAsync(con, receiptId, supplierId.Value))
+                    return NotFound(new { message = "Receipt not found for this supplier." });
+
+                string columnName = normalizedType switch
+                {
+                    "insreport" => "InstalationReportFile",
+                    "insphoto" => "InstalationPhoto",
+                    "waranty" => "WarrantyCardFile",
+                    _ => "Challanfile",
+                };
+
+                string? fileRef;
+                bool isMongo;
+                string? photoExt = null;
+                int mongoLookupId;
+
+                if (bulk)
+                {
+                    const string bulkSql = @"
+SELECT ISNULL(InstalationReportFile, 'N') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, 'N') AS InstalationPhoto,
+       ISNULL(Challanfile, 'N') AS Challanfile,
+       ISNULL(WarrantyCardFile, 'N') AS WarrantyCardFile
+FROM receipts
+WHERE receipt_id = @ReceiptId";
+
+                    using SqlCommand bulkCmd = new SqlCommand(bulkSql, con);
+                    bulkCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    using SqlDataReader reader = await bulkCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Receipt not found." });
+
+                    fileRef = ReadStringColumn(reader, columnName);
+                    isMongo = true;
+                    mongoLookupId = receiptId;
+                }
+                else
+                {
+                    string itemSql = $@"
+SELECT ISNULL({columnName}, '') AS FileRef,
+       ISNULL(ISmongo, 'N') AS ISmongo,
+       ISNULL(InstalationPhoto, '') AS InstalationPhoto
+FROM receipt_item_details
+WHERE item_detail_id = @ItemDetailId AND receipt_id = @ReceiptId";
+
+                    using SqlCommand itemCmd = new SqlCommand(itemSql, con);
+                    itemCmd.Parameters.AddWithValue("@ItemDetailId", itemDetailId);
+                    itemCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    using SqlDataReader reader = await itemCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Receipt item not found." });
+
+                    fileRef = ReadStringColumn(reader, "FileRef");
+                    isMongo = ReadStringColumn(reader, "ISmongo")
+                        .Equals("Y", StringComparison.OrdinalIgnoreCase);
+                    photoExt = Path.GetExtension(ReadStringColumn(reader, "InstalationPhoto"));
+                    mongoLookupId = itemDetailId;
+                }
+
+                if (!HasInstallationFileValue(fileRef))
+                    return NotFound(new { message = "File not found." });
+
+                byte[]? fileBytes;
+                string contentType;
+                string downloadName;
+
+                if (isMongo)
+                {
+                    ReceiptItemFiles? mongoFile = await _mongoService.GetFile(mongoLookupId);
+                    if (mongoFile == null)
+                        return NotFound(new { message = "File not found." });
+
+                    fileBytes = normalizedType switch
+                    {
+                        "chalan" => mongoFile.FileChalan,
+                        "waranty" => mongoFile.FileWarrantyCard,
+                        "insphoto" => mongoFile.FilePhoto,
+                        _ => mongoFile.File,
+                    };
+
+                    string extension = normalizedType == "insphoto" && !string.IsNullOrWhiteSpace(photoExt)
+                        ? photoExt
+                        : ".pdf";
+                    contentType = GetInstallationContentType(extension);
+                    downloadName = $"{fileRef}{extension}";
+                }
+                else
+                {
+                    string physicalPath = ResolveLegacyVirtualPath(fileRef!);
+                    if (!System.IO.File.Exists(physicalPath))
+                        return NotFound(new { message = "File not found on server." });
+
+                    fileBytes = await System.IO.File.ReadAllBytesAsync(physicalPath);
+                    contentType = GetInstallationContentType(Path.GetExtension(physicalPath));
+                    downloadName = Path.GetFileName(physicalPath);
+                }
+
+                if (fileBytes == null || fileBytes.Length == 0)
+                    return NotFound(new { message = "File not found." });
+
+                return File(fileBytes, contentType, downloadName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading installation file.", error = ex.Message });
+            }
+        }
+
         /// <summary>RCDetailReportForSupplier.aspx — tender dropdown.</summary>
         [HttpGet("rc-detail-report/tenders/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierRcDetailTenders(int userId)
@@ -2944,6 +3299,50 @@ SELECT 1 FROM purchase_order WHERE po_id = @PoId AND supplier_id = @SupplierId";
 
             object? result = await cmd.ExecuteScalarAsync();
             return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<bool> ReceiptBelongsToSupplierAsync(
+            SqlConnection con, int receiptId, int supplierId)
+        {
+            const string sql = @"
+SELECT 1
+FROM receipts r
+INNER JOIN purchase_order po ON po.po_id = r.po_id
+WHERE r.receipt_id = @ReceiptId AND po.supplier_id = @SupplierId";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+            cmd.Parameters.AddWithValue("@SupplierId", supplierId);
+
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static bool HasInstallationFileValue(string? value) =>
+            !string.IsNullOrWhiteSpace(value) && !value.Trim().Equals("N", StringComparison.OrdinalIgnoreCase);
+
+        private string ResolveLegacyVirtualPath(string virtualPath)
+        {
+            string relative = virtualPath.Trim();
+            if (relative.StartsWith("~/", StringComparison.Ordinal))
+                relative = relative[2..];
+            else if (relative.StartsWith('/'))
+                relative = relative.TrimStart('/');
+
+            return Path.GetFullPath(Path.Combine(
+                _emsRoleRoot,
+                relative.Replace('/', Path.DirectorySeparatorChar)));
+        }
+
+        private static string GetInstallationContentType(string extension)
+        {
+            return extension.ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".pdf" => "application/pdf",
+                _ => "application/octet-stream",
+            };
         }
 
         private static async Task<bool> CanAddDispatchAsync(SqlConnection con, int poId, int consigneeId)
