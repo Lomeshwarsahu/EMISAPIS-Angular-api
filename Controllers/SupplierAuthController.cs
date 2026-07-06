@@ -816,7 +816,8 @@ SELECT SDMode,
        CONVERT(VARCHAR, IssueDT, 103) AS IssueDT,
        CONVERT(VARCHAR, MaturityDT, 103) AS MaturityDT,
        SDDoctPath,
-       DocumentNo
+       DocumentNo,
+       ISNULL(SubmissionStatus, 'N') AS SubmissionStatus
 FROM PO_SDDetails
 WHERE po_id = @PoId";
 
@@ -833,10 +834,30 @@ WHERE po_id = @PoId";
                         documentNo = ReadStringColumn(reader, "DocumentNo");
                         string docPath = ReadStringColumn(reader, "SDDoctPath");
                         hasFile = !string.IsNullOrWhiteSpace(docPath);
+                        string submissionStatus = ReadStringColumn(reader, "SubmissionStatus");
+                        bool isSubmitted = submissionStatus.Equals("Y", StringComparison.OrdinalIgnoreCase);
                         if (hasExisting && sdAmount <= 0)
                         {
                             // gross value may be omitted on edit reload — amount still shown from DB on client
                         }
+
+                        return Ok(new SupplierPoSdDetailDto
+                        {
+                            PoId = poId,
+                            SupplierId = supplierId.Value,
+                            ItemId = itemId,
+                            EquipmentName = equipmentName,
+                            GrossValue = grossValue,
+                            SdAmount = sdAmount,
+                            HasExisting = hasExisting,
+                            HasFile = hasFile,
+                            IsSubmitted = isSubmitted,
+                            PaymentMode = paymentMode,
+                            IssueDate = issueDate,
+                            MaturityDate = string.IsNullOrWhiteSpace(maturityDate) ? null : maturityDate,
+                            DocumentNo = documentNo,
+                            PaymentModes = paymentModes,
+                        });
                     }
                 }
 
@@ -850,6 +871,7 @@ WHERE po_id = @PoId";
                     SdAmount = sdAmount,
                     HasExisting = hasExisting,
                     HasFile = hasFile,
+                    IsSubmitted = false,
                     PaymentMode = paymentMode,
                     IssueDate = issueDate,
                     MaturityDate = string.IsNullOrWhiteSpace(maturityDate) ? null : maturityDate,
@@ -1040,6 +1062,16 @@ VALUES (@PoId, @SdMode, @SdAmount, @DocPath, @EntryDt, @IssueDt, 'Y', @DocumentN
 
                 if (!await PoBelongsToSupplierAsync(con, poId, supplierId))
                     return NotFound(new { message = "Purchase order not found." });
+
+                const string submittedSql = @"
+SELECT ISNULL(SubmissionStatus, 'N') FROM PO_SDDetails WHERE po_id = @PoId";
+                using (SqlCommand submittedCmd = new SqlCommand(submittedSql, con))
+                {
+                    submittedCmd.Parameters.AddWithValue("@PoId", poId);
+                    object? submittedResult = await submittedCmd.ExecuteScalarAsync();
+                    if (submittedResult?.ToString()?.Equals("Y", StringComparison.OrdinalIgnoreCase) == true)
+                        return BadRequest(new { message = "Submitted SD detail cannot be edited." });
+                }
 
                 string sdModeName = await GetSdPaymentModeNameAsync(con, paymentMode);
                 if (!IsSdMaturityOptional(sdModeName) && string.IsNullOrWhiteSpace(maturityDate))

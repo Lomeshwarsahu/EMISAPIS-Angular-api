@@ -381,6 +381,7 @@ namespace EMISAPIS.DTOS
         public decimal SdAmount { get; set; }
         public bool HasExisting { get; set; }
         public bool HasFile { get; set; }
+        public bool IsSubmitted { get; set; }
         public string? PaymentMode { get; set; }
         public string? IssueDate { get; set; }
         public string? MaturityDate { get; set; }
