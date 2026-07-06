@@ -18,6 +18,7 @@ namespace EMISAPIS.Controllers
         private readonly string _emdFileRoot;
         private readonly string _sdFileRoot;
         private readonly string _extensionFileRoot;
+        private readonly string _invoiceDocRoot;
         private readonly string _emsRoleRoot;
         private readonly MongoService _mongoService;
 
@@ -46,12 +47,18 @@ namespace EMISAPIS.Controllers
                 ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "PO_Ext_Docs"))
                 : Path.GetFullPath(extensionConfigured);
 
+            var invoiceConfigured = configuration["FileStorage:InvoiceDocPath"];
+            _invoiceDocRoot = string.IsNullOrWhiteSpace(invoiceConfigured)
+                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "Upload_invoiceDoc"))
+                : Path.GetFullPath(invoiceConfigured);
+
             _emsRoleRoot = Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole"));
             _mongoService = new MongoService();
 
             Directory.CreateDirectory(_emdFileRoot);
             Directory.CreateDirectory(_sdFileRoot);
             Directory.CreateDirectory(_extensionFileRoot);
+            Directory.CreateDirectory(_invoiceDocRoot);
         }
 
         [HttpGet("profile/{id:int}")]
@@ -1611,6 +1618,445 @@ ORDER BY c1.location_name";
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Error loading dispatch equipment desk.", error = ex.Message });
+            }
+        }
+
+        /// <summary>po_supply_details.aspx — load equipment dispatch entry page.</summary>
+        [HttpGet("dispatch-entry/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierDispatchEntryPage(
+            int userId,
+            [FromQuery] int poId,
+            [FromQuery] int locId,
+            [FromQuery] int issueId = 0,
+            [FromQuery] int itemId = 0)
+        {
+            if (userId <= 0 || poId <= 0 || locId <= 0)
+                return BadRequest(new { message = "PO id and consignee id are required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                SupplierDispatchEntryPageDto? page = await LoadDispatchEntryPageAsync(
+                    con, poId, locId, itemId, issueId, supplierId.Value);
+                if (page == null)
+                    return NotFound(new { message = "Consignee PO line not found." });
+
+                if (page.CategoryId == 2)
+                    return BadRequest(new { message = "Reagent dispatch entry is not migrated yet. Use legacy reagent page." });
+
+                return Ok(page);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading dispatch entry.", error = ex.Message });
+            }
+        }
+
+        /// <summary>po_supply_details.aspx — generate / update invoice tab.</summary>
+        [HttpPost("dispatch-entry/invoice/by-user/{userId:int}")]
+        public async Task<IActionResult> SaveSupplierDispatchInvoice(
+            int userId,
+            [FromForm] int poId,
+            [FromForm] int locId,
+            [FromForm] int issueId,
+            [FromForm] string challanNo,
+            [FromForm] string challanDate,
+            [FromForm] string invoiceNo,
+            [FromForm] string invoiceDate,
+            [FromForm] string ewayBillNo,
+            [FromForm] string ewayBillDate,
+            [FromForm] string hsnCode,
+            [FromForm] string tcsValue,
+            [FromForm] string invoiceGst,
+            [FromForm] string remarks,
+            [FromForm] string bulkVsSerial,
+            IFormFile? file)
+        {
+            if (userId <= 0 || poId <= 0 || locId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            if (bulkVsSerial != "1" && bulkVsSerial != "2")
+                return BadRequest(new { message = "Please Select Bulk Supply or Serial No wise Supply" });
+
+            if (string.IsNullOrWhiteSpace(challanNo) || string.IsNullOrWhiteSpace(challanDate)
+                || string.IsNullOrWhiteSpace(invoiceNo) || string.IsNullOrWhiteSpace(invoiceDate)
+                || string.IsNullOrWhiteSpace(ewayBillNo) || string.IsNullOrWhiteSpace(ewayBillDate)
+                || string.IsNullOrWhiteSpace(hsnCode) || string.IsNullOrWhiteSpace(tcsValue))
+                return BadRequest(new { message = "Please Enter Challan & Invoice Details" });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                string poDateDisplay = await GetPoDateDisplayAsync(con, poId);
+                if (!TryParseSdDate(challanDate, out DateTime parsedChallanDate)
+                    || !TryParseSdDate(invoiceDate, out DateTime parsedInvoiceDate)
+                    || !TryParseSdDate(ewayBillDate, out DateTime parsedEwayDate))
+                    return BadRequest(new { message = "Invalid date format. Use DD/MM/YYYY" });
+
+                if (!string.IsNullOrWhiteSpace(poDateDisplay) && TryParseSdDate(poDateDisplay, out DateTime poDate))
+                {
+                    if (parsedChallanDate.Date < poDate.Date)
+                        return BadRequest(new { message = "Challan Date Should be After to PO Date." });
+                    if (parsedInvoiceDate.Date < poDate.Date)
+                        return BadRequest(new { message = "Invoice Date Should be After to PO Date." });
+                }
+
+                int resolvedIssueId = issueId;
+                if (resolvedIssueId <= 0)
+                    resolvedIssueId = await GetIncompleteDispatchIssueIdAsync(con, poId, locId);
+
+                bool isNewIssue = resolvedIssueId <= 0;
+
+                string? existingInvoicePath = null;
+                if (!isNewIssue)
+                    existingInvoicePath = await GetDispatchInvoicePathAsync(con, resolvedIssueId, poId, locId, supplierId.Value);
+
+                string virtualPath;
+                if (file != null && file.Length > 0)
+                {
+                    if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                        return BadRequest(new { message = "Please upload pdf file only." });
+                    if (file.Length > 5_000_000)
+                        return BadRequest(new { message = "Your can't upload file more than 3mb." });
+
+                    int fileIssueId = isNewIssue
+                        ? await GetNextDispatchIssueIdAsync(con)
+                        : resolvedIssueId;
+                    string fileName = $"{fileIssueId}-InvoicDoc.pdf";
+                    virtualPath = $"~/Upload_invoiceDoc/{fileName}";
+                    string savePath = Path.Combine(_invoiceDocRoot, fileName);
+                    await using (var stream = new FileStream(savePath, FileMode.Create))
+                        await file.CopyToAsync(stream);
+                }
+                else if (!string.IsNullOrWhiteSpace(existingInvoicePath))
+                {
+                    virtualPath = existingInvoicePath;
+                }
+                else
+                {
+                    return BadRequest(new { message = "Please select document to be uplaoded." });
+                }
+
+                if (isNewIssue)
+                {
+                    const string insertSql = @"
+INSERT INTO SupplierDispatch
+    (po_id, location_id, remarks, status, challan_no, invoice_no, supplierid,
+     invoice_date, challan_date, BulkVsSerial, EntryDATE, invoicedocpath,
+     invoiceGST, EwayBillNo, EwayBilldt, HSNcode, TCSValue)
+VALUES
+    (@PoId, @LocId, @Remarks, 'I', @ChallanNo, @InvoiceNo, @SupplierId,
+     @InvoiceDate, @ChallanDate, @BulkVsSerial, GETDATE(), @InvoicePath,
+     @InvoiceGst, @EwayBillNo, @EwayBillDate, @HsnCode, @TcsValue);
+SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+                    using SqlCommand insertCmd = new SqlCommand(insertSql, con);
+                    insertCmd.Parameters.AddWithValue("@PoId", poId);
+                    insertCmd.Parameters.AddWithValue("@LocId", locId);
+                    insertCmd.Parameters.AddWithValue("@Remarks", remarks?.Trim() ?? string.Empty);
+                    insertCmd.Parameters.AddWithValue("@ChallanNo", challanNo.Trim());
+                    insertCmd.Parameters.AddWithValue("@InvoiceNo", invoiceNo.Trim());
+                    insertCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    insertCmd.Parameters.AddWithValue("@InvoiceDate", parsedInvoiceDate);
+                    insertCmd.Parameters.AddWithValue("@ChallanDate", parsedChallanDate);
+                    insertCmd.Parameters.AddWithValue("@BulkVsSerial", bulkVsSerial);
+                    insertCmd.Parameters.AddWithValue("@InvoicePath", virtualPath);
+                    insertCmd.Parameters.AddWithValue("@InvoiceGst", invoiceGst?.Trim() ?? string.Empty);
+                    insertCmd.Parameters.AddWithValue("@EwayBillNo", ewayBillNo.Trim());
+                    insertCmd.Parameters.AddWithValue("@EwayBillDate", parsedEwayDate);
+                    insertCmd.Parameters.AddWithValue("@HsnCode", hsnCode.Trim());
+                    insertCmd.Parameters.AddWithValue("@TcsValue", tcsValue.Trim());
+
+                    object? newId = await insertCmd.ExecuteScalarAsync();
+                    resolvedIssueId = Convert.ToInt32(newId);
+                    return Ok(new { message = "Invoice Details Saved,Please Fill Items Details", issueId = resolvedIssueId });
+                }
+
+                const string updateSql = @"
+UPDATE SupplierDispatch
+SET remarks = @Remarks, challan_no = @ChallanNo, invoice_no = @InvoiceNo,
+    challan_date = @ChallanDate, invoice_date = @InvoiceDate, BulkVsSerial = @BulkVsSerial,
+    invoicedocpath = @InvoicePath, entryDATE = GETDATE(), invoiceGST = @InvoiceGst,
+    EwayBillNo = @EwayBillNo, EwayBilldt = @EwayBillDate, HSNcode = @HsnCode, TCSValue = @TcsValue
+WHERE issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId AND supplierid = @SupplierId AND status = 'I'";
+
+                using (SqlCommand updateCmd = new SqlCommand(updateSql, con))
+                {
+                    updateCmd.Parameters.AddWithValue("@IssueId", resolvedIssueId);
+                    updateCmd.Parameters.AddWithValue("@PoId", poId);
+                    updateCmd.Parameters.AddWithValue("@LocId", locId);
+                    updateCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    updateCmd.Parameters.AddWithValue("@Remarks", remarks?.Trim() ?? string.Empty);
+                    updateCmd.Parameters.AddWithValue("@ChallanNo", challanNo.Trim());
+                    updateCmd.Parameters.AddWithValue("@InvoiceNo", invoiceNo.Trim());
+                    updateCmd.Parameters.AddWithValue("@ChallanDate", parsedChallanDate);
+                    updateCmd.Parameters.AddWithValue("@InvoiceDate", parsedInvoiceDate);
+                    updateCmd.Parameters.AddWithValue("@BulkVsSerial", bulkVsSerial);
+                    updateCmd.Parameters.AddWithValue("@InvoicePath", virtualPath);
+                    updateCmd.Parameters.AddWithValue("@InvoiceGst", invoiceGst?.Trim() ?? string.Empty);
+                    updateCmd.Parameters.AddWithValue("@EwayBillNo", ewayBillNo.Trim());
+                    updateCmd.Parameters.AddWithValue("@EwayBillDate", parsedEwayDate);
+                    updateCmd.Parameters.AddWithValue("@HsnCode", hsnCode.Trim());
+                    updateCmd.Parameters.AddWithValue("@TcsValue", tcsValue.Trim());
+
+                    int rows = await updateCmd.ExecuteNonQueryAsync();
+                    if (rows == 0)
+                        return NotFound(new { message = "Incomplete dispatch issue not found." });
+                }
+
+                return Ok(new { message = "Invoice Details Updated,Please Fill Items Details", issueId = resolvedIssueId });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving dispatch invoice.", error = ex.Message });
+            }
+        }
+
+        /// <summary>po_supply_details.aspx — add / update equipment line.</summary>
+        [HttpPost("dispatch-entry/equipment-line/by-user/{userId:int}")]
+        public async Task<IActionResult> SaveSupplierDispatchEquipmentLine(
+            int userId,
+            [FromBody] SupplierDispatchEquipmentLineRequestDto request)
+        {
+            if (userId <= 0 || request.IssueId <= 0)
+                return BadRequest(new { message = "Issue id is required." });
+
+            if (request.SupplyQty <= 0)
+                return BadRequest(new { message = "Please Check Dispatch QTY" });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                var dispatchMeta = await GetDispatchIssueMetaAsync(con, request.IssueId, supplierId.Value);
+                if (dispatchMeta == null)
+                    return NotFound(new { message = "Dispatch issue not found." });
+
+                if (dispatchMeta.Value.Status != "I")
+                    return BadRequest(new { message = "Dispatch is already completed." });
+
+                decimal balanceQty = await GetDispatchBalanceQtyAsync(
+                    con, dispatchMeta.Value.PoId, dispatchMeta.Value.LocationId);
+                string bulkVsSerial = await GetDispatchBulkVsSerialAsync(con, request.IssueId);
+                bool qtyValid = bulkVsSerial == "1"
+                    ? request.SupplyQty == 1
+                    : request.SupplyQty >= 1;
+                if (!qtyValid)
+                    return BadRequest(new { message = "Please enter 1 by 1 in Serial No Supply or more than 1 qty in Bulk Supply" });
+
+                if (request.IssueDetailId <= 0)
+                {
+                    if (balanceQty < request.SupplyQty)
+                        return BadRequest(new { message = "Please Check Dispatch QTY" });
+
+                    const string insertSql = @"
+INSERT INTO Issue_item_details
+    (model_no, make, make_no, issue_id, item_id, equpitment_code, Supplyqty, status, entry_date, warranty_certificate_no)
+VALUES
+    (@ModelNo, @Make, @SerialNo, @IssueId, @ItemId, @ItemCode, @SupplyQty, 'I', GETDATE(), @WarrantyCardNo)";
+
+                    using SqlCommand insertCmd = new SqlCommand(insertSql, con);
+                    insertCmd.Parameters.AddWithValue("@ModelNo", dispatchMeta.Value.ModelNo);
+                    insertCmd.Parameters.AddWithValue("@Make", dispatchMeta.Value.Make);
+                    insertCmd.Parameters.AddWithValue("@SerialNo", request.SerialNo?.Trim() ?? string.Empty);
+                    insertCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                    insertCmd.Parameters.AddWithValue("@ItemId", dispatchMeta.Value.ItemId);
+                    insertCmd.Parameters.AddWithValue("@ItemCode", dispatchMeta.Value.ItemCode);
+                    insertCmd.Parameters.AddWithValue("@SupplyQty", request.SupplyQty);
+                    insertCmd.Parameters.AddWithValue("@WarrantyCardNo", request.WarrantyCardNo?.Trim() ?? string.Empty);
+                    await insertCmd.ExecuteNonQueryAsync();
+                    return Ok(new { message = "Saved Successfully" });
+                }
+
+                if (balanceQty + request.SupplyQty < request.SupplyQty)
+                    return BadRequest(new { message = "Please Check Dispatch QTY" });
+
+                const string updateSql = @"
+UPDATE Issue_item_details
+SET make_no = @SerialNo, warranty_certificate_no = @WarrantyCardNo,
+    Supplyqty = @SupplyQty, entry_date = GETDATE()
+WHERE issue_detail_id = @IssueDetailId AND issue_id = @IssueId";
+
+                using SqlCommand updateCmd = new SqlCommand(updateSql, con);
+                updateCmd.Parameters.AddWithValue("@SerialNo", request.SerialNo?.Trim() ?? string.Empty);
+                updateCmd.Parameters.AddWithValue("@WarrantyCardNo", request.WarrantyCardNo?.Trim() ?? string.Empty);
+                updateCmd.Parameters.AddWithValue("@SupplyQty", request.SupplyQty);
+                updateCmd.Parameters.AddWithValue("@IssueDetailId", request.IssueDetailId);
+                updateCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                int rows = await updateCmd.ExecuteNonQueryAsync();
+                if (rows == 0)
+                    return NotFound(new { message = "Equipment line not found." });
+
+                return Ok(new { message = "Update Successfully" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving equipment line.", error = ex.Message });
+            }
+        }
+
+        /// <summary>po_supply_details.aspx — complete dispatch.</summary>
+        [HttpPost("dispatch-entry/complete/by-user/{userId:int}")]
+        public async Task<IActionResult> CompleteSupplierDispatch(
+            int userId,
+            [FromBody] SupplierDispatchCompleteRequestDto request)
+        {
+            if (userId <= 0 || request.PoId <= 0 || request.LocationId <= 0 || request.IssueId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            if (string.IsNullOrWhiteSpace(request.DispatchNo) || string.IsNullOrWhiteSpace(request.DispatchDate)
+                || string.IsNullOrWhiteSpace(request.TentativeSupplyDate))
+                return BadRequest(new { message = "Please enter dispatch details." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                if (!TryParseSdDate(request.DispatchDate, out _))
+                    return BadRequest(new { message = "Invalid dispatch date format." });
+                if (!TryParseSdDate(request.TentativeSupplyDate, out _))
+                    return BadRequest(new { message = "Invalid tentative supply date format." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, request.PoId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found." });
+
+                var dispatchMeta = await GetDispatchIssueMetaAsync(con, request.IssueId, supplierId.Value);
+                if (dispatchMeta == null || dispatchMeta.Value.PoId != request.PoId || dispatchMeta.Value.LocationId != request.LocationId)
+                    return NotFound(new { message = "Dispatch issue not found." });
+
+                string? challanDate = await GetDispatchChallanDateAsync(con, request.IssueId);
+                if (!string.IsNullOrWhiteSpace(challanDate)
+                    && TryParseSdDate(challanDate, out DateTime parsedChallan)
+                    && TryParseSdDate(request.DispatchDate, out DateTime parsedDispatch)
+                    && parsedDispatch.Date < parsedChallan.Date)
+                    return BadRequest(new { message = "Dispatch Date Should be After/Equal to Challan Date." });
+
+                if (TryParseSdDate(request.DispatchDate, out DateTime dispatchDate)
+                    && TryParseSdDate(request.TentativeSupplyDate, out DateTime tentativeDate)
+                    && tentativeDate.Date < dispatchDate.Date)
+                    return BadRequest(new { message = "Tentative Date Should be After to Dispatch Date." });
+
+                if (!await DispatchIssueHasEquipmentLinesAsync(con, request.IssueId))
+                    return BadRequest(new { message = "Please Fill Equipment Entry Tab and Click + Button Before Complete Dispatch" });
+
+                const string updateDispatchSql = @"
+UPDATE SupplierDispatch
+SET status = 'C', dispatch_no = @DispatchNo,
+    Tentative_Sdate = CONVERT(date, @TentativeDate, 103),
+    dispatch_date = CONVERT(date, @DispatchDate, 103),
+    supplier_entry = GETDATE()
+WHERE Issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId AND supplierid = @SupplierId";
+
+                using (SqlCommand updateDispatchCmd = new SqlCommand(updateDispatchSql, con))
+                {
+                    updateDispatchCmd.Parameters.AddWithValue("@DispatchNo", request.DispatchNo.Trim());
+                    updateDispatchCmd.Parameters.AddWithValue("@TentativeDate", request.TentativeSupplyDate.Trim());
+                    updateDispatchCmd.Parameters.AddWithValue("@DispatchDate", request.DispatchDate.Trim());
+                    updateDispatchCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                    updateDispatchCmd.Parameters.AddWithValue("@PoId", request.PoId);
+                    updateDispatchCmd.Parameters.AddWithValue("@LocId", request.LocationId);
+                    updateDispatchCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    await updateDispatchCmd.ExecuteNonQueryAsync();
+                }
+
+                const string updateItemsSql = @"
+UPDATE Issue_item_details
+SET status = 'C',
+    cgmsc_log_printed = @CgmscLogo,
+    opening_manual_provided = @OperatingManual,
+    calibration_certificate_prov = @CalibrationCertificate,
+    org_warranty_card_rec = @WarrantyCard,
+    other_statutory = @OtherStatutory,
+    warranty_validity = @WarrantyValidity,
+    All_otherPODoc = @PoDocuments,
+    ServiceManual = @ServiceManual,
+    entry_date = GETDATE()
+WHERE issue_id = @IssueId";
+
+                using SqlCommand updateItemsCmd = new SqlCommand(updateItemsSql, con);
+                updateItemsCmd.Parameters.AddWithValue("@CgmscLogo", NormalizeYesNo(request.CgmscLogoPrinted));
+                updateItemsCmd.Parameters.AddWithValue("@OperatingManual", NormalizeYesNo(request.OperatingManual));
+                updateItemsCmd.Parameters.AddWithValue("@CalibrationCertificate", NormalizeYesNo(request.CalibrationCertificate));
+                updateItemsCmd.Parameters.AddWithValue("@WarrantyCard", NormalizeYesNo(request.WarrantyCard));
+                updateItemsCmd.Parameters.AddWithValue("@OtherStatutory", NormalizeYesNo(request.OtherStatutory));
+                updateItemsCmd.Parameters.AddWithValue("@WarrantyValidity", NormalizeYesNo(request.WarrantyValidity));
+                updateItemsCmd.Parameters.AddWithValue("@PoDocuments", NormalizeYesNo(request.PoDocuments));
+                updateItemsCmd.Parameters.AddWithValue("@ServiceManual", NormalizeYesNo(request.ServiceManual));
+                updateItemsCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                await updateItemsCmd.ExecuteNonQueryAsync();
+
+                return Ok(new { message = "Equipment Dispatched Successfully" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error completing dispatch.", error = ex.Message });
+            }
+        }
+
+        [HttpGet("dispatch-entry/invoice-file/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierDispatchInvoiceFile(int userId, [FromQuery] int issueId)
+        {
+            if (userId <= 0 || issueId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                const string sql = @"
+SELECT invoicedocpath FROM SupplierDispatch
+WHERE Issue_id = @IssueId AND supplierid = @SupplierId";
+
+                using SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@IssueId", issueId);
+                cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                object? result = await cmd.ExecuteScalarAsync();
+                string virtualPath = result?.ToString() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(virtualPath))
+                    return NotFound(new { message = "File not found." });
+
+                string physicalPath = ResolveLegacyUploadPath(virtualPath, _invoiceDocRoot);
+                if (!System.IO.File.Exists(physicalPath))
+                    return NotFound(new { message = "File not found." });
+
+                return PhysicalFile(physicalPath, "application/pdf", Path.GetFileName(physicalPath));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading invoice file.", error = ex.Message });
             }
         }
 
@@ -3709,6 +4155,354 @@ ORDER BY ped.extensionId DESC";
             }
 
             return rows;
+        }
+
+        private static string NormalizeYesNo(string? value)
+        {
+            return string.Equals(value, "Y", StringComparison.OrdinalIgnoreCase) ? "Y" : "N";
+        }
+
+        private async Task<SupplierDispatchEntryPageDto?> LoadDispatchEntryPageAsync(
+            SqlConnection con,
+            int poId,
+            int locId,
+            int itemId,
+            int issueId,
+            int supplierId)
+        {
+            string itemFilter = itemId > 0 ? " AND pi.item_id = @ItemId" : string.Empty;
+            string headerSql = $@"
+SELECT TOP 1 a.po_id, pi.item_id, m.categoryid,
+       CASE WHEN a.soissueDT IS NOT NULL THEN CONVERT(VARCHAR, a.soissueDT, 103) ELSE CONVERT(VARCHAR, a.po_date, 103) END AS po_date,
+       a.po_no, a.supplier_id, c.tender_no, pi.quantity AS po_qty_consignee,
+       (SELECT SUM(quantity) FROM po_items WHERE po_id = @PoId) AS po_qty_all,
+       r.item_name, r.item_code_as_per_tender AS item_code, l.location_name,
+       pi.percentage, pi.basicrate, pi.totalbasicprice, pi.totalprice,
+       ci.make, ci.model, CAST(pt.tranche_days AS VARCHAR(20)) AS tranche_days
+FROM purchase_order a
+INNER JOIN po_items pi ON pi.po_id = a.po_id AND pi.consignee_id = @LocId
+LEFT JOIN po_tranche pt ON pt.po_id = a.po_id
+LEFT JOIN contract_items ci ON ci.contract_item_id = pi.contract_item_id
+INNER JOIN masitems r ON r.item_id = pi.item_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+LEFT JOIN tenders c ON c.tender_id = a.tender_id
+LEFT JOIN maslocations l ON l.location_id = pi.consignee_id
+WHERE a.po_id = @PoId AND a.supplier_id = @SupplierId{itemFilter}";
+
+            SupplierDispatchEntryPageDto page = new();
+            using (SqlCommand headerCmd = new SqlCommand(headerSql, con))
+            {
+                headerCmd.Parameters.AddWithValue("@PoId", poId);
+                headerCmd.Parameters.AddWithValue("@LocId", locId);
+                headerCmd.Parameters.AddWithValue("@SupplierId", supplierId);
+                if (itemId > 0)
+                    headerCmd.Parameters.AddWithValue("@ItemId", itemId);
+
+                using SqlDataReader reader = await headerCmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return null;
+
+                page.PoId = poId;
+                page.LocationId = locId;
+                page.ItemId = ReadIntColumn(reader, "item_id");
+                page.SupplierId = supplierId;
+                page.CategoryId = ReadIntColumn(reader, "categoryid");
+                page.PoNo = ReadStringColumn(reader, "po_no");
+                page.PoDate = ReadStringColumn(reader, "po_date");
+                page.TenderNo = ReadStringColumn(reader, "tender_no");
+                page.ConsigneeName = ReadStringColumn(reader, "location_name");
+                page.ItemCode = ReadStringColumn(reader, "item_code");
+                page.ItemName = ReadStringColumn(reader, "item_name");
+                page.TaxPercent = $"{ReadDecimalColumn(reader, "percentage")} %";
+                page.BasicRate = ReadDecimalColumn(reader, "basicrate");
+                page.TotalNetPoValue = ReadDecimalColumn(reader, "totalbasicprice");
+                page.TotalGrossPoValue = ReadDecimalColumn(reader, "totalprice");
+                page.PoQtyConsignee = ReadDecimalColumn(reader, "po_qty_consignee");
+                page.PoQtyAllConsignees = ReadDecimalColumn(reader, "po_qty_all");
+                page.ModelNo = ReadStringColumn(reader, "model");
+                page.Make = ReadStringColumn(reader, "make");
+                page.SupplyDays = ReadStringColumn(reader, "tranche_days");
+            }
+
+            page.DispatchedQty = await GetDispatchSuppliedQtyAsync(con, poId, locId);
+            page.BalanceQty = page.PoQtyConsignee - page.DispatchedQty;
+
+            int resolvedIssueId = issueId;
+            if (resolvedIssueId <= 0)
+                resolvedIssueId = await GetIncompleteDispatchIssueIdAsync(con, poId, locId);
+            page.IssueId = resolvedIssueId;
+
+            if (resolvedIssueId > 0)
+                await LoadDispatchInvoiceSectionAsync(con, page, resolvedIssueId);
+
+            page.GstOptions = await LoadSupplierGstOptionsAsync(con, supplierId);
+            if (resolvedIssueId > 0)
+                page.EquipmentLines = await LoadDispatchEquipmentLinesAsync(con, resolvedIssueId);
+
+            return page;
+        }
+
+        private static async Task<decimal> GetDispatchSuppliedQtyAsync(SqlConnection con, int poId, int locId)
+        {
+            const string sql = @"
+SELECT ISNULL(SUM(i.Supplyqty), 0)
+FROM SupplierDispatch d
+INNER JOIN Issue_item_details i ON d.Issue_id = i.Issue_id
+WHERE d.po_id = @PoId AND d.location_id = @LocId";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@LocId", locId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result == null || result == DBNull.Value ? 0 : Convert.ToDecimal(result);
+        }
+
+        private static async Task<int> GetIncompleteDispatchIssueIdAsync(SqlConnection con, int poId, int locId)
+        {
+            const string sql = @"
+SELECT TOP 1 Issue_id FROM SupplierDispatch
+WHERE po_id = @PoId AND location_id = @LocId AND status = 'I'
+ORDER BY Issue_id DESC";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@LocId", locId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result == null || result == DBNull.Value ? 0 : Convert.ToInt32(result);
+        }
+
+        private static async Task<int> GetNextDispatchIssueIdAsync(SqlConnection con)
+        {
+            const string sql = "SELECT ISNULL(MAX(Issue_id), 0) + 1 FROM SupplierDispatch";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            object? result = await cmd.ExecuteScalarAsync();
+            return Convert.ToInt32(result);
+        }
+
+        private static async Task<string?> GetDispatchInvoicePathAsync(
+            SqlConnection con, int issueId, int poId, int locId, int supplierId)
+        {
+            const string sql = @"
+SELECT invoicedocpath FROM SupplierDispatch
+WHERE Issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId AND supplierid = @SupplierId";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@IssueId", issueId);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@LocId", locId);
+            cmd.Parameters.AddWithValue("@SupplierId", supplierId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result?.ToString();
+        }
+
+        private static async Task<string> GetPoDateDisplayAsync(SqlConnection con, int poId)
+        {
+            const string sql = @"
+SELECT CASE WHEN soissueDT IS NOT NULL THEN CONVERT(VARCHAR, soissueDT, 103)
+            ELSE CONVERT(VARCHAR, po_date, 103) END
+FROM purchase_order WHERE po_id = @PoId";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result?.ToString() ?? string.Empty;
+        }
+
+        private static async Task LoadDispatchInvoiceSectionAsync(
+            SqlConnection con, SupplierDispatchEntryPageDto page, int issueId)
+        {
+            const string sql = @"
+SELECT Issue_id, remarks, challan_no, invoice_no,
+       CONVERT(VARCHAR, challan_date, 103) AS challandate,
+       CONVERT(VARCHAR, dispatch_date, 103) AS dispatch_date,
+       CONVERT(VARCHAR, invoice_date, 103) AS invoice_date,
+       CONVERT(VARCHAR, Tentative_Sdate, 103) AS supply_date,
+       BulkVsSerial, invoicedocpath, invoiceGST, EwayBillNo,
+       CONVERT(VARCHAR, EwayBilldt, 103) AS ewaybilldt, HSNcode, TCSValue, dispatch_no,
+       (SELECT TOP 1 cgmsc_log_printed FROM Issue_item_details WHERE issue_id = @IssueId) AS cgmsc_logo,
+       (SELECT TOP 1 opening_manual_provided FROM Issue_item_details WHERE issue_id = @IssueId) AS operating_manual,
+       (SELECT TOP 1 calibration_certificate_prov FROM Issue_item_details WHERE issue_id = @IssueId) AS calibration_certificate,
+       (SELECT TOP 1 org_warranty_card_rec FROM Issue_item_details WHERE issue_id = @IssueId) AS warranty_card,
+       (SELECT TOP 1 other_statutory FROM Issue_item_details WHERE issue_id = @IssueId) AS other_statutory,
+       (SELECT TOP 1 warranty_validity FROM Issue_item_details WHERE issue_id = @IssueId) AS warranty_validity,
+       (SELECT TOP 1 All_otherPODoc FROM Issue_item_details WHERE issue_id = @IssueId) AS po_documents,
+       (SELECT TOP 1 ServiceManual FROM Issue_item_details WHERE issue_id = @IssueId) AS service_manual
+FROM SupplierDispatch
+WHERE Issue_id = @IssueId";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@IssueId", issueId);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return;
+
+            page.HasInvoice = true;
+            string invoicePath = ReadStringColumn(reader, "invoicedocpath");
+            page.HasInvoiceFile = !string.IsNullOrWhiteSpace(invoicePath);
+            page.ChallanNo = ReadStringColumn(reader, "challan_no");
+            page.ChallanDate = ReadStringColumn(reader, "challandate");
+            page.InvoiceNo = ReadStringColumn(reader, "invoice_no");
+            page.InvoiceDate = ReadStringColumn(reader, "invoice_date");
+            page.EwayBillNo = ReadStringColumn(reader, "EwayBillNo");
+            page.EwayBillDate = ReadStringColumn(reader, "ewaybilldt");
+            page.HsnCode = ReadStringColumn(reader, "HSNcode");
+            page.TcsValue = ReadStringColumn(reader, "TCSValue");
+            page.InvoiceGst = ReadStringColumn(reader, "invoiceGST");
+            page.Remarks = ReadStringColumn(reader, "remarks");
+            page.BulkVsSerial = ReadStringColumn(reader, "BulkVsSerial");
+            page.DispatchNo = ReadStringColumn(reader, "dispatch_no");
+            page.DispatchDate = ReadStringColumn(reader, "dispatch_date");
+            page.TentativeSupplyDate = ReadStringColumn(reader, "supply_date");
+            page.CgmscLogoPrinted = CoalesceYesNo(ReadStringColumn(reader, "cgmsc_logo"));
+            page.OperatingManual = CoalesceYesNo(ReadStringColumn(reader, "operating_manual"));
+            page.CalibrationCertificate = CoalesceYesNo(ReadStringColumn(reader, "calibration_certificate"));
+            page.WarrantyCard = CoalesceYesNo(ReadStringColumn(reader, "warranty_card"));
+            page.OtherStatutory = CoalesceYesNo(ReadStringColumn(reader, "other_statutory"));
+            page.WarrantyValidity = CoalesceYesNo(ReadStringColumn(reader, "warranty_validity"));
+            page.PoDocuments = CoalesceYesNo(ReadStringColumn(reader, "po_documents"));
+            page.ServiceManual = CoalesceYesNo(ReadStringColumn(reader, "service_manual"));
+        }
+
+        private static string CoalesceYesNo(string value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? "N" : value;
+        }
+
+        private static async Task<List<SupplierGstOptionDto>> LoadSupplierGstOptionsAsync(SqlConnection con, int supplierId)
+        {
+            const string sql = @"
+SELECT gstid, GSTNO AS GST FROM MASSUPPLIERGST
+WHERE FLAG = 'Y' AND SUPPLIERID = @SupplierId
+ORDER BY gstid";
+
+            var list = new List<SupplierGstOptionDto>();
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@SupplierId", supplierId);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new SupplierGstOptionDto
+                {
+                    GstId = ReadIntColumn(reader, "gstid"),
+                    GstNo = ReadStringColumn(reader, "GST", "gst"),
+                });
+            }
+            return list;
+        }
+
+        private static async Task<List<SupplierDispatchEquipmentLineDto>> LoadDispatchEquipmentLinesAsync(
+            SqlConnection con, int issueId)
+        {
+            const string sql = @"
+SELECT issue_detail_id, make_no, warranty_certificate_no, Supplyqty
+FROM Issue_item_details
+WHERE issue_id = @IssueId AND issue_detail_id IS NOT NULL
+ORDER BY issue_detail_id";
+
+            var list = new List<SupplierDispatchEquipmentLineDto>();
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@IssueId", issueId);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new SupplierDispatchEquipmentLineDto
+                {
+                    IssueDetailId = ReadIntColumn(reader, "issue_detail_id"),
+                    SerialNo = ReadStringColumn(reader, "make_no"),
+                    WarrantyCardNo = ReadStringColumn(reader, "warranty_certificate_no"),
+                    SupplyQty = ReadDecimalColumn(reader, "Supplyqty", "supplyqty"),
+                });
+            }
+            return list;
+        }
+
+        private readonly record struct DispatchIssueMeta(
+            int PoId,
+            int LocationId,
+            int ItemId,
+            string ItemCode,
+            string ModelNo,
+            string Make,
+            string Status);
+
+        private static async Task<DispatchIssueMeta?> GetDispatchIssueMetaAsync(
+            SqlConnection con, int issueId, int supplierId)
+        {
+            const string sql = @"
+SELECT TOP 1 d.po_id, d.location_id, d.status, pi.item_id,
+       r.item_code_as_per_tender AS item_code, ci.make, ci.model
+FROM SupplierDispatch d
+INNER JOIN purchase_order p ON p.po_id = d.po_id
+INNER JOIN po_items pi ON pi.po_id = d.po_id AND pi.consignee_id = d.location_id
+LEFT JOIN contract_items ci ON ci.contract_item_id = pi.contract_item_id
+INNER JOIN masitems r ON r.item_id = pi.item_id
+WHERE d.Issue_id = @IssueId AND d.supplierid = @SupplierId AND p.supplier_id = @SupplierId";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@IssueId", issueId);
+            cmd.Parameters.AddWithValue("@SupplierId", supplierId);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return null;
+
+            return new DispatchIssueMeta(
+                ReadIntColumn(reader, "po_id"),
+                ReadIntColumn(reader, "location_id"),
+                ReadIntColumn(reader, "item_id"),
+                ReadStringColumn(reader, "item_code"),
+                ReadStringColumn(reader, "model"),
+                ReadStringColumn(reader, "make"),
+                ReadStringColumn(reader, "status"));
+        }
+
+        private static async Task<decimal> GetDispatchBalanceQtyAsync(SqlConnection con, int poId, int locId)
+        {
+            const string sql = @"
+SELECT pi.quantity, ISNULL(SUM(i.Supplyqty), 0) AS supplied
+FROM purchase_order po
+INNER JOIN po_items pi ON pi.po_id = po.po_id
+LEFT OUTER JOIN SupplierDispatch d ON d.po_id = pi.po_id AND d.location_id = pi.consignee_id
+LEFT OUTER JOIN Issue_item_details i ON i.Issue_id = d.Issue_id
+WHERE pi.po_id = @PoId AND pi.consignee_id = @LocId
+GROUP BY pi.quantity";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@LocId", locId);
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return 0;
+
+            decimal orderQty = ReadDecimalColumn(reader, "quantity");
+            decimal supplied = ReadDecimalColumn(reader, "supplied");
+            return orderQty - supplied;
+        }
+
+        private static async Task<string> GetDispatchBulkVsSerialAsync(SqlConnection con, int issueId)
+        {
+            const string sql = "SELECT BulkVsSerial FROM SupplierDispatch WHERE Issue_id = @IssueId";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@IssueId", issueId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result?.ToString() ?? string.Empty;
+        }
+
+        private static async Task<string?> GetDispatchChallanDateAsync(SqlConnection con, int issueId)
+        {
+            const string sql = "SELECT CONVERT(VARCHAR, challan_date, 103) FROM SupplierDispatch WHERE Issue_id = @IssueId";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@IssueId", issueId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result?.ToString();
+        }
+
+        private static async Task<bool> DispatchIssueHasEquipmentLinesAsync(SqlConnection con, int issueId)
+        {
+            const string sql = "SELECT TOP 1 issue_id FROM Issue_item_details WHERE issue_id = @IssueId";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@IssueId", issueId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
         }
 
         private static string ResolveLegacyUploadPath(string? virtualPath, string fileRoot)
