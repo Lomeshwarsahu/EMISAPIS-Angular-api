@@ -2521,28 +2521,12 @@ ORDER BY b.po_date DESC, c1.location_name";
                     return BadRequest(new { message = "Received date cannot be greater than today." });
                 if (TryParseLegacyDate(page.LastReceiptDate, out DateTime lastReceiptDate) &&
                     receivedDate.Date > lastReceiptDate.Date)
-                    return BadRequest(new { message = $"Received date cannot be greater than {page.LastReceiptDate}." });
+                    return BadRequest(new
+                    {
+                        message = $"Received date cannot be greater than last date to be received of PO ({page.LastReceiptDate}). Please contact BME for further clarification.",
+                    });
 
-                const string balSql = @"
-SELECT ISNULL(SUM(i.Supplyqty), 0) - ISNULL((
-    SELECT SUM(r.receipt_qty)
-    FROM receipts r
-    WHERE r.po_id = @PoId AND r.location_id = @LocId AND r.issue_id <> @IssueId
-), 0) AS BalQty
-FROM SupplierDispatch d
-INNER JOIN Issue_item_details i ON i.Issue_id = d.Issue_id
-WHERE d.issue_id = @IssueId";
-                decimal balQty = 0;
-                using (SqlCommand balCmd = new SqlCommand(balSql, con))
-                {
-                    balCmd.Parameters.AddWithValue("@PoId", request.PoId);
-                    balCmd.Parameters.AddWithValue("@LocId", request.LocationId);
-                    balCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
-                    object? result = await balCmd.ExecuteScalarAsync();
-                    if (result != null && result != DBNull.Value)
-                        balQty = Convert.ToDecimal(result);
-                }
-                if (receiptQty > balQty && balQty > 0)
+                if (receiptQty > page.DispatchedQty)
                     return BadRequest(new { message = "You cannot receive more than dispatched quantity." });
 
                 int receiptId = page.ReceiptId;
@@ -2669,8 +2653,25 @@ WHERE i.issue_detail_id = @IssueDetailId";
                 if (installationDate.Date > DateTime.Today)
                     return BadRequest(new { message = "Installation date cannot be greater than today." });
 
+                int warrantyYears = 1;
+                const string warrantySql = @"
+SELECT ISNULL(t.warranty_year, 1)
+FROM receipts r
+INNER JOIN purchase_order p ON p.po_id = r.po_id
+LEFT JOIN tenders t ON t.tender_id = p.tender_id
+WHERE r.receipt_id = @ReceiptId";
+                using (SqlCommand warrantyCmd = new SqlCommand(warrantySql, con))
+                {
+                    warrantyCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    object? warrantyResult = await warrantyCmd.ExecuteScalarAsync();
+                    if (warrantyResult != null && warrantyResult != DBNull.Value)
+                        warrantyYears = Convert.ToInt32(warrantyResult);
+                }
+                if (warrantyYears <= 0)
+                    warrantyYears = 1;
+
                 DateTime warrantyFrom = installationDate.Date;
-                DateTime warrantyTo = installationDate.Date.AddYears(1);
+                DateTime warrantyTo = installationDate.Date.AddYears(warrantyYears);
                 const string updateExistingSql = @"
 UPDATE receipt_item_details
 SET installation_date = @InstallationDate,
@@ -2721,15 +2722,17 @@ INSERT INTO receipt_item_details(model_no, make_no, installation_date, warenty_f
     installation_by, cgmsc_log_printed, warranty_validity, manual_provided, calibration_certificate_prov,
     org_warranty_card_rec, other_statutory, inticated_po_are_received, opening_manual_provided,
     warranty_certificate_no, entryDT)
-SELECT m.model, i.make_no, @InstallationDate, @WarrantyFrom, @WarrantyTo, 'I',
-       m.item_code_as_per_tender, m.item_name, @InstallationLocation, @ReceiptId, @IssueDetailId, @ReceivedQty,
+SELECT ISNULL(ci.model, '') AS model_no, i.make_no, @InstallationDate, @WarrantyFrom, @WarrantyTo, 'I',
+       mi.item_code_as_per_tender, ISNULL(ci.make, ''), @InstallationLocation, @ReceiptId, @IssueDetailId, @ReceivedQty,
        @WarrantyCardNo, @InstallationBy, @CgmscLogoPrinted, @WarrantyValidity, @ServiceManual,
        @CalibrationCertificate, @WarrantyCard, @OtherStatutory, @PoDocuments, @OperatingManual,
        @WarrantyCertificateNo, GETDATE()
 FROM Issue_item_details i
 INNER JOIN SupplierDispatch d ON d.Issue_id = i.Issue_id
-INNER JOIN purchase_order p ON p.po_id = d.po_id
-INNER JOIN masitems m ON m.item_id = p.item_id
+INNER JOIN purchase_order po ON po.po_id = d.po_id
+INNER JOIN po_items pi ON pi.po_id = d.po_id AND pi.consignee_id = d.location_id
+LEFT JOIN contract_items ci ON ci.contract_item_id = pi.contract_item_id
+INNER JOIN masitems mi ON mi.item_id = pi.item_id
 WHERE i.issue_detail_id = @IssueDetailId";
                     using SqlCommand insertCmd = new SqlCommand(insertSql, con);
                     insertCmd.Parameters.AddWithValue("@InstallationDate", installationDate);
@@ -2751,6 +2754,17 @@ WHERE i.issue_detail_id = @IssueDetailId";
                     insertCmd.Parameters.AddWithValue("@OperatingManual", request.OperatingManual);
                     insertCmd.Parameters.AddWithValue("@WarrantyCertificateNo", warrantyCertificate);
                     await insertCmd.ExecuteNonQueryAsync();
+                }
+
+                const string bulkSql = @"
+UPDATE receipts
+SET BulkInst = @BulkInst
+WHERE receipt_id = @ReceiptId";
+                using (SqlCommand bulkCmd = new SqlCommand(bulkSql, con))
+                {
+                    bulkCmd.Parameters.AddWithValue("@BulkInst", request.BulkInst ? "Y" : "N");
+                    bulkCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    await bulkCmd.ExecuteNonQueryAsync();
                 }
 
                 return Ok(new { message = "Installation details saved successfully." });
@@ -2791,6 +2805,80 @@ WHERE i.issue_detail_id = @IssueDetailId";
                         return BadRequest(new { message = "Please save installation details before completion." });
                 }
 
+                const string dispatchCountSql = "SELECT COUNT(*) FROM Issue_item_details WHERE Issue_id = @IssueId";
+                int dispatchCount;
+                using (SqlCommand dispatchCountCmd = new SqlCommand(dispatchCountSql, con))
+                {
+                    dispatchCountCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                    dispatchCount = Convert.ToInt32(await dispatchCountCmd.ExecuteScalarAsync());
+                }
+
+                const string installedCountSql = "SELECT COUNT(*) FROM receipt_item_details WHERE receipt_id = @ReceiptId";
+                int installedCount;
+                using (SqlCommand installedCountCmd = new SqlCommand(installedCountSql, con))
+                {
+                    installedCountCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    installedCount = Convert.ToInt32(await installedCountCmd.ExecuteScalarAsync());
+                }
+                if (dispatchCount != installedCount)
+                    return BadRequest(new { message = "Number of dispatched items and installed items do not match." });
+
+                bool bulkInst = false;
+                const string bulkFlagSql = "SELECT ISNULL(BulkInst, 'N') FROM receipts WHERE receipt_id = @ReceiptId";
+                using (SqlCommand bulkFlagCmd = new SqlCommand(bulkFlagSql, con))
+                {
+                    bulkFlagCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    object? bulkResult = await bulkFlagCmd.ExecuteScalarAsync();
+                    bulkInst = bulkResult?.ToString()?.Equals("Y", StringComparison.OrdinalIgnoreCase) == true;
+                }
+
+                if (bulkInst)
+                {
+                    const string bulkFilesSql = @"
+SELECT ISNULL(InstalationReportFile, '') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, '') AS InstalationPhoto,
+       ISNULL(Challanfile, '') AS Challanfile,
+       ISNULL(WarrantyCardFile, '') AS WarrantyCardFile
+FROM receipts
+WHERE receipt_id = @ReceiptId";
+                    using SqlCommand bulkFilesCmd = new SqlCommand(bulkFilesSql, con);
+                    bulkFilesCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    using SqlDataReader reader = await bulkFilesCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return BadRequest(new { message = "Receipt not found." });
+                    if (!HasInstallationFileValue(ReadStringColumn(reader, "InstalationReportFile")))
+                        return BadRequest(new { message = "Please upload signed copy of combined receipt and installation file in PDF." });
+                    if (!HasInstallationFileValue(ReadStringColumn(reader, "InstalationPhoto")))
+                        return BadRequest(new { message = "Please upload installation photos in PDF." });
+                    if (!HasInstallationFileValue(ReadStringColumn(reader, "Challanfile")))
+                        return BadRequest(new { message = "Please upload challan and invoice copies in PDF." });
+                    if (!HasInstallationFileValue(ReadStringColumn(reader, "WarrantyCardFile")))
+                        return BadRequest(new { message = "Please upload warranty cards in PDF." });
+                }
+                else
+                {
+                    const string rowFilesSql = @"
+SELECT InstalationReportFile, InstalationPhoto, Challanfile, WarrantyCardFile
+FROM receipt_item_details
+WHERE receipt_id = @ReceiptId";
+                    using SqlCommand rowFilesCmd = new SqlCommand(rowFilesSql, con);
+                    rowFilesCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    using SqlDataReader reader = await rowFilesCmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (!HasInstallationFileValue(ReadStringColumn(reader, "InstalationReportFile"))
+                            || !HasInstallationFileValue(ReadStringColumn(reader, "InstalationPhoto"))
+                            || !HasInstallationFileValue(ReadStringColumn(reader, "Challanfile"))
+                            || !HasInstallationFileValue(ReadStringColumn(reader, "WarrantyCardFile")))
+                        {
+                            return BadRequest(new
+                            {
+                                message = "Please upload receipt, installation report, photos, challan and warranty card in PDF for each serial before completion.",
+                            });
+                        }
+                    }
+                }
+
                 const string updateReceiptSql = @"
 UPDATE receipts
 SET IsSUPInstEntry = 'Y', status = 'C', entryDT = GETDATE()
@@ -2828,6 +2916,102 @@ WHERE Issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId";
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Error completing installation.", error = ex.Message });
+            }
+        }
+
+        [HttpPost("receipt-entry/file/by-user/{userId:int}")]
+        public async Task<IActionResult> UploadSupplierReceiptInstallationFile(
+            int userId,
+            [FromForm] int receiptId,
+            [FromForm] string fileType,
+            [FromForm] int itemDetailId = 0,
+            [FromForm] bool bulk = false,
+            IFormFile? file = null)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (receiptId <= 0)
+                return BadRequest(new { message = "Receipt id is required." });
+            if (!bulk && itemDetailId <= 0)
+                return BadRequest(new { message = "Item detail id is required." });
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Please select a file to upload." });
+            if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Please upload pdf file only." });
+            if (file.Length > 5_000_000)
+                return BadRequest(new { message = "Your can't upload file more than 3mb." });
+
+            string normalizedType = (fileType ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalizedType is not ("insreport" or "insphoto" or "waranty" or "chalan"))
+                return BadRequest(new { message = "Invalid file type." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                if (!await ReceiptBelongsToSupplierAsync(con, receiptId, supplierId.Value))
+                    return NotFound(new { message = "Receipt not found for this supplier." });
+
+                byte[] fileBytes;
+                await using (var memory = new MemoryStream())
+                {
+                    await file.CopyToAsync(memory);
+                    fileBytes = memory.ToArray();
+                }
+
+                string columnName = normalizedType switch
+                {
+                    "insreport" => "InstalationReportFile",
+                    "insphoto" => "InstalationPhoto",
+                    "waranty" => "WarrantyCardFile",
+                    _ => "Challanfile",
+                };
+
+                string fileToken = normalizedType switch
+                {
+                    "insreport" => bulk ? $"InstallationReport_{receiptId}" : $"InstallationReport_{itemDetailId}",
+                    "insphoto" => bulk ? $"InstalPhoto__{receiptId}" : $"InstalPhoto_{itemDetailId}",
+                    "waranty" => bulk ? $"WarrantyCard__{receiptId}" : $"WarrantyCard_{itemDetailId}",
+                    _ => bulk ? $"Chalan_{receiptId}" : $"Chalan_{itemDetailId}",
+                };
+
+                int mongoLookupId = bulk ? receiptId : itemDetailId;
+                await _mongoService.UpsertInstallationFile(mongoLookupId, normalizedType, fileBytes);
+
+                if (bulk)
+                {
+                    string bulkSql = $@"
+UPDATE receipts SET {columnName} = @FileToken WHERE receipt_id = @ReceiptId;
+UPDATE receipt_item_details SET bulkinst = 'Y', {columnName} = @FileToken, ISmongo = 'Y' WHERE receipt_id = @ReceiptId;";
+                    using SqlCommand bulkCmd = new SqlCommand(bulkSql, con);
+                    bulkCmd.Parameters.AddWithValue("@FileToken", fileToken);
+                    bulkCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    await bulkCmd.ExecuteNonQueryAsync();
+                }
+                else
+                {
+                    string rowSql = $@"
+UPDATE receipt_item_details
+SET {columnName} = @FileToken, ISmongo = 'Y'
+WHERE item_detail_id = @ItemDetailId AND receipt_id = @ReceiptId";
+                    using SqlCommand rowCmd = new SqlCommand(rowSql, con);
+                    rowCmd.Parameters.AddWithValue("@FileToken", fileToken);
+                    rowCmd.Parameters.AddWithValue("@ItemDetailId", itemDetailId);
+                    rowCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    int affected = await rowCmd.ExecuteNonQueryAsync();
+                    if (affected == 0)
+                        return NotFound(new { message = "Receipt item not found." });
+                }
+
+                return Ok(new { message = "File uploaded successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error uploading installation file.", error = ex.Message });
             }
         }
 
@@ -4415,8 +4599,19 @@ SELECT TOP 1
        ISNULL(sup.Supplyqty, 0) AS dispatched_qty,
        poi.quantity - ISNULL(sup.Supplyqty, 0) AS bal_qty,
        CAST(pt.tranche_days AS VARCHAR(20)) AS tranche_days,
-       1 AS warranty_year,
-       '' AS ldate,
+       ISNULL(t.warranty_year, 1) AS warranty_year,
+       CASE
+           WHEN t.cancellationdays IS NULL THEN ''
+           ELSE CAST(t.cancellationdays AS VARCHAR(20))
+       END AS cancellation_days,
+       CASE
+           WHEN po.extendeddate > po.po_date THEN CONVERT(VARCHAR, po.extendeddate, 103)
+           WHEN t.cancellationdays IS NOT NULL THEN CONVERT(
+               VARCHAR,
+               DATEADD(DAY, t.cancellationdays, CASE WHEN po.soissueDT IS NOT NULL THEN po.soissueDT ELSE po.po_date END),
+               103)
+           ELSE '-'
+       END AS ldate,
        d.challan_no,
        CONVERT(VARCHAR, d.challan_date, 103) AS challan_date,
        d.invoice_no,
@@ -4474,6 +4669,7 @@ WHERE d.po_id = @PoId AND d.location_id = @LocId AND d.issue_id = @IssueId AND p
                         BalanceQty = ReadDecimalColumn(reader, "bal_qty"),
                         SupplyDays = ReadStringColumn(reader, "tranche_days"),
                         WarrantyYears = ReadIntColumn(reader, "warranty_year"),
+                        CancellationDays = ReadStringColumn(reader, "cancellation_days"),
                         LastReceiptDate = ReadStringColumn(reader, "ldate"),
                         ChallanNo = ReadStringColumn(reader, "challan_no"),
                         ChallanDate = ReadStringColumn(reader, "challan_date"),
@@ -4496,7 +4692,12 @@ SELECT TOP 1 receipt_id,
        CONVERT(VARCHAR, recieved_date, 103) AS recieved_date,
        receipt_no,
        receipt_qty,
-       remarks
+       remarks,
+       ISNULL(BulkInst, 'N') AS BulkInst,
+       ISNULL(InstalationReportFile, '') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, '') AS InstalationPhoto,
+       ISNULL(WarrantyCardFile, '') AS WarrantyCardFile,
+       ISNULL(Challanfile, '') AS Challanfile
 FROM receipts
 WHERE issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId
 ORDER BY receipt_id DESC";
@@ -4513,6 +4714,16 @@ ORDER BY receipt_id DESC";
                     page.ReceiptNo = ReadStringColumn(reader, "receipt_no");
                     page.ReceiptQty = ReadStringColumn(reader, "receipt_qty");
                     page.ReceiptRemarks = ReadStringColumn(reader, "remarks");
+                    page.BulkInst = ReadStringColumn(reader, "BulkInst")
+                        .Equals("Y", StringComparison.OrdinalIgnoreCase);
+                    page.HasBulkInstallationReport = HasInstallationFileValue(
+                        ReadStringColumn(reader, "InstalationReportFile"));
+                    page.HasBulkInstallationPhoto = HasInstallationFileValue(
+                        ReadStringColumn(reader, "InstalationPhoto"));
+                    page.HasBulkWarrantyCard = HasInstallationFileValue(
+                        ReadStringColumn(reader, "WarrantyCardFile"));
+                    page.HasBulkChallan = HasInstallationFileValue(
+                        ReadStringColumn(reader, "Challanfile"));
                 }
             }
 
@@ -4546,7 +4757,11 @@ SELECT item_detail_id, issue_detail_id, make_no, warranty_certificate_no, warran
        CONVERT(VARCHAR, warenty_to, 103) AS warenty_to,
        installation_by, installation_location, cgmsc_log_printed, warranty_validity, manual_provided,
        opening_manual_provided, calibration_certificate_prov, org_warranty_card_rec, other_statutory,
-       inticated_po_are_received
+       inticated_po_are_received,
+       ISNULL(InstalationReportFile, '') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, '') AS InstalationPhoto,
+       ISNULL(WarrantyCardFile, '') AS WarrantyCardFile,
+       ISNULL(Challanfile, '') AS Challanfile
 FROM receipt_item_details
 WHERE receipt_id = @ReceiptId
 ORDER BY item_detail_id";
@@ -4576,6 +4791,14 @@ ORDER BY item_detail_id";
                         WarrantyCard = ReadStringColumn(reader, "org_warranty_card_rec"),
                         OtherStatutory = ReadStringColumn(reader, "other_statutory"),
                         PoDocuments = ReadStringColumn(reader, "inticated_po_are_received"),
+                        HasInstallationReport = HasInstallationFileValue(
+                            ReadStringColumn(reader, "InstalationReportFile")),
+                        HasInstallationPhoto = HasInstallationFileValue(
+                            ReadStringColumn(reader, "InstalationPhoto")),
+                        HasWarrantyCard = HasInstallationFileValue(
+                            ReadStringColumn(reader, "WarrantyCardFile")),
+                        HasChallan = HasInstallationFileValue(
+                            ReadStringColumn(reader, "Challanfile")),
                     });
                 }
             }

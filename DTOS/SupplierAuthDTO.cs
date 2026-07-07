@@ -365,7 +365,13 @@ namespace EMISAPIS.DTOS
         public decimal BalanceQty { get; set; }
         public string SupplyDays { get; set; } = string.Empty;
         public int WarrantyYears { get; set; }
+        public string CancellationDays { get; set; } = string.Empty;
         public string LastReceiptDate { get; set; } = string.Empty;
+        public bool BulkInst { get; set; }
+        public bool HasBulkInstallationReport { get; set; }
+        public bool HasBulkInstallationPhoto { get; set; }
+        public bool HasBulkWarrantyCard { get; set; }
+        public bool HasBulkChallan { get; set; }
         public string ChallanNo { get; set; } = string.Empty;
         public string ChallanDate { get; set; } = string.Empty;
         public string InvoiceNo { get; set; } = string.Empty;
@@ -410,6 +416,10 @@ namespace EMISAPIS.DTOS
         public string WarrantyCard { get; set; } = "N";
         public string OtherStatutory { get; set; } = "N";
         public string PoDocuments { get; set; } = "N";
+        public bool HasInstallationReport { get; set; }
+        public bool HasInstallationPhoto { get; set; }
+        public bool HasWarrantyCard { get; set; }
+        public bool HasChallan { get; set; }
     }
 
     public class SupplierReceiptSaveRequestDto
@@ -440,6 +450,7 @@ namespace EMISAPIS.DTOS
         public string WarrantyCard { get; set; } = "N";
         public string OtherStatutory { get; set; } = "N";
         public string PoDocuments { get; set; } = "N";
+        public bool BulkInst { get; set; }
     }
 
     public class SupplierReceiptCompleteRequestDto
