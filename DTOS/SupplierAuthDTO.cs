@@ -299,6 +299,7 @@ namespace EMISAPIS.DTOS
     {
         public int PoId { get; set; }
         public string DisplayText { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
     }
 
     public class SupplierPoReceiptFiltersDto
@@ -322,6 +323,9 @@ namespace EMISAPIS.DTOS
     {
         public int PoItemId { get; set; }
         public int PoId { get; set; }
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string RowStatus { get; set; } = string.Empty;
         public int ConsigneeId { get; set; }
         public string LocationName { get; set; } = string.Empty;
         public string ItemName { get; set; } = string.Empty;

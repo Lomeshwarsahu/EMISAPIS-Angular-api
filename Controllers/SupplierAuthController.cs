@@ -2282,7 +2282,7 @@ ORDER BY b.po_date DESC";
 
                 var options = new List<SupplierPoReceiptOptionDto>
                 {
-                    new() { PoId = 0, DisplayText = "Select PO" }
+                    new() { PoId = 0, DisplayText = "All PO", Status = string.Empty }
                 };
 
                 using SqlConnection con = new SqlConnection(_connectionString);
@@ -2295,10 +2295,12 @@ ORDER BY b.po_date DESC";
                 using SqlDataReader reader = await cmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
                 {
+                    string status = ReadStringColumn(reader, "status");
                     options.Add(new SupplierPoReceiptOptionDto
                     {
                         PoId = ReadIntColumn(reader, "po_id"),
-                        DisplayText = ReadStringColumn(reader, "data")
+                        DisplayText = ReadStringColumn(reader, "data"),
+                        Status = status,
                     });
                 }
 
@@ -2314,12 +2316,12 @@ ORDER BY b.po_date DESC";
         [HttpGet("po-supply-receipt/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierPoReceipt(
             int userId,
-            [FromQuery] int poId)
+            [FromQuery] int poId = 0,
+            [FromQuery] int financialYearId = 0,
+            [FromQuery] string poType = "All")
         {
             if (userId <= 0)
                 return BadRequest(new { message = "Invalid user id." });
-            if (poId <= 0)
-                return BadRequest(new { message = "PO id is required." });
 
             try
             {
@@ -2327,13 +2329,28 @@ ORDER BY b.po_date DESC";
                 if (supplierId == null)
                     return NotFound(new { message = "Supplier user not found." });
 
+                string statusFilter = poType switch
+                {
+                    "PRI" => "Pending For Receipt/Installation",
+                    "PD" => "Dispatch Pending",
+                    "C" => "Installation Completed",
+                    _ => string.Empty
+                };
+
                 const string sql = @"
 SELECT c1.location_name, a.po_id, a.po_item_id, a.item_id, a.quantity,
        ISNULL(re.receiptQTY, 0) AS receiptQTY, ISNULL(ins.insqty, 0) AS insqty,
        ISNULL(sup.Supplyqty, 0) AS Supplyqty, a.consignee_id,
        R.item_name, R.item_code_as_per_tender AS item_code,
        ISNULL(dsp.DeniedQTY, 0) AS Deniedqty,
-       ISNULL(dsp.deniedstatus, '-') AS DeniedStatus
+       ISNULL(dsp.deniedstatus, '-') AS DeniedStatus,
+       b.outward_no + '-' + b.po_no AS po_no,
+       CONVERT(VARCHAR, b.po_date, 103) AS po_date,
+       CASE WHEN a.quantity = ISNULL(ins.insqty, 0) AND a.quantity = ISNULL(sup.Supplyqty, 0)
+            THEN 'Installation Completed'
+            WHEN ISNULL(sup.Supplyqty, 0) = 0 OR a.quantity > ISNULL(sup.Supplyqty, 0)
+            THEN 'Dispatch Pending'
+            ELSE 'Pending For Receipt/Installation' END AS row_status
 FROM po_items a
 INNER JOIN masitems R ON R.item_id = a.item_id
 INNER JOIN purchase_order b ON a.po_id = b.po_id
@@ -2343,20 +2360,20 @@ LEFT OUTER JOIN (
     SELECT po_id, ISNULL(SUM(Supplyqty), 0) AS Supplyqty, d.location_id
     FROM SupplierDispatch d
     INNER JOIN Issue_item_details i ON d.Issue_id = i.Issue_id
-    WHERE d.status = 'C' AND d.po_id = @PoId
+    WHERE d.status = 'C'
     GROUP BY po_id, d.location_id
 ) sup ON sup.po_id = a.po_id AND sup.location_id = a.consignee_id
 LEFT OUTER JOIN (
     SELECT ISNULL(SUM(r.receipt_qty), 0) AS receiptQTY, r.po_id, r.location_id
     FROM receipts r
-    WHERE r.recieved_date IS NOT NULL AND r.status IN ('C', 'Received') AND r.po_id = @PoId
+    WHERE r.recieved_date IS NOT NULL AND r.status IN ('C', 'Received')
     GROUP BY po_id, r.location_id
 ) re ON re.po_id = a.po_id AND re.location_id = a.consignee_id
 LEFT OUTER JOIN (
     SELECT SUM(ri.received_qty) AS insqty, r.po_id, r.location_id
     FROM receipts r
     LEFT OUTER JOIN receipt_item_details ri ON ri.receipt_id = r.receipt_id
-    WHERE r.recieved_date IS NOT NULL AND r.status IN ('C') AND r.po_id = @PoId
+    WHERE r.recieved_date IS NOT NULL AND r.status IN ('C')
     GROUP BY r.po_id, r.location_id
 ) ins ON ins.po_id = a.po_id AND ins.location_id = a.consignee_id
 LEFT OUTER JOIN (
@@ -2364,30 +2381,43 @@ LEFT OUTER JOIN (
            CASE WHEN receiptid IS NULL THEN 'Receipt & Installation both denied'
                 ELSE 'Installation denied' END AS deniedstatus
     FROM Descrepency d
-    INNER JOIN purchase_order p ON p.po_id = d.ponoid
-    WHERE p.po_id = @PoId
 ) dsp ON dsp.ponoid = a.po_id AND dsp.consigneeid = a.consignee_id
-WHERE a.po_id = @PoId AND b.supplier_id = @SupplierId
-ORDER BY ISNULL(ins.insqty, 0)";
+WHERE b.supplier_id = @SupplierId
+  AND b.status IN ('Order Placed', 'Partially Received', 'Completed')
+  AND (@PoId = 0 OR a.po_id = @PoId)
+  AND (@FinancialYearId = 0 OR b.financial_year_id = @FinancialYearId)
+  AND (@StatusFilter = '' OR (
+        CASE WHEN a.quantity = ISNULL(ins.insqty, 0) AND a.quantity = ISNULL(sup.Supplyqty, 0)
+             THEN 'Installation Completed'
+             WHEN ISNULL(sup.Supplyqty, 0) = 0 OR a.quantity > ISNULL(sup.Supplyqty, 0)
+             THEN 'Dispatch Pending'
+             ELSE 'Pending For Receipt/Installation' END) = @StatusFilter)
+ORDER BY b.po_date DESC, c1.location_name";
 
                 var rows = new List<SupplierPoReceiptRowDto>();
                 using SqlConnection con = new SqlConnection(_connectionString);
                 await con.OpenAsync();
 
-                var pendingRows = new List<(SupplierPoReceiptRowDto Row, int ConsigneeId)>();
+                var pendingRows = new List<(SupplierPoReceiptRowDto Row, int ConsigneeId, int PoId)>();
                 using (SqlCommand cmd = new SqlCommand(sql, con))
                 {
                     cmd.Parameters.AddWithValue("@PoId", poId);
                     cmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
+                    cmd.Parameters.AddWithValue("@StatusFilter", statusFilter);
 
                     using SqlDataReader reader = await cmd.ExecuteReaderAsync();
                     while (await reader.ReadAsync())
                     {
                         int consigneeId = ReadIntColumn(reader, "consignee_id");
+                        int rowPoId = ReadIntColumn(reader, "po_id");
                         pendingRows.Add((new SupplierPoReceiptRowDto
                         {
                             PoItemId = ReadIntColumn(reader, "po_item_id"),
-                            PoId = ReadIntColumn(reader, "po_id"),
+                            PoId = rowPoId,
+                            PoNo = ReadStringColumn(reader, "po_no"),
+                            PoDate = ReadStringColumn(reader, "po_date"),
+                            RowStatus = ReadStringColumn(reader, "row_status"),
                             ConsigneeId = consigneeId,
                             LocationName = ReadStringColumn(reader, "location_name"),
                             ItemName = ReadStringColumn(reader, "item_name"),
@@ -2398,13 +2428,13 @@ ORDER BY ISNULL(ins.insqty, 0)";
                             InstQty = ReadDecimalColumn(reader, "insqty"),
                             DeniedQty = ReadDecimalColumn(reader, "Deniedqty"),
                             DeniedStatus = ReadStringColumn(reader, "DeniedStatus", "deniedstatus"),
-                        }, consigneeId));
+                        }, consigneeId, rowPoId));
                     }
                 }
 
                 foreach (var entry in pendingRows)
                 {
-                    entry.Row.Batches = await LoadReceiptBatchesAsync(con, poId, entry.ConsigneeId);
+                    entry.Row.Batches = await LoadReceiptBatchesAsync(con, entry.PoId, entry.ConsigneeId);
                     rows.Add(entry.Row);
                 }
 
