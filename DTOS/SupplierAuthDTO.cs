@@ -699,4 +699,66 @@ namespace EMISAPIS.DTOS
         public string DispatchNo { get; set; } = string.Empty;
         public string DispatchDate { get; set; } = string.Empty;
     }
+
+    /// <summary>rdlcPoReport.aspx — printable purchase order.</summary>
+    public class SupplierPoPrintItemDto
+    {
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public decimal Quantity { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public decimal LineAmount { get; set; }
+    }
+
+    public class SupplierPoPrintTermDto
+    {
+        public int TermConditionId { get; set; }
+        public string TermCondition { get; set; } = string.Empty;
+    }
+
+    public class SupplierPoPrintConsigneeDto
+    {
+        public string ConsolidatedDate { get; set; } = string.Empty;
+        public string LocationName { get; set; } = string.Empty;
+        public decimal Quantity { get; set; }
+    }
+
+    public class SupplierPoPrintCopyToDto
+    {
+        public string Designation { get; set; } = string.Empty;
+        public string Office { get; set; } = string.Empty;
+    }
+
+    public class SupplierPoPrintDto
+    {
+        public int PoId { get; set; }
+        public string OutwardNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string SupplierName { get; set; } = string.Empty;
+        public string SupplierAddress { get; set; } = string.Empty;
+        public string MobileNo { get; set; } = string.Empty;
+        public string EmailId { get; set; } = string.Empty;
+        public string TenderNo { get; set; } = string.Empty;
+        public string TenderDate { get; set; } = string.Empty;
+        public string TotalPoValueWords { get; set; } = string.Empty;
+        public decimal BasicRate { get; set; }
+        public decimal GstPercent { get; set; }
+        public int TrancheDays { get; set; }
+        public string GemPo { get; set; } = string.Empty;
+        public string Cmc1 { get; set; } = string.Empty;
+        public string Cmc2 { get; set; } = string.Empty;
+        public string Cmc3 { get; set; } = string.Empty;
+        public string Cmc4 { get; set; } = string.Empty;
+        public string Cmc5 { get; set; } = string.Empty;
+        public string AmendNo { get; set; } = string.Empty;
+        public string PreviousOutwardNo { get; set; } = string.Empty;
+        public string PreviousPoDate { get; set; } = string.Empty;
+        public decimal ItemsTotal { get; set; }
+        public List<SupplierPoPrintItemDto> Items { get; set; } = new();
+        public List<SupplierPoPrintTermDto> Terms { get; set; } = new();
+        public List<SupplierPoPrintConsigneeDto> Consignees { get; set; } = new();
+        public List<SupplierPoPrintCopyToDto> CopyTo { get; set; } = new();
+    }
 }
