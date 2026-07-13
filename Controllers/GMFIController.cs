@@ -3457,60 +3457,121 @@ where 1=1 order by b.BUDGETNAME";
 
             // Optimized and parameterized SQL Que
 
+            //    string sqlQuery = @"
+            //SELECT 
+            //    pi.item_id,
+            //    m.item_code_as_per_tender AS itemcode,
+            //    m.item_name AS itemname,
+            //    pi.percentage AS percentvalue,
+            //    pi.basicrate AS basicrate, 
+            //    t.tender_no AS SchemeName,
+            //    CONVERT(VARCHAR, (CASE WHEN soissueDT IS NULL THEN po_date ELSE soissueDT END), 105) AS PoDate,
+            //    f.year AS AccYear,
+            //    s.name AS SupplierName,
+            //    p.po_no AS PoNo, 
+            //    ROUND(pi.basicrate + ((pi.basicrate * pi.percentage) / 100), 2) AS finalrate,
+            //    SUM(pi.quantity) AS poqty,
+            //    ROUND((SUM(pi.quantity) * basicrate), 0) + ROUND((SUM(pi.quantity) * basicrate * pi.percentage) / 100, 0) AS poValue,
+            //    s.supplier_id AS SupplierID,
+            //    t.tender_id,
+            //    p.po_id AS PONOID,
+            //    f.financial_year_id AS AccYrSetID,
+            //    ISNULL(dp.invoiceGst, '-') AS invoiceGst, 
+            //    ISNULL(hsncode, '-') AS hsncode,
+            //    '.pdf' AS ext,
+            //    dir.facility_aut_name,
+            //    dir.facility_aut_id,
+            //    ISNULL(rid.REASONID, 0) AS REASONID, 
+            //    CASE WHEN rid.REASONID = 16 THEN SUM(pi.quantity) - ISNULL(dispatch, 0) ELSE 0 END AS unexQTY
+            //FROM purchase_order p WITH (NOLOCK)
+            //INNER JOIN po_items pi WITH (NOLOCK) ON pi.po_id = p.po_id
+            //INNER JOIN tenders t WITH (NOLOCK) ON t.tender_id = p.tender_id
+            //INNER JOIN masitems m WITH (NOLOCK) ON m.item_id = pi.item_id
+            //INNER JOIN mas_financial_year f WITH (NOLOCK) ON f.financial_year_id = p.financial_year_id
+            //INNER JOIN massuppliers s WITH (NOLOCK) ON s.supplier_id = p.supplier_id
+            //INNER JOIN facility_aut dir WITH (NOLOCK) ON dir.facility_aut_id = p.directorate_id
+            //LEFT OUTER JOIN (
+            //    SELECT DISTINCT po_id, invoiceGst, hsncode FROM SupplierDispatch WITH (NOLOCK) WHERE invoiceGst IS NOT NULL
+            //) dp ON dp.po_id = p.po_id
+            //LEFT OUTER JOIN (
+            //    SELECT d.po_id, SUM(i.Supplyqty) AS dispatch FROM SupplierDispatch d WITH (NOLOCK)
+            //    INNER JOIN Issue_item_details i WITH (NOLOCK) ON i.Issue_id = d.Issue_id
+            //    GROUP BY d.po_id
+            //) dis ON dis.po_id = p.po_id
+            //LEFT OUTER JOIN (
+            //    SELECT MAX(r.SORID) AS sorid, r.PONOID, ri.REASONID FROM SOORDERREASON r WITH (NOLOCK)
+            //    LEFT OUTER JOIN (
+            //        SELECT PONOID, REASONID FROM SOORDERREASON WITH (NOLOCK)
+            //    ) ri ON ri.PONOID = r.PONOID
+            //    GROUP BY r.PONOID, ri.REASONID
+            //) rid ON rid.PONOID = p.po_id
+            //WHERE p.po_id = @PoId
+            //GROUP BY 
+            //    dp.invoiceGst, hsncode, pi.item_id, m.item_code_as_per_tender, m.item_name, pi.percentage, pi.basicrate,
+            //    p.po_date, t.tender_no, t.tender_date, f.year, s.name, p.po_no, s.supplier_id, t.tender_id, p.po_id, 
+            //    f.financial_year_id, dir.facility_aut_name, dir.facility_aut_id, soissueDT, rid.REASONID, dispatch";
             string sqlQuery = @"
-        SELECT 
-            pi.item_id,
-            m.item_code_as_per_tender AS itemcode,
-            m.item_name AS itemname,
-            pi.percentage AS percentvalue,
-            pi.basicrate AS basicrate, 
-            t.tender_no AS SchemeName,
-            CONVERT(VARCHAR, (CASE WHEN soissueDT IS NULL THEN po_date ELSE soissueDT END), 105) AS PoDate,
-            f.year AS AccYear,
-            s.name AS SupplierName,
-            p.po_no AS PoNo, 
-            ROUND(pi.basicrate + ((pi.basicrate * pi.percentage) / 100), 2) AS finalrate,
-            SUM(pi.quantity) AS poqty,
-            ROUND((SUM(pi.quantity) * basicrate), 0) + ROUND((SUM(pi.quantity) * basicrate * pi.percentage) / 100, 0) AS poValue,
-            s.supplier_id AS SupplierID,
-            t.tender_id,
-            p.po_id AS PONOID,
-            f.financial_year_id AS AccYrSetID,
-            ISNULL(dp.invoiceGst, '-') AS invoiceGst, 
-            ISNULL(hsncode, '-') AS hsncode,
-            '.pdf' AS ext,
-            dir.facility_aut_name,
-            dir.facility_aut_id,
-            ISNULL(rid.REASONID, 0) AS REASONID, 
-            CASE WHEN rid.REASONID = 16 THEN SUM(pi.quantity) - ISNULL(dispatch, 0) ELSE 0 END AS unexQTY
-        FROM purchase_order p WITH (NOLOCK)
-        INNER JOIN po_items pi WITH (NOLOCK) ON pi.po_id = p.po_id
-        INNER JOIN tenders t WITH (NOLOCK) ON t.tender_id = p.tender_id
-        INNER JOIN masitems m WITH (NOLOCK) ON m.item_id = pi.item_id
-        INNER JOIN mas_financial_year f WITH (NOLOCK) ON f.financial_year_id = p.financial_year_id
-        INNER JOIN massuppliers s WITH (NOLOCK) ON s.supplier_id = p.supplier_id
-        INNER JOIN facility_aut dir WITH (NOLOCK) ON dir.facility_aut_id = p.directorate_id
-        LEFT OUTER JOIN (
-            SELECT DISTINCT po_id, invoiceGst, hsncode FROM SupplierDispatch WITH (NOLOCK) WHERE invoiceGst IS NOT NULL
-        ) dp ON dp.po_id = p.po_id
-        LEFT OUTER JOIN (
-            SELECT d.po_id, SUM(i.Supplyqty) AS dispatch FROM SupplierDispatch d WITH (NOLOCK)
-            INNER JOIN Issue_item_details i WITH (NOLOCK) ON i.Issue_id = d.Issue_id
-            GROUP BY d.po_id
-        ) dis ON dis.po_id = p.po_id
-        LEFT OUTER JOIN (
-            SELECT MAX(r.SORID) AS sorid, r.PONOID, ri.REASONID FROM SOORDERREASON r WITH (NOLOCK)
-            LEFT OUTER JOIN (
-                SELECT PONOID, REASONID FROM SOORDERREASON WITH (NOLOCK)
-            ) ri ON ri.PONOID = r.PONOID
-            GROUP BY r.PONOID, ri.REASONID
-        ) rid ON rid.PONOID = p.po_id
-        WHERE p.po_id = @PoId
-        GROUP BY 
-            dp.invoiceGst, hsncode, pi.item_id, m.item_code_as_per_tender, m.item_name, pi.percentage, pi.basicrate,
-            p.po_date, t.tender_no, t.tender_date, f.year, s.name, p.po_no, s.supplier_id, t.tender_id, p.po_id, 
-            f.financial_year_id, dir.facility_aut_name, dir.facility_aut_id, soissueDT, rid.REASONID, dispatch";
+       SELECT 
+    pi.item_id,
+    m.item_code_as_per_tender AS itemcode,
+    m.item_name AS itemname,
+    pi.percentage AS percentvalue,
+    pi.basicrate AS basicrate, 
+    t.tender_no AS SchemeName,
+    CONVERT(VARCHAR, ISNULL(p.soissueDT, p.po_date), 105) AS PoDate,
+    f.year AS AccYear,
+    s.name AS SupplierName,
+    p.po_no AS PoNo, 
+    ROUND(pi.basicrate + ((pi.basicrate * pi.percentage) / 100), 2) AS finalrate,
+    SUM(pi.quantity) AS poqty,
+    ROUND((SUM(pi.quantity) * pi.basicrate), 0) + ROUND((SUM(pi.quantity) * pi.basicrate * pi.percentage) / 100, 0) AS poValue,
+    s.supplier_id AS SupplierID,
+    t.tender_id,
+    p.po_id AS PONOID,
+    f.financial_year_id AS AccYrSetID,
+    ISNULL(dp.invoiceGst, '-') AS invoiceGst, 
+    ISNULL(dp.hsncode, '-') AS hsncode,
+    '.pdf' AS ext,
+    dir.facility_aut_name,
+    dir.facility_aut_id,
+    ISNULL(rid.REASONID, 0) AS REASONID, 
+    CASE WHEN ISNULL(rid.REASONID, 0) = 16 THEN SUM(pi.quantity) - ISNULL(dis.dispatch, 0) ELSE 0 END AS unexQTY
+FROM purchase_order p WITH (NOLOCK)
+INNER JOIN po_items pi WITH (NOLOCK) ON pi.po_id = p.po_id
+INNER JOIN tenders t WITH (NOLOCK) ON t.tender_id = p.tender_id
+INNER JOIN masitems m WITH (NOLOCK) ON m.item_id = pi.item_id
+INNER JOIN mas_financial_year f WITH (NOLOCK) ON f.financial_year_id = p.financial_year_id
+INNER JOIN massuppliers s WITH (NOLOCK) ON s.supplier_id = p.supplier_id
+INNER JOIN facility_aut dir WITH (NOLOCK) ON dir.facility_aut_id = p.directorate_id
 
+-- Optimization 1: Changed LEFT JOIN to OUTER APPLY to filter strictly by p.po_id
+OUTER APPLY (
+    SELECT DISTINCT invoiceGst, hsncode 
+    FROM SupplierDispatch WITH (NOLOCK) 
+    WHERE po_id = p.po_id AND invoiceGst IS NOT NULL
+) dp
+
+-- Optimization 2: Removed full table GROUP BY. Now it only sums for this specific PO.
+OUTER APPLY (
+    SELECT SUM(i.Supplyqty) AS dispatch 
+    FROM SupplierDispatch d WITH (NOLOCK)
+    INNER JOIN Issue_item_details i WITH (NOLOCK) ON i.Issue_id = d.Issue_id
+    WHERE d.po_id = p.po_id
+) dis
+
+-- Optimization 3: Simplified the complex self-join and grouping which was causing a massive performance hit.
+OUTER APPLY (
+    SELECT DISTINCT REASONID 
+    FROM SOORDERREASON WITH (NOLOCK)
+    WHERE PONOID = p.po_id
+) rid
+
+WHERE p.po_id = @PoId
+
+GROUP BY 
+    dp.invoiceGst, dp.hsncode, pi.item_id, m.item_code_as_per_tender, m.item_name, pi.percentage, pi.basicrate,
+    p.po_date, t.tender_no, t.tender_date, f.year, s.name, p.po_no, s.supplier_id, t.tender_id, p.po_id, 
+    f.financial_year_id, dir.facility_aut_name, dir.facility_aut_id, p.soissueDT, rid.REASONID, dis.dispatch";
             try
             {
                 using (SqlConnection conn = new SqlConnection(connString))
@@ -3660,7 +3721,486 @@ where 1=1 order by b.BUDGETNAME";
             }
         }
 
+        [HttpGet("GetSanctionIdIfExist/{poId}")]
+        public async Task<IActionResult> GetSanctionIdIfExist(int poId)
+        {
+            // 1. Validation
+            if (poId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Purchase Order ID." });
+            }
 
+            string connString = _config.GetConnectionString("DefaultConnection");
+            string sanctionId = "";
+            string sqlQuery = "SELECT ISNULL(SanctionID, 0) AS SanctionID FROM blpSanctions WITH (NOLOCK) WHERE po_id = @PoId AND status = 'IN'";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@PoId", poId);
+
+                        await conn.OpenAsync();
+
+                        object result = await cmd.ExecuteScalarAsync();
+
+                        if (result != null && result != DBNull.Value)
+                        {
+                            sanctionId = result.ToString();
+                        }
+                    }
+                }
+
+                return Ok(new { sanctionId = sanctionId });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching Sanction ID.", error = ex.Message });
+            }
+        }
+        [HttpGet("GenerateSanctionNo")]
+        public async Task<IActionResult> GenerateSanctionNo([FromQuery] int accyrSetId, [FromQuery] int poNoId = 0)
+        {
+            // 1. Validation
+            if (accyrSetId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Financial Year ID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            string mYearCode = "";
+            string mAutoCode = "00001"; // Default fallback
+            string finalSanctionNo = "";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    // ==========================================
+                    // STEP 1: Get Financial Year Code
+                    // ==========================================
+                    string yearQuery = "SELECT year FROM mas_financial_year WITH (NOLOCK) WHERE financial_year_id = @AccYrSetId";
+                    using (SqlCommand cmdYear = new SqlCommand(yearQuery, conn))
+                    {
+                        cmdYear.Parameters.AddWithValue("@AccYrSetId", accyrSetId);
+
+                        object yearResult = await cmdYear.ExecuteScalarAsync();
+                        if (yearResult != null && yearResult != DBNull.Value)
+                        {
+                            mYearCode = yearResult.ToString().Trim();
+                        }
+                    }
+
+                    // Agar year nahi mila toh yahi se error return kar denge
+                    if (string.IsNullOrEmpty(mYearCode))
+                    {
+                        return NotFound(new { message = "Financial year details not found in the database." });
+                    }
+
+                    // ==========================================
+                    // STEP 2: Auto Generate Sanction Code
+                    // ==========================================
+                    // Note: As per your original code, poNoId is NOT used in the WHERE clause, 
+                    // so we keep the exact original active SQL query logic.
+                    string autoCodeQuery = @"SELECT RIGHT(REPLICATE('0', 5) + LEFT(ISNULL(MAX(CAST(auto_code AS INT)), 0) + 1, 5), 5) AS SanctionNo FROM blpsanctions WITH (NOLOCK)";
+
+                    using (SqlCommand cmdAuto = new SqlCommand(autoCodeQuery, conn))
+                    {
+                        object autoResult = await cmdAuto.ExecuteScalarAsync();
+                        if (autoResult != null && autoResult != DBNull.Value)
+                        {
+                            mAutoCode = autoResult.ToString().Trim();
+                        }
+                    }
+
+                    // ==========================================
+                    // STEP 3: Construct the Final String
+                    // ==========================================
+                    finalSanctionNo = $"SAN/{mYearCode}/{mAutoCode}";
+                }
+
+                // Return both values so Angular can bind them to UI inputs
+                return Ok(new
+                {
+                    autoCode = mAutoCode,         // For lblAutoCode
+                    sanctionNo = finalSanctionNo  // For txtSanctionNo
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error generating Sanction Number.", error = ex.Message });
+            }
+        }
+
+        [HttpGet("GetPendingSanctionByPoId/{poId}/{sId}")]
+        public async Task<IActionResult> GetPendingSanctionByPoId(int poId,int sId)
+        {
+            // 1. Validation
+            if (poId <= 0 && sId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Purchase Order ID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            var sanctionDetails = new SanctionDetailsDto();
+            bool isRecordFound = false;
+
+            string sqlQuery = @"
+        SELECT 
+            SanctionID, 
+            SanctionNo, 
+            ISNULL(BUDGETAMT, 0) AS BUDGETAMT, 
+            CONVERT(VARCHAR, SanctionDate, 105) AS SanctionDate, 
+            BudgetID, 
+            Remarks, 
+            SupGST 
+        FROM blpSanctions WITH (NOLOCK)
+        WHERE po_id = @PoId 
+          AND SanctionID = @sId  
+          AND status = 'IN'";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                       
+                        cmd.Parameters.AddWithValue("@PoId", poId);
+                        cmd.Parameters.AddWithValue("@sId", sId);
+
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                         
+                            if (await reader.ReadAsync())
+                            {
+                                isRecordFound = true;
+
+                                
+                                sanctionDetails.SanctionId = reader["SanctionID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["SanctionID"]);
+                                sanctionDetails.SanctionNo = reader["SanctionNo"]?.ToString() ?? string.Empty;
+                                sanctionDetails.BudgetAmt = reader["BUDGETAMT"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["BUDGETAMT"]);
+                                sanctionDetails.SanctionDate = reader["SanctionDate"]?.ToString() ?? string.Empty;
+                                sanctionDetails.BudgetId = reader["BudgetID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["BudgetID"]);
+                                sanctionDetails.Remarks = reader["Remarks"]?.ToString() ?? string.Empty;
+                                sanctionDetails.SupGst = reader["SupGST"]?.ToString() ?? string.Empty;
+                            }
+                        }
+                    }
+                }
+
+                if (isRecordFound)
+                {
+                    return Ok(sanctionDetails); 
+                }
+                else
+                {
+                   
+                    return NotFound(new { message = "No pending sanction data found for this Purchase Order." });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching sanction details.", error = ex.Message });
+            }
+        }
+
+        [HttpPost("SaveSanctionHeader")]
+        public async Task<IActionResult> SaveSanctionHeader([FromBody] SaveSanctionHeaderDto request)
+        {
+            // ==========================================
+            // 1. BASIC VALIDATIONS
+            // ==========================================
+            if (request == null || request.PoId <= 0 || request.TenderId <= 0)
+                return BadRequest(new { message = "Invalid Purchase Order or Tender data." });
+
+            if (request.BudgetId <= 0)
+                return BadRequest(new { message = "Please Select a valid Budget No." });
+
+            if (string.IsNullOrWhiteSpace(request.SanctionNo))
+                return BadRequest(new { message = "Sanction Number cannot be empty." });
+
+            if (string.IsNullOrWhiteSpace(request.HsnCode))
+                return BadRequest(new { message = "HSN Code cannot be empty." });
+
+            if (string.IsNullOrWhiteSpace(request.Remarks))
+                return BadRequest(new { message = "Remarks cannot be empty." });
+
+            // Date Validation
+            DateTime sanctionDateParsed;
+            string[] dateFormats = { "yyyy-MM-dd", "dd-MM-yyyy", "MM/dd/yyyy" };
+            if (!DateTime.TryParseExact(request.SanctionDate.Trim(), dateFormats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out sanctionDateParsed))
+                return BadRequest(new { message = "Invalid Sanction Date format." });
+
+            if (sanctionDateParsed.Date > DateTime.Now.Date)
+                return BadRequest(new { message = "You Can't Select Greater than todays Date." });
+
+            // GST Matching Validation (CheckSelectedGST Logic)
+            bool isGstValid = request.IsGstOverrideChecked ||
+                              request.GstNo == request.DispatchGstNo ||
+                              string.IsNullOrWhiteSpace(request.DispatchGstNo) ||
+                              request.DispatchGstNo == "-";
+
+            if (!isGstValid)
+                return BadRequest(new { message = "Supplier Dispatched GST No Not Matched." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    // ==========================================
+                    // 2. LEVY VALIDATION (CheckLeavy Logic)
+                    // ==========================================
+                    string levyQuery = "SELECT ISNULL(penaltypercent, 0) FROM tenders WITH (NOLOCK) WHERE tender_id = @TenderId";
+                    using (SqlCommand levyCmd = new SqlCommand(levyQuery, conn))
+                    {
+                        levyCmd.Parameters.AddWithValue("@TenderId", request.TenderId);
+                        object levyObj = await levyCmd.ExecuteScalarAsync();
+
+                        decimal penaltyPercent = (levyObj != null && levyObj != DBNull.Value) ? Convert.ToDecimal(levyObj) : 0;
+
+                        if (penaltyPercent == 0)
+                        {
+                            return BadRequest(new { message = "Please Enter Leavy Details in Tender Before Going to Sanction or Communicate Equipment Tender Cell to Enter." });
+                        }
+                    }
+
+                    // ==========================================
+                    // 3. CHECK IF SANCTION EXISTS (getSanctinidIfExist Logic)
+                    // ==========================================
+                    int existingSanctionId = 0;
+                    string checkSanctionQuery = "SELECT ISNULL(SanctionID, 0) FROM blpSanctions WITH (NOLOCK) WHERE po_id = @PoId AND status = 'IN'";
+                    using (SqlCommand chkCmd = new SqlCommand(checkSanctionQuery, conn))
+                    {
+                        chkCmd.Parameters.AddWithValue("@PoId", request.PoId);
+                        object sanctionObj = await chkCmd.ExecuteScalarAsync();
+
+                        if (sanctionObj != null && sanctionObj != DBNull.Value)
+                        {
+                            existingSanctionId = Convert.ToInt32(sanctionObj);
+                        }
+                    }
+
+                    // ==========================================
+                    // 4. INSERT OR UPDATE TRANSACTION
+                    // ==========================================
+                    string targetQuery = "";
+
+                    if (existingSanctionId == 0)
+                    {
+                        // INSERT NEW RECORD
+                        targetQuery = @"
+                    INSERT INTO blpSanctions (po_id, InvoiceType, SanctionNo, SanctionDate, BudgetID, Remarks, SupGST, status, auto_code, BUDGETAMT, EntryDT, HSNcode) 
+                    VALUES (@PoId, 'NI', @SanctionNo, @SanctionDate, @BudgetId, @Remarks, @SupGst, 'IN', @AutoCode, @BudgetAmt, GETDATE(), @HsnCode);
+                    
+                    -- Returns the newly generated SanctionID
+                    SELECT SCOPE_IDENTITY();";
+                    }
+                    else
+                    {
+                        // UPDATE EXISTING RECORD
+                        targetQuery = @"
+                    UPDATE blpSanctions 
+                    SET po_id = @PoId, InvoiceType = 'NI', SanctionNo = @SanctionNo, SanctionDate = @SanctionDate, BudgetID = @BudgetId, 
+                        Remarks = @Remarks, SupGST = @SupGst, BUDGETAMT = @BudgetAmt, EntryDT = GETDATE(), HSNcode = @HsnCode 
+                    WHERE SanctionID = @SanctionId;";
+                    }
+
+                    using (SqlCommand saveCmd = new SqlCommand(targetQuery, conn))
+                    {
+                        saveCmd.Parameters.AddWithValue("@PoId", request.PoId);
+                        saveCmd.Parameters.AddWithValue("@SanctionNo", request.SanctionNo);
+                        // For SQL DateTime standard
+                        saveCmd.Parameters.AddWithValue("@SanctionDate", sanctionDateParsed.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+                        saveCmd.Parameters.AddWithValue("@BudgetId", request.BudgetId);
+                        saveCmd.Parameters.AddWithValue("@Remarks", request.Remarks);
+                        saveCmd.Parameters.AddWithValue("@SupGst", request.GstNo);
+                        saveCmd.Parameters.AddWithValue("@BudgetAmt", request.BudgetAmt);
+                        saveCmd.Parameters.AddWithValue("@HsnCode", request.HsnCode);
+
+                        if (existingSanctionId == 0)
+                        {
+                            // Insert specific parameters
+                            saveCmd.Parameters.AddWithValue("@AutoCode", request.AutoCode);
+
+                            // Insert and get new ID
+                            int newSanctionId = Convert.ToInt32(await saveCmd.ExecuteScalarAsync());
+                            return Ok(new { message = "Saved Successfully", sanctionId = newSanctionId });
+                        }
+                        else
+                        {
+                            // Update specific parameters
+                            saveCmd.Parameters.AddWithValue("@SanctionId", existingSanctionId);
+
+                            await saveCmd.ExecuteNonQueryAsync();
+                            return Ok(new { message = "Updated Successfully", sanctionId = existingSanctionId });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Transaction failed while saving sanction details.", error = ex.Message });
+            }
+        }
+        [HttpGet("GetInvoiceSummaryByPoId/{poId}")]
+        public async Task<IActionResult> GetInvoiceSummaryByPoId(int poId)
+        {
+            // 1. Validations
+            if (poId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid Purchase Order ID." });
+            }
+
+            var invoiceList = new List<InvoiceSummaryDto>();
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // 2. Query with WITH (NOLOCK) and @PoId parameter injected
+            string sqlQuery = @"
+        SELECT 
+            ISNULL(InvoiceID,0) AS InvoiceID, 
+            receipt_id,
+            location_id AS warehouseid,
+            location_name,
+            invoice_no AS InvoiceNo,
+            invoice_date,
+            OrderedQTY AS OrderedQty,
+            SUM(received_qty) AS InvoiceAbsQty,
+            GST,
+            basicrate,
+            ROUND((SUM(received_qty)*basicrate),0) + ROUND((SUM(received_qty)*basicrate*GST)/100,0) AS OLDINVOICEVALUE,
+            po_item_id,
+            item_id,
+            ISNULL(GROSSAMOUNT, (ROUND((SUM(received_qty)*basicrate),0) + ROUND((SUM(received_qty)*basicrate*GST)/100,0))) AS Invalueonbill,
+            ISNULL(GROSSAMOUNT50,0) AS GROSSAMOUNT50,
+            pstatus,
+            (CASE WHEN soissueDT IS NULL THEN po_date ELSE soissueDT END) AS po_date,
+            CONVERT(VARCHAR, (CASE WHEN soissueDT IS NULL THEN po_date ELSE soissueDT END), 105) AS PDATE,
+            rDate,
+            recieved_date,
+            DATEDIFF(DAY, (CASE WHEN soissueDT IS NULL THEN po_date ELSE soissueDT END), rDate) AS daystaken,
+            ISNULL(LogoCharges_HOVerified,'NA') AS Logo
+        FROM (
+            SELECT 
+                0 AS SlNo, 
+                b.InvoiceID, 
+                m.location_name,
+                m.location_id,
+                r.receipt_id,
+                pi.po_item_id,
+                sud.item_id,
+                ISNULL(bi.INVOICENO, d.invoice_no) AS invoice_no,  
+                CONVERT(VARCHAR, ISNULL(bi.INVOICEDATE, d.invoice_date), 105) AS invoice_date,  
+                CONVERT(VARCHAR, r.recieved_date, 105) AS recieved_date,
+                CONVERT(VARCHAR, ri.installation_date, 105) AS installation_date, 
+                OrderedQTY,
+                pi.basicrate,
+                pi.GST,
+                sud.Supplyqty,
+                CASE WHEN r.status='C' THEN ri.received_qty ELSE r.receipt_qty END AS received_qty,
+                b.OLDINVOICEVALUE,
+                b.GROSSAMOUNT,
+                b.GROSSAMOUNT50,
+                mp.pstatus,
+                p.po_date,
+                p.soissueDT,
+                r.recieved_date AS rDate,
+                ri.installation_date AS InstDT,
+                LogoCharges_HOVerified,
+                r.status
+            FROM receipts r WITH (NOLOCK)
+            LEFT OUTER JOIN receipt_item_details ri WITH (NOLOCK) ON ri.receipt_id = r.receipt_id
+            INNER JOIN purchase_order p WITH (NOLOCK) ON p.po_id = r.po_id
+            LEFT OUTER JOIN (
+                SELECT pi.po_item_id, pi.po_id, SUM(pi.quantity) AS OrderedQTY, pi.percentage AS GST, pi.basicrate, pi.consignee_id 
+                FROM po_items pi WITH (NOLOCK)
+                GROUP BY pi.po_id, pi.percentage, pi.basicrate, pi.consignee_id, pi.po_item_id
+            ) pi ON pi.po_id = r.po_id AND pi.consignee_id = r.location_id
+            INNER JOIN maslocations m WITH (NOLOCK) ON m.location_id = r.location_id 
+            INNER JOIN SupplierDispatch d WITH (NOLOCK) ON d.Issue_id = r.issue_id AND r.location_id = m.location_id
+            LEFT OUTER JOIN BLPINVOICES bi WITH (NOLOCK) ON bi.po_id = r.po_id AND bi.RECEIPTID = r.receipt_id AND bi.location_id = r.location_id
+            LEFT OUTER JOIN Issue_item_details sud WITH (NOLOCK) ON sud.Issue_id = d.Issue_id AND sud.issue_detail_id = ri.issue_detail_id
+            LEFT OUTER JOIN BLPINVOICES b WITH (NOLOCK) ON b.RECEIPTID = r.receipt_id AND b.location_id = r.location_id AND b.po_id = r.po_id
+            LEFT OUTER JOIN MasPStatus mp WITH (NOLOCK) ON mp.PType = b.status
+            WHERE r.po_id = @PoId AND r.status IN ('C','Received') AND mp.ptype = 'TP'
+        ) a 
+        GROUP BY 
+            LogoCharges_HOVerified, soissueDT, receipt_id, location_id, location_name, invoice_no, invoice_date,
+            GST, basicrate, OrderedQTY, InvoiceID, po_item_id, item_id, OLDINVOICEVALUE,
+            GROSSAMOUNT, pstatus, po_date, rDate, recieved_date, GROSSAMOUNT50";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        // Inject parameterized logic safely
+                        cmd.Parameters.AddWithValue("@PoId", poId);
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var row = new InvoiceSummaryDto();
+
+                                // 3. Robust Null-Checking & Type Casting Data Assignment
+                                row.InvoiceId = reader["InvoiceID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["InvoiceID"]);
+                                row.ReceiptId = reader["receipt_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["receipt_id"]);
+                                row.WarehouseId = reader["warehouseid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["warehouseid"]);
+
+                                row.LocationName = reader["location_name"]?.ToString() ?? string.Empty;
+                                row.InvoiceNo = reader["InvoiceNo"]?.ToString() ?? string.Empty;
+                                row.InvoiceDate = reader["invoice_date"]?.ToString() ?? string.Empty;
+
+                                row.OrderedQty = reader["OrderedQty"] == DBNull.Value ? 0 : Convert.ToInt64(reader["OrderedQty"]);
+                                row.InvoiceAbsQty = reader["InvoiceAbsQty"] == DBNull.Value ? 0 : Convert.ToInt64(reader["InvoiceAbsQty"]);
+
+                                row.Gst = reader["GST"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["GST"]);
+                                row.BasicRate = reader["basicrate"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["basicrate"]);
+                                row.OldInvoiceValue = reader["OLDINVOICEVALUE"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["OLDINVOICEVALUE"]);
+
+                                row.PoItemId = reader["po_item_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_item_id"]);
+                                row.ItemId = reader["item_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["item_id"]);
+
+                                row.InValueOnBill = reader["Invalueonbill"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["Invalueonbill"]);
+                                row.GrossAmount50 = reader["GROSSAMOUNT50"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["GROSSAMOUNT50"]);
+
+                                row.PStatus = reader["pstatus"]?.ToString() ?? string.Empty;
+                                row.PoDate = reader["po_date"]?.ToString() ?? string.Empty;
+                                row.PDateFormatted = reader["PDATE"]?.ToString() ?? string.Empty;
+                                row.RDate = reader["rDate"]?.ToString() ?? string.Empty;
+                                row.RecievedDate = reader["recieved_date"]?.ToString() ?? string.Empty;
+
+                                row.DaysTaken = reader["daystaken"] == DBNull.Value ? 0 : Convert.ToInt32(reader["daystaken"]);
+                                row.Logo = reader["Logo"]?.ToString() ?? string.Empty;
+
+                                invoiceList.Add(row);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(invoiceList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error executing invoice summary lookup.", error = ex.Message });
+            }
+        }
 
     }
 }

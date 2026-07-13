@@ -366,11 +366,7 @@ public class UpdateReceivedDateRequestDto
     }
 
 
-        public class SupplierGstDropdownDto
-        {
-            public int GstId { get; set; }
-            public string GstNo { get; set; } = string.Empty;
-        }
+        
     namespace EMISAPIS.DTOS
     {
         public class PoItemDetailsDto
@@ -418,5 +414,63 @@ public class UpdateReceivedDateRequestDto
         public decimal LogoCharges { get; set; }
         public decimal LogoChargesUpper { get; set; }
     }
+
+    public class SanctionDetailsDto
+    {
+        public int SanctionId { get; set; }
+        public string SanctionNo { get; set; } = string.Empty;
+        public decimal BudgetAmt { get; set; }
+        public string SanctionDate { get; set; } = string.Empty;
+        public int BudgetId { get; set; }
+        public string Remarks { get; set; } = string.Empty;
+        public string SupGst { get; set; } = string.Empty;
+    }
+    public class SupplierGstDropdownDto
+    {
+        public int GstId { get; set; }
+        public string GstNo { get; set; } = string.Empty;
+    }
+    public class SaveSanctionHeaderDto
+    {
+        public int PoId { get; set; }           // lblPOID.Text
+        public int TenderId { get; set; }       // lblTenderid.Text
+        public int BudgetId { get; set; }       // ddlBudgetId.SelectedValue
+        public string GstNo { get; set; } = string.Empty; // ddlGSTNO.SelectedValue
+        public string DispatchGstNo { get; set; } = string.Empty; // lblGSTNoDis.Text
+        public string SanctionNo { get; set; } = string.Empty; // txtSanctionNo.Text
+        public string HsnCode { get; set; } = string.Empty; // txtHSNCode.Text
+        public string SanctionDate { get; set; } = string.Empty; // txtSanctionDate.Text (YYYY-MM-DD format from frontend)
+        public string Remarks { get; set; } = string.Empty; // txtRemarks.Text
+        public decimal BudgetAmt { get; set; }  // lblBudgetAmt.Text
+        public string AutoCode { get; set; } = string.Empty; // lblAutoCode.Text
+        public bool IsGstOverrideChecked { get; set; } // CheckBox3.Checked
+    }
+    public class InvoiceSummaryDto
+    {
+        public int InvoiceId { get; set; }
+        public int ReceiptId { get; set; }
+        public int WarehouseId { get; set; }
+        public string LocationName { get; set; } = string.Empty;
+        public string InvoiceNo { get; set; } = string.Empty;
+        public string InvoiceDate { get; set; } = string.Empty;
+        public long OrderedQty { get; set; }
+        public long InvoiceAbsQty { get; set; }
+        public decimal Gst { get; set; }
+        public decimal BasicRate { get; set; }
+        public decimal OldInvoiceValue { get; set; }
+        public int PoItemId { get; set; }
+        public int ItemId { get; set; }
+        public decimal InValueOnBill { get; set; }
+        public decimal GrossAmount50 { get; set; }
+        public string PStatus { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string PDateFormatted { get; set; } = string.Empty;
+        public string RDate { get; set; } = string.Empty;
+        public string RecievedDate { get; set; } = string.Empty;
+        public int DaysTaken { get; set; }
+        public string Logo { get; set; } = string.Empty;
+    }
+
+
 
 }
