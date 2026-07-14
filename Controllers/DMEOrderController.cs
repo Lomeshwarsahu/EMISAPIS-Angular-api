@@ -12,11 +12,19 @@ namespace EMISAPIS.Controllers
     public class DMEOrderController : ControllerBase
     {
         private readonly string _connectionString;
+        private readonly string _emsRoleRoot;
+        private readonly string _indentUploadsRoot;
 
-        public DMEOrderController(IConfiguration configuration)
+        public DMEOrderController(IConfiguration configuration, IWebHostEnvironment env)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("DefaultConnection missing.");
+
+            _emsRoleRoot = Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole"));
+            var configured = configuration["FileStorage:IndentUploadsPath"];
+            _indentUploadsRoot = string.IsNullOrWhiteSpace(configured)
+                ? Path.GetFullPath(Path.Combine(_emsRoleRoot, "Uploads"))
+                : Path.GetFullPath(configured);
         }
 
         [HttpGet("financial-years")]
@@ -372,7 +380,20 @@ VALUES (@HeadNo, @HeadName, @UserId)";
             if (userId <= 0)
                 return BadRequest(new { message = "userId is required." });
 
-            var sql = @"
+            var list = new List<FacilityIndentRowDto>();
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                var hasAsColumns = await TableHasColumnsAsync(conn, "mas_indentfacility", "ASLetterNo", "ASDate");
+                var asSelect = hasAsColumns
+                    ? @"ISNULL(a.ASLetterNo, '') AS ASLetterNo,
+       CONVERT(VARCHAR, a.ASDate, 103) AS ASDate,"
+                    : @"'' AS ASLetterNo,
+       '' AS ASDate,";
+                var asGroup = hasAsColumns ? ", a.ASLetterNo, a.ASDate" : "";
+
+                var sql = $@"
 SELECT a.indentid, u.user_name, a.USER_ID,
        CONVERT(VARCHAR(10), a.indentdate, 103) AS CONSOLIDATED_DATE,
        SUM(B.dirappqty) AS FINAL_QTY,
@@ -380,6 +401,7 @@ SELECT a.indentid, u.user_name, a.USER_ID,
        CASE WHEN a.STATUS = 'I' THEN 'Incomplete' WHEN a.STATUS = 'C' THEN 'Completed' ELSE '' END AS EStatus,
        CASE WHEN a.path IS NULL THEN 'Not Uploaded' ELSE 'Uploaded' END AS uploadStatus,
        a.financial_year_id,
+       {asSelect}
        ISNULL(a.DispatchNo, '') AS DispatchNo,
        CONVERT(VARCHAR, a.DispatchDT, 103) AS dispatchdate
 FROM dbo.mas_indentfacility a
@@ -388,14 +410,9 @@ INNER JOIN dbo.users u ON u.user_id = a.location_id
 WHERE a.directorate_id = 12 AND u.user_id = @UserId
   AND (@FinancialYearId = 0 OR a.financial_year_id = @FinancialYearId)
 GROUP BY a.indentid, a.USER_ID, u.user_name, a.FINANCIAL_YEAR_ID, a.STATUS, a.indentdate,
-         a.path, a.DispatchNo, a.DispatchDT
+         a.path, a.DispatchNo, a.DispatchDT{asGroup}
 ORDER BY a.indentdate DESC";
 
-            var list = new List<FacilityIndentRowDto>();
-            try
-            {
-                await using var conn = new SqlConnection(_connectionString);
-                await conn.OpenAsync();
                 await using var cmd = new SqlCommand(sql, conn);
                 cmd.Parameters.AddWithValue("@UserId", userId);
                 cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
@@ -408,8 +425,8 @@ ORDER BY a.indentdate DESC";
                         McName = reader["user_name"]?.ToString() ?? string.Empty,
                         UserId = Convert.ToInt32(reader["USER_ID"]),
                         ConsolidatedDate = reader["CONSOLIDATED_DATE"]?.ToString() ?? string.Empty,
-                        AsLetterNo = string.Empty,
-                        AsDate = string.Empty,
+                        AsLetterNo = reader["ASLetterNo"]?.ToString() ?? string.Empty,
+                        AsDate = reader["ASDate"]?.ToString() ?? string.Empty,
                         DispatchNo = reader["DispatchNo"]?.ToString() ?? string.Empty,
                         DispatchDate = reader["dispatchdate"]?.ToString() ?? string.Empty,
                         NosIndentQty = reader["nosindentQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["nosindentQTY"]),
@@ -479,6 +496,692 @@ VALUES
             {
                 return StatusCode(500, new { message = "Error creating indent.", detail = ex.Message });
             }
+        }
+
+        /// <summary>DMEFACADDIndent.aspx — indent header by ICID.</summary>
+        [HttpGet("facility-indents/{indentId:int}")]
+        public async Task<IActionResult> GetFacilityIndentHeader(int indentId, [FromQuery] int userId)
+        {
+            if (indentId <= 0 || userId <= 0)
+                return BadRequest(new { message = "indentId and userId are required." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                var hasAsColumns = await TableHasColumnsAsync(conn, "mas_indentfacility", "ASLetterNo", "ASDate");
+                var asSelect = hasAsColumns
+                    ? @"ISNULL(i.ASLetterNo, '') AS ASLetterNo,
+       CONVERT(VARCHAR, i.ASDate, 103) AS ASDate"
+                    : @"'' AS ASLetterNo,
+       '' AS ASDate";
+
+                var sql = $@"
+SELECT i.indentid, i.user_id, u.user_name, i.financial_year_id, f.year,
+       CONVERT(VARCHAR, i.indentdate, 103) AS indentdate,
+       ISNULL(i.status, 'N') AS status,
+       CASE WHEN i.BUDGETID IS NOT NULL THEN h.headName ELSE '' END AS BudgetName,
+       ISNULL(i.DispatchNo, '') AS DispatchNo,
+       {asSelect}
+FROM dbo.mas_indentfacility i
+LEFT OUTER JOIN dbo.DMEFACHead h ON h.headid = i.BUDGETID
+INNER JOIN dbo.mas_financial_year f ON f.financial_year_id = i.financial_year_id
+INNER JOIN dbo.users u ON u.user_id = i.user_id
+WHERE i.indentid = @IndentId AND i.user_id = @UserId AND i.directorate_id = 12";
+
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@IndentId", indentId);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "Indent not found." });
+
+                var status = reader["status"]?.ToString() ?? "N";
+                var completed = string.Equals(status, "C", StringComparison.OrdinalIgnoreCase);
+                return Ok(new FacilityIndentHeaderDto
+                {
+                    IndentId = Convert.ToInt32(reader["indentid"]),
+                    UserId = Convert.ToInt32(reader["user_id"]),
+                    McName = reader["user_name"]?.ToString() ?? string.Empty,
+                    BudgetName = reader["BudgetName"]?.ToString() ?? string.Empty,
+                    IndentDate = reader["indentdate"]?.ToString() ?? string.Empty,
+                    FinancialYearId = reader["financial_year_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["financial_year_id"]),
+                    Year = reader["year"]?.ToString() ?? string.Empty,
+                    Status = status,
+                    StatusLabel = completed ? "Completed" : "Incomplete",
+                    AsLetterNo = reader["ASLetterNo"]?.ToString() ?? string.Empty,
+                    AsDate = reader["ASDate"]?.ToString() ?? string.Empty,
+                    DispatchNo = reader["DispatchNo"]?.ToString() ?? string.Empty,
+                    IsCompleted = completed,
+                });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading indent header.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>DMEFACADDIndent.aspx — saved cart lines.</summary>
+        [HttpGet("facility-indents/{indentId:int}/items")]
+        public async Task<IActionResult> GetFacilityIndentItems(int indentId, [FromQuery] int userId)
+        {
+            if (indentId <= 0 || userId <= 0)
+                return BadRequest(new { message = "indentId and userId are required." });
+
+            const string sql = @"
+SELECT l.location_id, l.location_name,
+       ISNULL(dbo.Getstock(l.location_id, m.item_id), 0) AS CurrentStock,
+       ISNULL(dbo.GetPipeline(l.location_id, m.item_id), 0) AS Pipeline,
+       m.item_id, m.item_name AS itemname,
+       mii.facility_ind_qty AS indent_quantity,
+       ROUND(mii.approxrate, 0) AS estimated_cost,
+       CAST(mii.approxrate * mii.facility_ind_qty AS bigint) AS Value,
+       m.item_code_as_per_tender, ISNULL(mii.remarks, '') AS remarks,
+       CASE WHEN aa.contract_end_date IS NOT NULL THEN aa.contract_end_date ELSE 'RC not Valid' END AS RCstatus,
+       mii.indentitemid
+FROM dbo.mas_indentfacility mi
+INNER JOIN dbo.mas_item_indent mii ON mii.indentid = mi.indentid
+INNER JOIN dbo.masitems m ON m.item_id = mii.itemid
+INNER JOIN dbo.maslocations l ON l.location_id = mii.location_id
+LEFT OUTER JOIN (
+    SELECT m2.item_id,
+           CASE WHEN c.contract_new_end_date IS NOT NULL
+                THEN CONVERT(VARCHAR, c.contract_new_end_date, 103)
+                ELSE CONVERT(VARCHAR, ac.contract_end_date, 103) END AS contract_end_date
+    FROM dbo.contract_items c
+    INNER JOIN dbo.masitems m2 ON m2.item_id = c.item_id
+    INNER JOIN dbo.award_of_contract ac ON ac.award_of_contract_id = c.award_of_contract_id
+    WHERE GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date
+      AND (m2.categoryid = 1 OR m2.categoryid IS NULL)
+) aa ON aa.item_id = mii.itemid
+WHERE mi.indentid = @IndentId AND mi.user_id = @UserId AND mi.directorate_id = 12
+ORDER BY m.item_name, l.location_name";
+
+            var list = new List<FacilityIndentItemRowDto>();
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@IndentId", indentId);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new FacilityIndentItemRowDto
+                    {
+                        IndentItemId = Convert.ToInt32(reader["indentitemid"]),
+                        LocationId = Convert.ToInt32(reader["location_id"]),
+                        LocationName = reader["location_name"]?.ToString() ?? string.Empty,
+                        ItemId = Convert.ToInt32(reader["item_id"]),
+                        ItemCode = reader["item_code_as_per_tender"]?.ToString() ?? string.Empty,
+                        ItemName = reader["itemname"]?.ToString() ?? string.Empty,
+                        EstimatedCost = reader["estimated_cost"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["estimated_cost"]),
+                        IndentQuantity = reader["indent_quantity"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["indent_quantity"]),
+                        Value = reader["Value"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["Value"]),
+                        CurrentStock = reader["CurrentStock"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["CurrentStock"]),
+                        Pipeline = reader["Pipeline"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["Pipeline"]),
+                        Remarks = reader["remarks"]?.ToString() ?? string.Empty,
+                        RcStatus = reader["RCstatus"]?.ToString() ?? string.Empty,
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading indent items.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>DMEFACADDIndent.aspx — EEL equipment dropdown.</summary>
+        [HttpGet("facility-indent-equipment")]
+        public async Task<IActionResult> GetFacilityIndentEquipment([FromQuery] int itemId = 0)
+        {
+            var list = new List<FacilityIndentEquipmentDto>();
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                // Legacy uses CME_EEL; some EMIS DBs only have iseel.
+                var hasCmeEel = await TableHasColumnsAsync(conn, "masitems", "CME_EEL");
+                var hasIseel = await TableHasColumnsAsync(conn, "masitems", "iseel");
+                var eelFilter = hasCmeEel
+                    ? "ISNULL(m.CME_EEL, 'N') = 'Y'"
+                    : hasIseel
+                        ? "ISNULL(m.iseel, 'N') = 'Y'"
+                        : "1 = 1";
+
+                var priceEelFilter = hasIseel
+                    ? "AND ISNULL(m2.iseel, 'N') = 'Y'"
+                    : hasCmeEel
+                        ? "AND ISNULL(m2.CME_EEL, 'N') = 'Y'"
+                        : "";
+
+                var sql = $@"
+SELECT m.item_id, m.item_code_as_per_tender AS item_code, m.item_name AS item_name,
+       RTRIM(LTRIM(m.item_name)) + '(' + RTRIM(LTRIM(ISNULL(m.item_code_as_per_tender, ''))) + ')' AS item_nameE,
+       ISNULL((
+           SELECT TOP 1 c.single_unit_price
+           FROM dbo.contract_items c
+           INNER JOIN dbo.award_of_contract ac ON ac.award_of_contract_id = c.award_of_contract_id
+           INNER JOIN dbo.masitems m2 ON m2.item_id = c.item_id
+           WHERE c.item_id = m.item_id
+             AND GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date
+             {priceEelFilter}
+           ORDER BY ac.contract_end_date DESC
+       ), 0) AS approxrate
+FROM dbo.masitems m
+WHERE {eelFilter}
+  AND (@ItemId = 0 OR m.item_id = @ItemId)
+ORDER BY m.item_name";
+
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@ItemId", itemId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new FacilityIndentEquipmentDto
+                    {
+                        ItemId = Convert.ToInt32(reader["item_id"]),
+                        ItemCode = reader["item_code"]?.ToString() ?? string.Empty,
+                        ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                        ItemNameDisplay = reader["item_nameE"]?.ToString() ?? string.Empty,
+                        ApproxRate = reader["approxrate"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["approxrate"]),
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading equipment list.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>DMEFACADDIndent.aspx — department rows for selected equipment.</summary>
+        [HttpGet("facility-indents/{indentId:int}/departments")]
+        public async Task<IActionResult> GetFacilityIndentDepartments(
+            int indentId,
+            [FromQuery] int userId,
+            [FromQuery] int itemId)
+        {
+            if (indentId <= 0 || userId <= 0 || itemId <= 0)
+                return BadRequest(new { message = "indentId, userId and itemId are required." });
+
+            const string priceSql = @"
+SELECT TOP 1 c.single_unit_price
+FROM dbo.contract_items c
+INNER JOIN dbo.award_of_contract ac ON ac.award_of_contract_id = c.award_of_contract_id
+INNER JOIN dbo.masitems m ON m.item_id = c.item_id
+WHERE c.item_id = @ItemId
+  AND GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date
+  AND ISNULL(m.iseel, 'N') = 'Y'
+ORDER BY ac.contract_end_date DESC";
+
+            const string sql = @"
+SELECT l.location_name AS LOCATION_NAME, l.location_id AS LOCATION_ID,
+       ISNULL(st.stkQTY, 0) AS CurrentStock,
+       ISNULL(pip.pipelineQTY, 0) AS Pipeline,
+       ISNULL(b.facility_ind_qty, 0) AS INDENT_QUANTITY
+FROM dbo.maslocations l
+LEFT OUTER JOIN (
+    SELECT pi.consignee_id, SUM(r.receipt_qty) AS stkQTY
+    FROM dbo.po_items pi
+    INNER JOIN dbo.receipts r ON r.po_id = pi.po_id AND r.location_id = pi.consignee_id
+    INNER JOIN dbo.purchase_order p ON p.po_id = pi.po_id
+    WHERE p.directorate_id = 12 AND r.status = 'C' AND pi.item_id = @ItemId
+    GROUP BY pi.consignee_id
+) st ON st.consignee_id = l.location_id
+LEFT OUTER JOIN (
+    SELECT pi.consignee_id, SUM(pi.quantity) - ISNULL(pip.rqty, 0) AS pipelineQTY
+    FROM dbo.po_items pi
+    LEFT OUTER JOIN (
+        SELECT r.location_id, SUM(r.receipt_qty) AS rqty
+        FROM dbo.receipts r
+        INNER JOIN dbo.purchase_order p ON p.po_id = r.po_id
+        INNER JOIN dbo.po_items pi2 ON pi2.po_id = p.po_id AND pi2.consignee_id = r.location_id
+        WHERE p.directorate_id = 12 AND r.status = 'C' AND pi2.item_id = @ItemId AND pi2.directorate_id = 12
+        GROUP BY r.location_id
+    ) pip ON pip.location_id = pi.consignee_id
+    WHERE pi.directorate_id = 12 AND pi.item_id = @ItemId
+    GROUP BY pi.consignee_id, pip.rqty
+) pip ON pip.consignee_id = l.location_id
+INNER JOIN dbo.mas_indentfacility mi ON mi.user_id = l.user_id
+LEFT OUTER JOIN dbo.mas_item_indent b
+  ON b.location_id = l.location_id AND b.itemid = @ItemId AND b.indentid = @IndentId
+WHERE mi.indentid = @IndentId
+  AND mi.user_id = @UserId
+  AND l.Isactive IS NULL
+  AND l.user_id = @UserId
+ORDER BY l.location_name";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                decimal approxRate = 0;
+                await using (var priceCmd = new SqlCommand(priceSql, conn))
+                {
+                    priceCmd.Parameters.AddWithValue("@ItemId", itemId);
+                    var priceObj = await priceCmd.ExecuteScalarAsync();
+                    if (priceObj != null && priceObj != DBNull.Value)
+                        approxRate = Convert.ToDecimal(priceObj);
+                }
+
+                var list = new List<FacilityIndentDeptRowDto>();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@IndentId", indentId);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                cmd.Parameters.AddWithValue("@ItemId", itemId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new FacilityIndentDeptRowDto
+                    {
+                        LocationId = Convert.ToInt32(reader["LOCATION_ID"]),
+                        LocationName = reader["LOCATION_NAME"]?.ToString() ?? string.Empty,
+                        CurrentStock = reader["CurrentStock"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["CurrentStock"]),
+                        Pipeline = reader["Pipeline"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["Pipeline"]),
+                        ExistingIndentQty = reader["INDENT_QUANTITY"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["INDENT_QUANTITY"]),
+                        ApproxRate = approxRate,
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading departments.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>DMEFACADDIndent.aspx — add indent line.</summary>
+        [HttpPost("facility-indents/{indentId:int}/items")]
+        public async Task<IActionResult> AddFacilityIndentItem(int indentId, [FromBody] AddFacilityIndentItemRequest req)
+        {
+            if (indentId <= 0 || req.UserId <= 0 || req.ItemId <= 0 || req.LocationId <= 0)
+                return BadRequest(new { message = "indentId, userId, itemId and locationId are required." });
+            if (req.FacilityIndQty <= 0)
+                return BadRequest(new { message = "Indent qty should be greater than zero." });
+            if (req.ApproxRate <= 0)
+                return BadRequest(new { message = "Price should not be empty." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                const string headerSql = @"
+SELECT ISNULL(status, 'N') AS status
+FROM dbo.mas_indentfacility
+WHERE indentid = @IndentId AND user_id = @UserId AND directorate_id = 12";
+                await using (var headerCmd = new SqlCommand(headerSql, conn))
+                {
+                    headerCmd.Parameters.AddWithValue("@IndentId", indentId);
+                    headerCmd.Parameters.AddWithValue("@UserId", req.UserId);
+                    var statusObj = await headerCmd.ExecuteScalarAsync();
+                    if (statusObj == null || statusObj == DBNull.Value)
+                        return NotFound(new { message = "Indent not found." });
+                    if (string.Equals(Convert.ToString(statusObj), "C", StringComparison.OrdinalIgnoreCase))
+                        return BadRequest(new { message = "Indent is completed. New items cannot be added." });
+                }
+
+                const string dupSql = @"
+SELECT COUNT(1) FROM dbo.mas_item_indent
+WHERE indentid = @IndentId AND itemid = @ItemId AND location_id = @LocationId";
+                await using (var dupCmd = new SqlCommand(dupSql, conn))
+                {
+                    dupCmd.Parameters.AddWithValue("@IndentId", indentId);
+                    dupCmd.Parameters.AddWithValue("@ItemId", req.ItemId);
+                    dupCmd.Parameters.AddWithValue("@LocationId", req.LocationId);
+                    var count = Convert.ToInt32(await dupCmd.ExecuteScalarAsync());
+                    if (count > 0)
+                        return BadRequest(new { message = "Indent already placed for this item for same department." });
+                }
+
+                var approxIndVal = req.ApproxRate * req.FacilityIndQty;
+                const string insertSql = @"
+INSERT INTO dbo.mas_item_indent
+    (location_id, remarks, status, indentid, facility_ind_qty, facilityentrydt, itemid, approxrate, approxindval)
+VALUES
+    (@LocationId, @Remarks, 'I', @IndentId, @Qty, GETDATE(), @ItemId, @ApproxRate, @ApproxIndVal)";
+                await using var insertCmd = new SqlCommand(insertSql, conn);
+                insertCmd.Parameters.AddWithValue("@LocationId", req.LocationId);
+                insertCmd.Parameters.AddWithValue("@Remarks", (req.Remarks ?? string.Empty).Trim());
+                insertCmd.Parameters.AddWithValue("@IndentId", indentId);
+                insertCmd.Parameters.AddWithValue("@Qty", req.FacilityIndQty);
+                insertCmd.Parameters.AddWithValue("@ItemId", req.ItemId);
+                insertCmd.Parameters.AddWithValue("@ApproxRate", req.ApproxRate);
+                insertCmd.Parameters.AddWithValue("@ApproxIndVal", approxIndVal);
+                await insertCmd.ExecuteNonQueryAsync();
+
+                return Ok(new { message = "Saved successfully for selected department." });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error saving indent item.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>DMEFACADDIndent.aspx — delete selected cart lines.</summary>
+        [HttpPost("facility-indents/{indentId:int}/items/delete")]
+        public async Task<IActionResult> DeleteFacilityIndentItems(int indentId, [FromBody] DeleteFacilityIndentItemsRequest req)
+        {
+            if (indentId <= 0 || req.UserId <= 0 || req.IndentItemIds == null || req.IndentItemIds.Count == 0)
+                return BadRequest(new { message = "indentId, userId and indentItemIds are required." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                const string headerSql = @"
+SELECT ISNULL(status, 'N') AS status
+FROM dbo.mas_indentfacility
+WHERE indentid = @IndentId AND user_id = @UserId AND directorate_id = 12";
+                await using (var headerCmd = new SqlCommand(headerSql, conn))
+                {
+                    headerCmd.Parameters.AddWithValue("@IndentId", indentId);
+                    headerCmd.Parameters.AddWithValue("@UserId", req.UserId);
+                    var statusObj = await headerCmd.ExecuteScalarAsync();
+                    if (statusObj == null || statusObj == DBNull.Value)
+                        return NotFound(new { message = "Indent not found." });
+                    if (string.Equals(Convert.ToString(statusObj), "C", StringComparison.OrdinalIgnoreCase))
+                        return BadRequest(new { message = "Indent is completed. Delete not allowed." });
+                }
+
+                var ids = req.IndentItemIds.Where(id => id > 0).Distinct().ToList();
+                if (ids.Count == 0)
+                    return BadRequest(new { message = "No valid indent item ids." });
+
+                var paramNames = ids.Select((_, i) => $"@Id{i}").ToList();
+                var deleteSql = $@"
+DELETE FROM dbo.mas_item_indent
+WHERE indentid = @IndentId
+  AND indentitemid IN ({string.Join(", ", paramNames)})
+  AND location_id IN (
+      SELECT location_id FROM dbo.maslocations WHERE user_id = @UserId
+  )";
+                await using var deleteCmd = new SqlCommand(deleteSql, conn);
+                deleteCmd.Parameters.AddWithValue("@IndentId", indentId);
+                deleteCmd.Parameters.AddWithValue("@UserId", req.UserId);
+                for (var i = 0; i < ids.Count; i++)
+                    deleteCmd.Parameters.AddWithValue(paramNames[i], ids[i]);
+
+                var affected = await deleteCmd.ExecuteNonQueryAsync();
+                return Ok(new { message = $"{affected} item(s) deleted." });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error deleting indent items.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>ConsolidatedIndentDME_MC.aspx — download AI letter PDF (path/filename on mas_indentfacility).</summary>
+        [HttpGet("facility-indents/{indentId:int}/download")]
+        public async Task<IActionResult> DownloadFacilityIndentFile(int indentId, [FromQuery] int userId)
+        {
+            if (indentId <= 0 || userId <= 0)
+                return BadRequest(new { message = "indentId and userId are required." });
+
+            const string sql = @"
+SELECT ISNULL(path, '') AS path, ISNULL(filename, '') AS filename
+FROM dbo.mas_indentfacility
+WHERE indentid = @IndentId AND user_id = @UserId AND directorate_id = 12";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@IndentId", indentId);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "Indent not found." });
+
+                var dbPath = reader["path"]?.ToString()?.Trim() ?? string.Empty;
+                var fileName = reader["filename"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(dbPath) && string.IsNullOrWhiteSpace(fileName))
+                    return NotFound(new { message = "File not uploaded for this indent." });
+
+                var physicalPath = ResolveIndentPhysicalPath(dbPath, fileName);
+                if (physicalPath == null || !System.IO.File.Exists(physicalPath))
+                    return NotFound(new { message = "File not found on disk." });
+
+                var downloadName = !string.IsNullOrWhiteSpace(fileName)
+                    ? Path.GetFileName(fileName)
+                    : Path.GetFileName(physicalPath);
+                if (string.IsNullOrWhiteSpace(downloadName))
+                    downloadName = $"indent_{indentId}.pdf";
+                if (!downloadName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                    downloadName += ".pdf";
+
+                return PhysicalFile(physicalPath, "application/pdf", downloadName);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error downloading indent file.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>Indent_ReportDME_MCwise.aspx — annual indent report by ICID.</summary>
+        [HttpGet("facility-indents/{indentId:int}/report")]
+        public async Task<IActionResult> GetFacilityIndentReport(int indentId, [FromQuery] int userId)
+        {
+            if (indentId <= 0 || userId <= 0)
+                return BadRequest(new { message = "indentId and userId are required." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                var hasAsColumns = await TableHasColumnsAsync(conn, "mas_indentfacility", "ASLetterNo", "ASDate");
+                var asSelect = hasAsColumns
+                    ? @"ISNULL(i.ASLetterNo, '') AS ASLetterNo,
+       CONVERT(VARCHAR, i.ASDate, 103) AS ASDate"
+                    : @"'' AS ASLetterNo,
+       '' AS ASDate";
+
+                var headerSql = $@"
+SELECT i.indentid, i.user_id, u.user_name, i.financial_year_id, f.year,
+       CONVERT(VARCHAR, i.indentdate, 103) AS indentdate,
+       ISNULL(i.status, 'N') AS status,
+       CASE WHEN i.BUDGETID IS NOT NULL THEN h.headName ELSE '' END AS BudgetName,
+       ISNULL(i.DispatchNo, '') AS DispatchNo,
+       {asSelect}
+FROM dbo.mas_indentfacility i
+LEFT OUTER JOIN dbo.DMEFACHead h ON h.headid = i.BUDGETID
+INNER JOIN dbo.mas_financial_year f ON f.financial_year_id = i.financial_year_id
+INNER JOIN dbo.users u ON u.user_id = i.user_id
+WHERE i.indentid = @IndentId AND i.user_id = @UserId AND i.directorate_id = 12";
+
+                FacilityIndentHeaderDto? header = null;
+                await using (var headerCmd = new SqlCommand(headerSql, conn))
+                {
+                    headerCmd.Parameters.AddWithValue("@IndentId", indentId);
+                    headerCmd.Parameters.AddWithValue("@UserId", userId);
+                    await using var reader = await headerCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Indent not found." });
+
+                    var status = reader["status"]?.ToString() ?? "N";
+                    var completed = string.Equals(status, "C", StringComparison.OrdinalIgnoreCase);
+                    header = new FacilityIndentHeaderDto
+                    {
+                        IndentId = Convert.ToInt32(reader["indentid"]),
+                        UserId = Convert.ToInt32(reader["user_id"]),
+                        McName = reader["user_name"]?.ToString() ?? string.Empty,
+                        BudgetName = reader["BudgetName"]?.ToString() ?? string.Empty,
+                        IndentDate = reader["indentdate"]?.ToString() ?? string.Empty,
+                        FinancialYearId = reader["financial_year_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["financial_year_id"]),
+                        Year = reader["year"]?.ToString() ?? string.Empty,
+                        Status = status,
+                        StatusLabel = completed ? "Completed" : "Incomplete",
+                        AsLetterNo = reader["ASLetterNo"]?.ToString() ?? string.Empty,
+                        AsDate = reader["ASDate"]?.ToString() ?? string.Empty,
+                        DispatchNo = reader["DispatchNo"]?.ToString() ?? string.Empty,
+                        IsCompleted = completed,
+                    };
+                }
+
+                // Prefer legacy report query (RC supplier + tender). Fall back if views missing.
+                var lines = await TryLoadIndentReportLinesAsync(conn, indentId, rich: true);
+                if (lines == null)
+                    lines = await TryLoadIndentReportLinesAsync(conn, indentId, rich: false) ?? new List<FacilityIndentReportLineDto>();
+
+                return Ok(new FacilityIndentReportDto { Header = header, Lines = lines });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading indent report.", detail = ex.Message });
+            }
+        }
+
+        private static async Task<List<FacilityIndentReportLineDto>?> TryLoadIndentReportLinesAsync(
+            SqlConnection conn, int indentId, bool rich)
+        {
+            var sql = rich
+                ? @"
+SELECT m.item_code_as_per_tender AS eqpcode, m.item_name AS itemname, l.location_name,
+       mii.facility_ind_qty AS indent_quantity, mii.approxrate AS estimated_cost,
+       CAST(mii.approxrate * mii.facility_ind_qty AS bigint) AS Value,
+       ISNULL(mii.remarks, '') AS remarks,
+       CASE WHEN aa.contract_end_date IS NOT NULL THEN aa.contract_end_date ELSE 'RC not Valid' END AS RCstatus,
+       ISNULL(rc.Supplier, '') AS Supplier,
+       ISNULL(CAST(rc.PriceIncGST AS VARCHAR(50)), '') AS PriceIncGST,
+       CASE WHEN rc.rcEndDT IS NOT NULL THEN '' ELSE ISNULL(t.tender_no, '') END AS tender_no,
+       CASE WHEN rc.rcEndDT IS NOT NULL THEN '' ELSE ISNULL(t.finalstatus, '') END AS finalstatus
+FROM dbo.mas_indentfacility mi
+INNER JOIN dbo.mas_item_indent mii ON mii.indentid = mi.indentid
+INNER JOIN dbo.masitems m ON m.item_id = mii.itemid
+INNER JOIN dbo.maslocations l ON l.location_id = mii.location_id
+LEFT OUTER JOIN (
+    SELECT m2.item_id,
+           CASE WHEN c.contract_new_end_date IS NOT NULL
+                THEN CONVERT(VARCHAR, c.contract_new_end_date, 103)
+                ELSE CONVERT(VARCHAR, ac.contract_end_date, 103) END AS contract_end_date
+    FROM dbo.contract_items c
+    INNER JOIN dbo.masitems m2 ON m2.item_id = c.item_id
+    INNER JOIN dbo.award_of_contract ac ON ac.award_of_contract_id = c.award_of_contract_id
+    WHERE GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date
+      AND (m2.categoryid = 1 OR m2.categoryid IS NULL)
+) aa ON aa.item_id = mii.itemid
+LEFT OUTER JOIN (
+    SELECT r.item_id, r.Supplier, r.rcStartDT, r.rcEndDT, r.PriceIncGST
+    FROM dbo.v_rcvalid r
+) rc ON rc.item_id = m.item_id
+LEFT OUTER JOIN (
+    SELECT ti.item_id, ti.tender_no, ti.finalstatus
+    FROM (
+        SELECT item_id, MAX(tender_date) AS tenderDT
+        FROM dbo.v_Tenderstatus
+        GROUP BY item_id
+    ) tmax
+    INNER JOIN dbo.v_Tenderstatus ti ON ti.item_id = tmax.item_id AND ti.tender_date = tmax.tenderDT
+) t ON t.item_id = m.item_id
+WHERE mii.indentid = @IndentId
+ORDER BY m.item_name, l.location_name"
+                : @"
+SELECT m.item_code_as_per_tender AS eqpcode, m.item_name AS itemname, l.location_name,
+       mii.facility_ind_qty AS indent_quantity, mii.approxrate AS estimated_cost,
+       CAST(mii.approxrate * mii.facility_ind_qty AS bigint) AS Value,
+       ISNULL(mii.remarks, '') AS remarks,
+       CASE WHEN aa.contract_end_date IS NOT NULL THEN aa.contract_end_date ELSE 'RC not Valid' END AS RCstatus,
+       '' AS Supplier, '' AS PriceIncGST, '' AS tender_no, '' AS finalstatus
+FROM dbo.mas_indentfacility mi
+INNER JOIN dbo.mas_item_indent mii ON mii.indentid = mi.indentid
+INNER JOIN dbo.masitems m ON m.item_id = mii.itemid
+INNER JOIN dbo.maslocations l ON l.location_id = mii.location_id
+LEFT OUTER JOIN (
+    SELECT m2.item_id,
+           CASE WHEN c.contract_new_end_date IS NOT NULL
+                THEN CONVERT(VARCHAR, c.contract_new_end_date, 103)
+                ELSE CONVERT(VARCHAR, ac.contract_end_date, 103) END AS contract_end_date
+    FROM dbo.contract_items c
+    INNER JOIN dbo.masitems m2 ON m2.item_id = c.item_id
+    INNER JOIN dbo.award_of_contract ac ON ac.award_of_contract_id = c.award_of_contract_id
+    WHERE GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date
+      AND (m2.categoryid = 1 OR m2.categoryid IS NULL)
+) aa ON aa.item_id = mii.itemid
+WHERE mii.indentid = @IndentId
+ORDER BY m.item_name, l.location_name";
+
+            try
+            {
+                var list = new List<FacilityIndentReportLineDto>();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@IndentId", indentId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new FacilityIndentReportLineDto
+                    {
+                        ItemCode = reader["eqpcode"]?.ToString() ?? string.Empty,
+                        ItemName = reader["itemname"]?.ToString() ?? string.Empty,
+                        LocationName = reader["location_name"]?.ToString() ?? string.Empty,
+                        IndentQuantity = reader["indent_quantity"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["indent_quantity"]),
+                        EstimatedCost = reader["estimated_cost"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["estimated_cost"]),
+                        Value = reader["Value"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["Value"]),
+                        Remarks = reader["remarks"]?.ToString() ?? string.Empty,
+                        RcStatus = reader["RCstatus"]?.ToString() ?? string.Empty,
+                        Supplier = reader["Supplier"]?.ToString() ?? string.Empty,
+                        PriceIncGst = reader["PriceIncGST"]?.ToString() ?? string.Empty,
+                        TenderNo = reader["tender_no"]?.ToString() ?? string.Empty,
+                        TenderStatus = reader["finalstatus"]?.ToString() ?? string.Empty,
+                    });
+                }
+
+                return list;
+            }
+            catch (SqlException)
+            {
+                return null;
+            }
+        }
+
+        private string? ResolveIndentPhysicalPath(string dbPath, string fileName)
+        {
+            var candidates = new List<string>();
+
+            void addCandidate(string? path)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    return;
+                var full = Path.GetFullPath(path);
+                if (!candidates.Contains(full, StringComparer.OrdinalIgnoreCase))
+                    candidates.Add(full);
+            }
+
+            // Legacy stores "~/Uploads/ID….pdf"
+            if (!string.IsNullOrWhiteSpace(dbPath))
+            {
+                var cleaned = dbPath.Trim().Replace('\\', '/');
+                if (cleaned.StartsWith("~/", StringComparison.Ordinal))
+                    cleaned = cleaned[2..];
+                else if (cleaned.StartsWith("~", StringComparison.Ordinal))
+                    cleaned = cleaned[1..].TrimStart('/');
+
+                if (Path.IsPathRooted(dbPath.Trim()) && System.IO.File.Exists(dbPath.Trim()))
+                    return Path.GetFullPath(dbPath.Trim());
+
+                addCandidate(Path.Combine(_emsRoleRoot, cleaned.Replace('/', Path.DirectorySeparatorChar)));
+                addCandidate(Path.Combine(_indentUploadsRoot, Path.GetFileName(cleaned)));
+                addCandidate(Path.Combine(_emsRoleRoot, "Uploads", Path.GetFileName(cleaned)));
+            }
+
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                var name = Path.GetFileName(fileName.Trim());
+                addCandidate(Path.Combine(_indentUploadsRoot, name));
+                addCandidate(Path.Combine(_emsRoleRoot, "Uploads", name));
+            }
+
+            return candidates.FirstOrDefault(System.IO.File.Exists);
         }
 
         private static async Task<bool> TableHasColumnsAsync(SqlConnection conn, string tableName, params string[] columns)
