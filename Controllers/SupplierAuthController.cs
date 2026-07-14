@@ -4427,6 +4427,314 @@ ORDER BY PAYMENTID";
             }
         }
 
+        /// <summary>SanctionsRDLC.aspx — printable sanction report for paid PO (supplier).</summary>
+        [HttpGet("sanction-report/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierSanctionReport(
+            int userId,
+            [FromQuery] int poId,
+            [FromQuery] int sanctionId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (poId <= 0 || sanctionId <= 0)
+                return BadRequest(new { message = "PO id and sanction id are required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found for this supplier." });
+
+                const string ownSql = @"
+SELECT COUNT(1)
+FROM BLPSANCTIONS s
+INNER JOIN purchase_order p ON p.po_id = s.po_id
+WHERE s.SANCTIONID = @SanctionId AND s.po_id = @PoId AND p.supplier_id = @SupplierId";
+                using (SqlCommand ownCmd = new SqlCommand(ownSql, con))
+                {
+                    ownCmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    ownCmd.Parameters.AddWithValue("@PoId", poId);
+                    ownCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    int owned = Convert.ToInt32(await ownCmd.ExecuteScalarAsync() ?? 0);
+                    if (owned <= 0)
+                        return NotFound(new { message = "Sanction not found for this supplier PO." });
+                }
+
+                var report = new SupplierSanctionReportDto
+                {
+                    PoId = poId,
+                    SanctionId = sanctionId,
+                };
+
+                const string itemsSql = @"
+SELECT p.outward_no,
+       ISNULL(CONVERT(VARCHAR, p.soissueDT, 103), '-') AS soissueDate,
+       m.item_code_as_per_tender AS itemcode,
+       m.item_name AS itemname,
+       pi.percentage AS percentvalue,
+       pi.basicrate AS basicrate,
+       t.tender_no AS SchemeName,
+       CONVERT(VARCHAR, p.po_date, 103) AS PoDate,
+       f.year AS AccYear,
+       s.name AS SupplierName,
+       p.po_no AS PoNo,
+       ROUND(pi.basicrate + ((pi.basicrate * pi.percentage) / 100), 2) AS finalrate,
+       dbo.GetPOQTY(p.po_id) AS poqty,
+       ROUND((SUM(pi.quantity) * pi.basicrate), 0)
+         + ROUND((SUM(pi.quantity) * pi.basicrate * pi.percentage) / 100, 0) AS poValue,
+       ISNULL(sanc.SUPGST, '') AS SUPGST,
+       ISNULL(sanc.HSNcode, '-') AS HSNcode,
+       ISNULL(sanc.remarks, '-') AS sancremarks,
+       sanc.SANCTIONNO
+FROM purchase_order p
+INNER JOIN po_items pi ON pi.po_id = p.po_id
+INNER JOIN tenders t ON t.tender_id = p.tender_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+INNER JOIN mas_financial_year f ON f.financial_year_id = p.financial_year_id
+INNER JOIN massuppliers s ON s.supplier_id = p.supplier_id
+INNER JOIN BLPSANCTIONS sanc ON sanc.po_id = p.po_id
+WHERE p.po_id = @PoId AND sanc.SANCTIONID = @SanctionId
+GROUP BY pi.item_id, m.item_code_as_per_tender, m.item_name, pi.percentage, pi.basicrate,
+         p.po_date, t.tender_no, f.year, s.name, p.po_no, p.po_id, p.outward_no, p.soissueDT,
+         sanc.SUPGST, sanc.HSNcode, sanc.remarks, sanc.SANCTIONNO";
+
+                using (SqlCommand cmd = new SqlCommand(itemsSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (string.IsNullOrWhiteSpace(report.PoNo))
+                        {
+                            report.OutwardNo = ReadStringColumn(reader, "outward_no");
+                            report.SoIssueDate = ReadStringColumn(reader, "soissueDate");
+                            report.SchemeName = ReadStringColumn(reader, "SchemeName");
+                            report.PoDate = ReadStringColumn(reader, "PoDate");
+                            report.AccYear = ReadStringColumn(reader, "AccYear");
+                            report.SupplierName = ReadStringColumn(reader, "SupplierName");
+                            report.PoNo = ReadStringColumn(reader, "PoNo");
+                            report.SupGst = ReadStringColumn(reader, "SUPGST");
+                            report.HsnCode = ReadStringColumn(reader, "HSNcode");
+                            report.Remarks = ReadStringColumn(reader, "sancremarks");
+                            report.SanctionNo = ReadStringColumn(reader, "SANCTIONNO");
+                        }
+
+                        report.Items.Add(new SupplierSanctionReportItemDto
+                        {
+                            ItemCode = ReadStringColumn(reader, "itemcode"),
+                            ItemName = ReadStringColumn(reader, "itemname"),
+                            PercentValue = ReadDecimalColumn(reader, "percentvalue"),
+                            BasicRate = ReadDecimalColumn(reader, "basicrate"),
+                            FinalRate = ReadDecimalColumn(reader, "finalrate"),
+                            PoQty = ReadDecimalColumn(reader, "poqty"),
+                            PoValue = ReadDecimalColumn(reader, "poValue"),
+                        });
+                    }
+                }
+
+                const string linesSql = @"
+SELECT location_name,
+       invoice_no AS InvoiceNo,
+       invoice_date,
+       OrderedQTY AS OrderedQty,
+       SUM(received_qty) AS InvoiceAbsQty,
+       GST,
+       basicrate,
+       SUP,
+       CASE WHEN GROSSAMOUNT50 > 0 THEN '50%' ELSE '100%' END AS ptype,
+       CASE WHEN GROSSAMOUNT50 > 0
+            THEN ISNULL(GROSSAMOUNT50, (ROUND((SUM(received_qty) * basicrate), 0)
+                 + ROUND((SUM(received_qty) * basicrate * GST) / 100, 0)))
+            ELSE ISNULL(GROSSAMOUNT, (ROUND((SUM(received_qty) * basicrate), 0)
+                 + ROUND((SUM(received_qty) * basicrate * GST) / 100, 0)))
+       END AS Invalueonbill,
+       recieved_date,
+       DATEDIFF(DAY, (CASE WHEN soissueDT IS NULL THEN po_date ELSE soissueDT END), rDate) AS daystaken,
+       LDDays,
+       PenaltyAmount,
+       ISNULL(LogoCharges_HOVerified, 'NA') AS Logo,
+       LogoPenaltyAmt
+FROM (
+    SELECT b.InvoiceID,
+           m.location_name,
+           m.location_id,
+           r.receipt_id,
+           CASE WHEN b.INVOICENO IS NULL THEN d.invoice_no ELSE b.INVOICENO END AS invoice_no,
+           CASE WHEN b.INVOICEDATE IS NULL
+                THEN CONVERT(VARCHAR, d.invoice_date, 103)
+                ELSE CONVERT(VARCHAR, b.INVOICEDATE, 103)
+           END AS invoice_date,
+           CONVERT(VARCHAR, r.recieved_date, 103) AS recieved_date,
+           OrderedQTY,
+           pi.basicrate,
+           pi.GST,
+           CASE WHEN ri.received_qty IS NULL THEN r.receipt_qty ELSE ri.received_qty END AS received_qty,
+           b.GROSSAMOUNT,
+           b.GROSSAMOUNT50,
+           p.po_date,
+           p.soissueDT,
+           r.recieved_date AS rDate,
+           LogoCharges_HOVerified,
+           LogoPenaltyAmt,
+           LDDays,
+           PenaltyAmount,
+           ROUND(pi.basicrate + (pi.basicrate * pi.GST / 100), 2) AS SUP
+    FROM receipts r
+    LEFT OUTER JOIN receipt_item_details ri ON ri.receipt_id = r.receipt_id
+    INNER JOIN purchase_order p ON p.po_id = r.po_id
+    LEFT OUTER JOIN (
+        SELECT pi.po_item_id,
+               pi.po_id,
+               SUM(pi.quantity) AS OrderedQTY,
+               pi.percentage AS GST,
+               pi.basicrate,
+               pi.consignee_id
+        FROM po_items pi
+        GROUP BY pi.po_id, pi.percentage, pi.basicrate, pi.consignee_id, pi.po_item_id
+    ) pi ON pi.po_id = r.po_id AND pi.consignee_id = r.location_id
+    INNER JOIN maslocations m ON m.location_id = r.location_id
+    INNER JOIN SupplierDispatch d ON d.Issue_id = r.issue_id AND r.location_id = m.location_id
+    LEFT OUTER JOIN Issue_item_details sud ON sud.Issue_id = d.Issue_id AND sud.issue_detail_id = ri.issue_detail_id
+    INNER JOIN BLPINVOICES b ON b.RECEIPTID = r.receipt_id AND b.location_id = r.location_id AND b.po_id = r.po_id
+    WHERE r.po_id = @PoId
+      AND r.status IN ('C', 'Received')
+      AND ISNULL(b.SANCTIONIDP, b.SANCTIONID) = @SanctionId
+) a
+GROUP BY LogoCharges_HOVerified, soissueDT, receipt_id, location_id, location_name, invoice_no, invoice_date,
+         GST, basicrate, OrderedQTY, InvoiceID, GROSSAMOUNT, GROSSAMOUNT50, po_date, rDate, recieved_date,
+         LogoPenaltyAmt, LDDays, PenaltyAmount, a.SUP";
+
+                using (SqlCommand cmd = new SqlCommand(linesSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        var line = new SupplierSanctionReportLineDto
+                        {
+                            LocationName = ReadStringColumn(reader, "location_name"),
+                            InvoiceNo = ReadStringColumn(reader, "InvoiceNo"),
+                            InvoiceDate = ReadStringColumn(reader, "invoice_date"),
+                            OrderedQty = ReadDecimalColumn(reader, "OrderedQty"),
+                            InvoiceAbsQty = ReadDecimalColumn(reader, "InvoiceAbsQty"),
+                            Gst = ReadDecimalColumn(reader, "GST"),
+                            BasicRate = ReadDecimalColumn(reader, "basicrate"),
+                            Sup = ReadDecimalColumn(reader, "SUP"),
+                            PaymentType = ReadStringColumn(reader, "ptype"),
+                            InvoiceValueOnBill = ReadDecimalColumn(reader, "Invalueonbill"),
+                            ReceivedDate = ReadStringColumn(reader, "recieved_date"),
+                            DaysTaken = ReadIntColumn(reader, "daystaken"),
+                            LdDays = ReadIntColumn(reader, "LDDays"),
+                            PenaltyAmount = ReadDecimalColumn(reader, "PenaltyAmount"),
+                            Logo = ReadStringColumn(reader, "Logo"),
+                            LogoPenaltyAmt = ReadDecimalColumn(reader, "LogoPenaltyAmt"),
+                        };
+                        report.Lines.Add(line);
+                        report.GrossInvoiceAmount += line.InvoiceValueOnBill;
+                    }
+                }
+
+                report.GrossInvoiceAmount = Math.Round(report.GrossInvoiceAmount, 0);
+
+                const string taxSql = @"
+SELECT t.sanctionid,
+       t.TAXPER,
+       ty.taxtypename + ' (' + (CASE WHEN ty.taxcategory = 'D' THEN '-' ELSE '+' END) + ')'
+         + (CASE WHEN ty.taxper IS NOT NULL AND (t.taxtypeid = 247 OR t.taxtypeid = 248 OR t.taxtypeid = 249)
+                 THEN CAST(ty.taxper AS VARCHAR) + '%' ELSE '' END) AS taxtypename,
+       t.taxvalue,
+       ty.taxcategory,
+       t.taxtypeid
+FROM blptaxs t
+INNER JOIN blptaxtypes ty ON t.taxtypeid = ty.taxtypeid
+WHERE t.sanctionid = @SanctionId";
+
+                using (SqlCommand cmd = new SqlCommand(taxSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        report.Taxes.Add(new SupplierSanctionTaxLineDto
+                        {
+                            SanctionId = ReadIntColumn(reader, "sanctionid"),
+                            TaxPer = ReadDecimalColumn(reader, "TAXPER"),
+                            TaxTypeName = ReadStringColumn(reader, "taxtypename"),
+                            TaxValue = ReadDecimalColumn(reader, "taxvalue"),
+                            TaxCategory = ReadStringColumn(reader, "taxcategory"),
+                            TaxTypeId = ReadIntColumn(reader, "taxtypeid"),
+                        });
+                    }
+                }
+
+                const string totalsSql = @"
+SELECT ISNULL((SELECT SUM(ISNULL(TAXVALUE, 0)) FROM blpTaxs b
+               INNER JOIN blpTaxTypes b1 ON b1.TaxTypeID = b.TaxTypeID
+               WHERE sanctionid = @SanctionId AND taxcategory = 'D'), 0) AS totaldeductions,
+       ISNULL((SELECT SUM(ISNULL(TAXVALUE, 0)) FROM blpTaxs b
+               INNER JOIN blpTaxTypes b1 ON b1.TaxTypeID = b.TaxTypeID
+               WHERE sanctionid = @SanctionId AND taxcategory = 'A'), 0) AS totaladditions,
+       ISNULL((SELECT ISNULL(chequeAmt, 0) FROM BLPSANCTIONS WHERE SANCTIONID = @SanctionId), 0) AS Paid";
+
+                using (SqlCommand cmd = new SqlCommand(totalsSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        report.TotalDeductions = ReadDecimalColumn(reader, "totaldeductions");
+                        report.TotalAdditions = ReadDecimalColumn(reader, "totaladditions");
+                        report.PaidAmount = Math.Round(ReadDecimalColumn(reader, "Paid"), 0);
+                    }
+                }
+
+                const string datesSql = @"
+SELECT ISNULL(FinReceiptDT, 'Offline Receipt') AS FinReceiptDT,
+       CONVERT(VARCHAR, sanctiondate, 103) AS sanctiondate
+FROM blpsanctions sc
+LEFT OUTER JOIN (
+    SELECT MAX(fileid) AS fileid, ponoid
+    FROM MASFILEMOVEMENT
+    WHERE touserid = 5 AND flag = 'S'
+    GROUP BY ponoid
+) f ON f.ponoid = sc.po_id
+LEFT OUTER JOIN (
+    SELECT CONVERT(VARCHAR, todate, 103) AS FinReceiptDT, ponoid, fileid
+    FROM MASFILEMOVEMENT
+    WHERE touserid = 5 AND flag = 'S'
+) s ON s.ponoid = sc.po_id AND s.fileid = f.fileid
+WHERE sc.sanctionid = @SanctionId";
+
+                using (SqlCommand cmd = new SqlCommand(datesSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        report.FinReceiptDate = ReadStringColumn(reader, "FinReceiptDT");
+                        report.SanctionDate = ReadStringColumn(reader, "sanctiondate");
+                    }
+                }
+
+                report.PaidAmountWords = AmountToIndianWords(report.PaidAmount);
+                report.GrossAmountWords = AmountToIndianWords(report.GrossInvoiceAmount);
+
+                return Ok(report);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading sanction report.", error = ex.Message });
+            }
+        }
+
         /// <summary>BalanceStatussupplier.aspx — pending receipt/installation report.</summary>
         [HttpGet("balance-status/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierBalanceStatus(
@@ -4606,6 +4914,63 @@ SELECT 1 FROM purchase_order WHERE po_id = @PoId AND supplier_id = @SupplierId";
 
             object? result = await cmd.ExecuteScalarAsync();
             return result != null && result != DBNull.Value;
+        }
+
+        /// <summary>Simple Indian-style amount-in-words (rupees, no paise).</summary>
+        private static string AmountToIndianWords(decimal amount)
+        {
+            long n = (long)Math.Round(Math.Abs(amount), MidpointRounding.AwayFromZero);
+            if (n == 0)
+                return "Zero Rupees Only";
+
+            string[] ones =
+            {
+                "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+                "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen",
+            };
+            string[] tens =
+            {
+                "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety",
+            };
+
+            string TwoDigits(long value)
+            {
+                if (value < 20)
+                    return ones[value];
+                long t = value / 10;
+                long o = value % 10;
+                return (tens[t] + (o > 0 ? " " + ones[o] : "")).Trim();
+            }
+
+            string ThreeDigits(long value)
+            {
+                long h = value / 100;
+                long rest = value % 100;
+                string part = h > 0 ? ones[h] + " Hundred" : "";
+                if (rest > 0)
+                    part = (part + " " + TwoDigits(rest)).Trim();
+                return part;
+            }
+
+            var parts = new List<string>();
+            long crore = n / 10000000;
+            n %= 10000000;
+            long lakh = n / 100000;
+            n %= 100000;
+            long thousand = n / 1000;
+            n %= 1000;
+            long hundred = n;
+
+            if (crore > 0)
+                parts.Add(TwoDigits(crore) + " Crore");
+            if (lakh > 0)
+                parts.Add(TwoDigits(lakh) + " Lakh");
+            if (thousand > 0)
+                parts.Add(TwoDigits(thousand) + " Thousand");
+            if (hundred > 0)
+                parts.Add(ThreeDigits(hundred));
+
+            return string.Join(" ", parts) + " Rupees Only";
         }
 
         private static string FormatCmcValue(string value)

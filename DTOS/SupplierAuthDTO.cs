@@ -583,6 +583,79 @@ namespace EMISAPIS.DTOS
         public decimal BalanceQty { get; set; }
     }
 
+    /// <summary>SanctionsRDLC.aspx — PO item header line on sanction report.</summary>
+    public class SupplierSanctionReportItemDto
+    {
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public decimal PercentValue { get; set; }
+        public decimal BasicRate { get; set; }
+        public decimal FinalRate { get; set; }
+        public decimal PoQty { get; set; }
+        public decimal PoValue { get; set; }
+    }
+
+    /// <summary>SanctionsRDLC.aspx — invoice / consignee sanction line.</summary>
+    public class SupplierSanctionReportLineDto
+    {
+        public string LocationName { get; set; } = string.Empty;
+        public string InvoiceNo { get; set; } = string.Empty;
+        public string InvoiceDate { get; set; } = string.Empty;
+        public decimal OrderedQty { get; set; }
+        public decimal InvoiceAbsQty { get; set; }
+        public decimal Gst { get; set; }
+        public decimal BasicRate { get; set; }
+        public decimal Sup { get; set; }
+        public string PaymentType { get; set; } = string.Empty;
+        public decimal InvoiceValueOnBill { get; set; }
+        public string ReceivedDate { get; set; } = string.Empty;
+        public int DaysTaken { get; set; }
+        public int LdDays { get; set; }
+        public decimal PenaltyAmount { get; set; }
+        public string Logo { get; set; } = string.Empty;
+        public decimal LogoPenaltyAmt { get; set; }
+    }
+
+    /// <summary>SanctionsRDLC.aspx — tax deduction / addition line.</summary>
+    public class SupplierSanctionTaxLineDto
+    {
+        public int SanctionId { get; set; }
+        public decimal TaxPer { get; set; }
+        public string TaxTypeName { get; set; } = string.Empty;
+        public decimal TaxValue { get; set; }
+        public string TaxCategory { get; set; } = string.Empty;
+        public int TaxTypeId { get; set; }
+    }
+
+    /// <summary>SanctionsRDLC.aspx — printable sanction report payload.</summary>
+    public class SupplierSanctionReportDto
+    {
+        public int PoId { get; set; }
+        public int SanctionId { get; set; }
+        public string SanctionNo { get; set; } = string.Empty;
+        public string SanctionDate { get; set; } = string.Empty;
+        public string FinReceiptDate { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string AccYear { get; set; } = string.Empty;
+        public string SupplierName { get; set; } = string.Empty;
+        public string SchemeName { get; set; } = string.Empty;
+        public string OutwardNo { get; set; } = string.Empty;
+        public string SoIssueDate { get; set; } = string.Empty;
+        public string SupGst { get; set; } = string.Empty;
+        public string HsnCode { get; set; } = string.Empty;
+        public string Remarks { get; set; } = string.Empty;
+        public decimal TotalDeductions { get; set; }
+        public decimal TotalAdditions { get; set; }
+        public decimal PaidAmount { get; set; }
+        public decimal GrossInvoiceAmount { get; set; }
+        public string PaidAmountWords { get; set; } = string.Empty;
+        public string GrossAmountWords { get; set; } = string.Empty;
+        public List<SupplierSanctionReportItemDto> Items { get; set; } = new();
+        public List<SupplierSanctionReportLineDto> Lines { get; set; } = new();
+        public List<SupplierSanctionTaxLineDto> Taxes { get; set; } = new();
+    }
+
     /// <summary>SDdetailSupplier.aspx — MasSD payment mode option.</summary>
     public class SupplierSdPaymentModeDto
     {
