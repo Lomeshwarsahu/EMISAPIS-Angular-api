@@ -108,9 +108,7 @@ ORDER BY item_name";
             if (userId <= 0)
                 return BadRequest(new { message = "userId is required." });
 
-            if (financialYearId <= 0 && string.IsNullOrWhiteSpace(itemCode))
-                return BadRequest(new { message = "Please select PO Year or Equipment." });
-
+            // financialYearId=0 and empty/0 itemCode = All
             var sql = @"
 SELECT A.PO_ID,
        CONVERT(VARCHAR, a.po_date, 103) AS po_date,
