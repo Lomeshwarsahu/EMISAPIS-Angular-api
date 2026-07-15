@@ -135,6 +135,7 @@ ORDER BY pid";
             var sql = @"
 SELECT ms.item_name,
        ms.item_code_as_per_tender AS item_code,
+       mp.pid AS Pid,
        A.existing_item_id AS Existing_ITEM_ID,
        CASE WHEN A.WardID IS NULL THEN A.install_location ELSE mw.WNAME END AS install_location,
        A.make AS Make,
@@ -213,6 +214,7 @@ ORDER BY A.entryDt DESC";
                 list.Add(new OpeningStockRowDto
                 {
                     ExistingItemId = Convert.ToInt32(reader["Existing_ITEM_ID"]),
+                    Pid = reader["Pid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["Pid"]),
                     ItemName = reader["item_name"]?.ToString() ?? string.Empty,
                     ItemCode = reader["item_code"]?.ToString() ?? string.Empty,
                     Make = reader["Make"]?.ToString() ?? string.Empty,

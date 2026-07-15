@@ -1,4 +1,5 @@
 using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Globalization;
@@ -14,6 +15,7 @@ namespace EMISAPIS.Controllers
         private readonly string _connectionString;
         private readonly string _emsRoleRoot;
         private readonly string _indentUploadsRoot;
+        private readonly MongoService _mongoService;
 
         public DMEOrderController(IConfiguration configuration, IWebHostEnvironment env)
         {
@@ -25,6 +27,7 @@ namespace EMISAPIS.Controllers
             _indentUploadsRoot = string.IsNullOrWhiteSpace(configured)
                 ? Path.GetFullPath(Path.Combine(_emsRoleRoot, "Uploads"))
                 : Path.GetFullPath(configured);
+            _mongoService = new MongoService();
         }
 
         [HttpGet("financial-years")]
@@ -185,6 +188,104 @@ ORDER BY a.po_date DESC";
             catch (SqlException ex)
             {
                 return StatusCode(500, new { message = "Error loading purchase orders.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>PODashboardDMEFAC — download reagent / accessories list PDF from live_tender_price.</summary>
+        [HttpGet("po-attachment")]
+        public async Task<IActionResult> DownloadPoAttachment(
+            [FromQuery] int userId,
+            [FromQuery] int poId,
+            [FromQuery] string fileType)
+        {
+            if (userId <= 0 || poId <= 0)
+                return BadRequest(new { message = "userId and poId are required." });
+
+            var kind = (fileType ?? string.Empty).Trim().ToLowerInvariant();
+            if (kind is not ("reagent" or "accessories"))
+                return BadRequest(new { message = "fileType must be reagent or accessories." });
+
+            const string sql = @"
+SELECT TOP 1
+       ltp.filePathReagent,
+       ltp.filePathAccessories
+FROM dbo.PURCHASE_ORDER a
+INNER JOIN dbo.po_items pi ON pi.po_id = a.po_id
+INNER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
+INNER JOIN dbo.tender_items ti ON ti.tender_id = a.tender_id AND ti.item_id = pi.item_id
+INNER JOIN dbo.live_tender_price ltp ON ltp.supplier_id = a.supplier_id AND ltp.tender_item_id = ti.tender_item_id
+WHERE a.po_id = @PoId AND l.user_id = @UserId";
+
+            try
+            {
+                await using var con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToFacilityUserAsync(con, poId, userId))
+                    return NotFound(new { message = "Purchase order not found for this facility user." });
+
+                await using var cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@PoId", poId);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "Attachment not found for this purchase order." });
+
+                var dbPath = kind == "reagent"
+                    ? reader["filePathReagent"]?.ToString()?.Trim() ?? string.Empty
+                    : reader["filePathAccessories"]?.ToString()?.Trim() ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(dbPath))
+                    return NotFound(new { message = "File not uploaded." });
+
+                var physicalPath = ResolveIndentPhysicalPath(dbPath, Path.GetFileName(dbPath));
+                if (physicalPath == null || !System.IO.File.Exists(physicalPath))
+                    return NotFound(new { message = "File not found on disk." });
+
+                var downloadName = Path.GetFileName(physicalPath);
+                if (string.IsNullOrWhiteSpace(downloadName))
+                    downloadName = $"{kind}_{poId}.pdf";
+
+                var contentType = downloadName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+                    ? "application/pdf"
+                    : "application/octet-stream";
+
+                return PhysicalFile(physicalPath, contentType, downloadName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading attachment.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>PODashboardDMEFAC Print → rdlcPoReport.aspx — printable purchase order for facility user.</summary>
+        [HttpGet("po-report/print")]
+        public async Task<IActionResult> GetFacilityPoPrintReport(
+            [FromQuery] int userId,
+            [FromQuery] int poId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "userId is required." });
+            if (poId <= 0)
+                return BadRequest(new { message = "PO id is required." });
+
+            try
+            {
+                await using var con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToFacilityUserAsync(con, poId, userId))
+                    return NotFound(new { message = "Purchase order not found for this facility user." });
+
+                var report = await PoPrintReportLoader.LoadAsync(con, poId);
+                if (report == null)
+                    return NotFound(new { message = "Purchase order report not found." });
+
+                return Ok(report);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading PO print report.", detail = ex.Message });
             }
         }
 
@@ -1326,8 +1427,1027 @@ ORDER BY i.item_code_as_per_tender";
             }
         }
 
-        private static bool TryParseLegacyDate(string value, out DateTime result)
+        // --- Facility PO receipt / installation entry (FacilityPO_ReceiptDME) ---
+
+        /// <summary>FacilityPO_ReceiptDME.aspx — load receipt entry page for facility DME.</summary>
+        [HttpGet("receipt-entry")]
+        public async Task<IActionResult> GetReceiptEntryPage(
+            [FromQuery] int userId,
+            [FromQuery] int poId,
+            [FromQuery] int locId,
+            [FromQuery] int issueId)
         {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (poId <= 0 || locId <= 0 || issueId <= 0)
+                return BadRequest(new { message = "PO, consignee and issue are required." });
+
+            try
+            {
+                await using var con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                if (!await LocationBelongsToUserAsync(con, locId, userId))
+                    return NotFound(new { message = "Location not found for this facility user." });
+
+                var page = await LoadDmeReceiptEntryPageAsync(con, userId, poId, locId, issueId);
+                return Ok(page);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading receipt entry page.", error = ex.Message });
+            }
+        }
+
+        [HttpPost("receipt-entry")]
+        public async Task<IActionResult> SaveReceiptEntry([FromBody] DmeReceiptSaveRequestDto request)
+        {
+            if (request == null || request.UserId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (request.PoId <= 0 || request.LocationId <= 0 || request.IssueId <= 0)
+                return BadRequest(new { message = "PO, consignee and issue are required." });
+            if (string.IsNullOrWhiteSpace(request.ReceivedDate) ||
+                string.IsNullOrWhiteSpace(request.ReceiptNo) ||
+                string.IsNullOrWhiteSpace(request.ReceiptQty) ||
+                string.IsNullOrWhiteSpace(request.ReceiptRemarks))
+                return BadRequest(new { message = "Received date, receipt no, qty and remarks are required." });
+
+            if (!TryParseLegacyDate(request.ReceivedDate, out DateTime receivedDate))
+                return BadRequest(new { message = "Invalid received date format." });
+            if (!decimal.TryParse(request.ReceiptQty, out decimal receiptQty) || receiptQty <= 0)
+                return BadRequest(new { message = "Receipt qty should be greater than zero." });
+
+            try
+            {
+                await using var con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                if (!await LocationBelongsToUserAsync(con, request.LocationId, request.UserId))
+                    return NotFound(new { message = "Location not found for this facility user." });
+
+                var page = await LoadDmeReceiptEntryPageAsync(
+                    con, request.UserId, request.PoId, request.LocationId, request.IssueId);
+
+                if (!TryParseLegacyDate(page.DispatchDate, out DateTime dispatchDate))
+                    return BadRequest(new { message = "Dispatch date is missing on issue." });
+                if (receivedDate < dispatchDate)
+                    return BadRequest(new { message = "Received date cannot be before supplier dispatch date." });
+                if (receivedDate.Date > DateTime.Today)
+                    return BadRequest(new { message = "Received date cannot be greater than today." });
+                if (TryParseLegacyDate(page.LastReceiptDate, out DateTime lastReceiptDate) &&
+                    receivedDate.Date > lastReceiptDate.Date)
+                    return BadRequest(new
+                    {
+                        message = $"Received date cannot be greater than last date to be received of PO ({page.LastReceiptDate}). Please contact BME for further clarification.",
+                    });
+
+                if (receiptQty > page.DispatchedQty)
+                    return BadRequest(new { message = "You cannot receive more than dispatched quantity." });
+
+                int receiptId = page.ReceiptId;
+                if (receiptId > 0)
+                {
+                    const string updateSql = @"
+UPDATE dbo.receipts
+SET recieved_date = @ReceivedDate,
+    receipt_no = @ReceiptNo,
+    receipt_qty = @ReceiptQty,
+    remarks = @ReceiptRemarks,
+    status = 'Received',
+    entryDT = GETDATE()
+WHERE receipt_id = @ReceiptId";
+                    await using var updateCmd = new SqlCommand(updateSql, con);
+                    updateCmd.Parameters.AddWithValue("@ReceivedDate", receivedDate);
+                    updateCmd.Parameters.AddWithValue("@ReceiptNo", request.ReceiptNo.Trim());
+                    updateCmd.Parameters.AddWithValue("@ReceiptQty", request.ReceiptQty.Trim());
+                    updateCmd.Parameters.AddWithValue("@ReceiptRemarks", request.ReceiptRemarks.Trim());
+                    updateCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    await updateCmd.ExecuteNonQueryAsync();
+                }
+                else
+                {
+                    const string insertSql = @"
+INSERT INTO dbo.receipts(issue_id, po_id, location_id, remarks, status, challan_no, challan_date, recieved_date,
+                     receipt_no, SupplierRemarks, receipt_qty, entryDT)
+VALUES(@IssueId, @PoId, @LocId, @SupplierRemarks, 'Received', @ChallanNo, @ChallanDate, @ReceivedDate,
+       @ReceiptNo, @ReceiptRemarks, @ReceiptQty, GETDATE());
+SELECT CAST(SCOPE_IDENTITY() AS INT);";
+                    await using var insertCmd = new SqlCommand(insertSql, con);
+                    insertCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                    insertCmd.Parameters.AddWithValue("@PoId", request.PoId);
+                    insertCmd.Parameters.AddWithValue("@LocId", request.LocationId);
+                    insertCmd.Parameters.AddWithValue("@SupplierRemarks", page.SupplierRemarks);
+                    insertCmd.Parameters.AddWithValue("@ChallanNo", page.ChallanNo);
+                    insertCmd.Parameters.AddWithValue("@ChallanDate",
+                        TryParseLegacyDate(page.ChallanDate, out DateTime challanDate) ? challanDate : DBNull.Value);
+                    insertCmd.Parameters.AddWithValue("@ReceivedDate", receivedDate);
+                    insertCmd.Parameters.AddWithValue("@ReceiptNo", request.ReceiptNo.Trim());
+                    insertCmd.Parameters.AddWithValue("@ReceiptRemarks", request.ReceiptRemarks.Trim());
+                    insertCmd.Parameters.AddWithValue("@ReceiptQty", request.ReceiptQty.Trim());
+                    receiptId = Convert.ToInt32(await insertCmd.ExecuteScalarAsync());
+                }
+
+                return Ok(new { message = "Receipt details saved successfully.", receiptId });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving receipt details.", error = ex.Message });
+            }
+        }
+
+        [HttpPost("receipt-entry/installation")]
+        public async Task<IActionResult> SaveReceiptInstallation(
+            [FromBody] DmeReceiptInstallationSaveRequestDto request)
+        {
+            if (request == null || request.UserId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (request.ReceiptId <= 0 || request.IssueDetailId <= 0)
+                return BadRequest(new { message = "Receipt id and issue detail are required." });
+            if (request.ReceivedQty <= 0)
+                return BadRequest(new { message = "Installed qty should be greater than zero." });
+            if (string.IsNullOrWhiteSpace(request.WarrantyCardNo) ||
+                string.IsNullOrWhiteSpace(request.InstallationBy) ||
+                string.IsNullOrWhiteSpace(request.InstallationLocation) ||
+                string.IsNullOrWhiteSpace(request.InstallationDate))
+                return BadRequest(new { message = "Warranty card, installation by/location/date are required." });
+            if (!TryParseLegacyDate(request.InstallationDate, out DateTime installationDate))
+                return BadRequest(new { message = "Invalid installation date format." });
+
+            try
+            {
+                await using var con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                if (!await ReceiptBelongsToFacilityUserAsync(con, request.ReceiptId, request.UserId))
+                    return NotFound(new { message = "Receipt not found for this facility user." });
+
+                const string issueSql = @"
+SELECT i.issue_detail_id, i.make_no, i.warranty_certificate_no, i.Supplyqty,
+       d.issue_id, d.recieved_date
+FROM dbo.Issue_item_details i
+INNER JOIN dbo.SupplierDispatch d ON d.Issue_id = i.Issue_id
+INNER JOIN dbo.receipts r ON r.issue_id = d.Issue_id AND r.receipt_id = @ReceiptId
+WHERE i.issue_detail_id = @IssueDetailId";
+                string warrantyCertificate = string.Empty;
+                decimal dispatchQty = 0;
+                await using (var issueCmd = new SqlCommand(issueSql, con))
+                {
+                    issueCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    issueCmd.Parameters.AddWithValue("@IssueDetailId", request.IssueDetailId);
+                    await using var reader = await issueCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Dispatch serial detail not found." });
+                    warrantyCertificate = ReadStringColumn(reader, "warranty_certificate_no", "Warranty_CertificateNo");
+                    dispatchQty = ReadDecimalColumn(reader, "Supplyqty");
+                }
+
+                if (request.ReceivedQty > dispatchQty)
+                    return BadRequest(new { message = "Installed qty cannot be more than dispatched qty." });
+
+                DateTime? receiptDate = null;
+                const string receiptDateSql = "SELECT recieved_date FROM dbo.receipts WHERE receipt_id = @ReceiptId";
+                await using (var recCmd = new SqlCommand(receiptDateSql, con))
+                {
+                    recCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    object? result = await recCmd.ExecuteScalarAsync();
+                    if (result != null && result != DBNull.Value)
+                        receiptDate = Convert.ToDateTime(result);
+                }
+
+                if (receiptDate == null)
+                    return BadRequest(new { message = "Please save receipt details first." });
+                if (installationDate.Date < receiptDate.Value.Date)
+                    return BadRequest(new { message = "Installation date cannot be before received date." });
+                if (installationDate.Date > DateTime.Today)
+                    return BadRequest(new { message = "Installation date cannot be greater than today." });
+
+                int warrantyYears = 1;
+                const string warrantySql = @"
+SELECT ISNULL(t.warranty_year, 1)
+FROM dbo.receipts r
+INNER JOIN dbo.purchase_order p ON p.po_id = r.po_id
+LEFT JOIN dbo.tenders t ON t.tender_id = p.tender_id
+WHERE r.receipt_id = @ReceiptId";
+                await using (var warrantyCmd = new SqlCommand(warrantySql, con))
+                {
+                    warrantyCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    object? warrantyResult = await warrantyCmd.ExecuteScalarAsync();
+                    if (warrantyResult != null && warrantyResult != DBNull.Value)
+                        warrantyYears = Convert.ToInt32(warrantyResult);
+                }
+                if (warrantyYears <= 0)
+                    warrantyYears = 1;
+
+                DateTime warrantyFrom = installationDate.Date;
+                DateTime warrantyTo = installationDate.Date.AddYears(warrantyYears);
+                const string updateExistingSql = @"
+UPDATE dbo.receipt_item_details
+SET installation_date = @InstallationDate,
+    warenty_from = @WarrantyFrom,
+    warenty_to = @WarrantyTo,
+    status = 'I',
+    installation_location = @InstallationLocation,
+    received_qty = @ReceivedQty,
+    warranty_card_no = @WarrantyCardNo,
+    installation_by = @InstallationBy,
+    cgmsc_log_printed = @CgmscLogoPrinted,
+    warranty_validity = @WarrantyValidity,
+    manual_provided = @ServiceManual,
+    calibration_certificate_prov = @CalibrationCertificate,
+    org_warranty_card_rec = @WarrantyCard,
+    other_statutory = @OtherStatutory,
+    inticated_po_are_received = @PoDocuments,
+    opening_manual_provided = @OperatingManual,
+    warranty_certificate_no = @WarrantyCertificateNo,
+    entryDT = GETDATE()
+WHERE receipt_id = @ReceiptId AND issue_detail_id = @IssueDetailId";
+                await using var updateCmd = new SqlCommand(updateExistingSql, con);
+                updateCmd.Parameters.AddWithValue("@InstallationDate", installationDate);
+                updateCmd.Parameters.AddWithValue("@WarrantyFrom", warrantyFrom);
+                updateCmd.Parameters.AddWithValue("@WarrantyTo", warrantyTo);
+                updateCmd.Parameters.AddWithValue("@InstallationLocation", request.InstallationLocation.Trim());
+                updateCmd.Parameters.AddWithValue("@ReceivedQty", request.ReceivedQty);
+                updateCmd.Parameters.AddWithValue("@WarrantyCardNo", request.WarrantyCardNo.Trim());
+                updateCmd.Parameters.AddWithValue("@InstallationBy", request.InstallationBy.Trim());
+                updateCmd.Parameters.AddWithValue("@CgmscLogoPrinted", request.CgmscLogoPrinted);
+                updateCmd.Parameters.AddWithValue("@WarrantyValidity", request.WarrantyValidity);
+                updateCmd.Parameters.AddWithValue("@ServiceManual", request.ServiceManual);
+                updateCmd.Parameters.AddWithValue("@CalibrationCertificate", request.CalibrationCertificate);
+                updateCmd.Parameters.AddWithValue("@WarrantyCard", request.WarrantyCard);
+                updateCmd.Parameters.AddWithValue("@OtherStatutory", request.OtherStatutory);
+                updateCmd.Parameters.AddWithValue("@PoDocuments", request.PoDocuments);
+                updateCmd.Parameters.AddWithValue("@OperatingManual", request.OperatingManual);
+                updateCmd.Parameters.AddWithValue("@WarrantyCertificateNo", warrantyCertificate);
+                updateCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                updateCmd.Parameters.AddWithValue("@IssueDetailId", request.IssueDetailId);
+                int affected = await updateCmd.ExecuteNonQueryAsync();
+
+                if (affected == 0)
+                {
+                    const string insertSql = @"
+INSERT INTO dbo.receipt_item_details(model_no, make_no, installation_date, warenty_from, warenty_to, status,
+    equpitment_code, make, installation_location, receipt_id, issue_detail_id, received_qty, warranty_card_no,
+    installation_by, cgmsc_log_printed, warranty_validity, manual_provided, calibration_certificate_prov,
+    org_warranty_card_rec, other_statutory, inticated_po_are_received, opening_manual_provided,
+    warranty_certificate_no, entryDT)
+SELECT ISNULL(ci.model, '') AS model_no, i.make_no, @InstallationDate, @WarrantyFrom, @WarrantyTo, 'I',
+       mi.item_code_as_per_tender, ISNULL(ci.make, ''), @InstallationLocation, @ReceiptId, @IssueDetailId, @ReceivedQty,
+       @WarrantyCardNo, @InstallationBy, @CgmscLogoPrinted, @WarrantyValidity, @ServiceManual,
+       @CalibrationCertificate, @WarrantyCard, @OtherStatutory, @PoDocuments, @OperatingManual,
+       @WarrantyCertificateNo, GETDATE()
+FROM dbo.Issue_item_details i
+INNER JOIN dbo.SupplierDispatch d ON d.Issue_id = i.Issue_id
+INNER JOIN dbo.purchase_order po ON po.po_id = d.po_id
+INNER JOIN dbo.po_items pi ON pi.po_id = d.po_id AND pi.consignee_id = d.location_id
+LEFT JOIN dbo.contract_items ci ON ci.contract_item_id = pi.contract_item_id
+INNER JOIN dbo.masitems mi ON mi.item_id = pi.item_id
+WHERE i.issue_detail_id = @IssueDetailId";
+                    await using var insertCmd = new SqlCommand(insertSql, con);
+                    insertCmd.Parameters.AddWithValue("@InstallationDate", installationDate);
+                    insertCmd.Parameters.AddWithValue("@WarrantyFrom", warrantyFrom);
+                    insertCmd.Parameters.AddWithValue("@WarrantyTo", warrantyTo);
+                    insertCmd.Parameters.AddWithValue("@InstallationLocation", request.InstallationLocation.Trim());
+                    insertCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    insertCmd.Parameters.AddWithValue("@IssueDetailId", request.IssueDetailId);
+                    insertCmd.Parameters.AddWithValue("@ReceivedQty", request.ReceivedQty);
+                    insertCmd.Parameters.AddWithValue("@WarrantyCardNo", request.WarrantyCardNo.Trim());
+                    insertCmd.Parameters.AddWithValue("@InstallationBy", request.InstallationBy.Trim());
+                    insertCmd.Parameters.AddWithValue("@CgmscLogoPrinted", request.CgmscLogoPrinted);
+                    insertCmd.Parameters.AddWithValue("@WarrantyValidity", request.WarrantyValidity);
+                    insertCmd.Parameters.AddWithValue("@ServiceManual", request.ServiceManual);
+                    insertCmd.Parameters.AddWithValue("@CalibrationCertificate", request.CalibrationCertificate);
+                    insertCmd.Parameters.AddWithValue("@WarrantyCard", request.WarrantyCard);
+                    insertCmd.Parameters.AddWithValue("@OtherStatutory", request.OtherStatutory);
+                    insertCmd.Parameters.AddWithValue("@PoDocuments", request.PoDocuments);
+                    insertCmd.Parameters.AddWithValue("@OperatingManual", request.OperatingManual);
+                    insertCmd.Parameters.AddWithValue("@WarrantyCertificateNo", warrantyCertificate);
+                    await insertCmd.ExecuteNonQueryAsync();
+                }
+
+                const string bulkSql = @"
+UPDATE dbo.receipts
+SET BulkInst = @BulkInst
+WHERE receipt_id = @ReceiptId";
+                await using (var bulkCmd = new SqlCommand(bulkSql, con))
+                {
+                    bulkCmd.Parameters.AddWithValue("@BulkInst", request.BulkInst ? "Y" : "N");
+                    bulkCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    await bulkCmd.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new { message = "Installation details saved successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving installation details.", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Complete installation. File-upload checks deferred (PDF upload TBD);
+        /// requires installation lines to match dispatched serial count.
+        /// </summary>
+        [HttpPost("receipt-entry/complete")]
+        public async Task<IActionResult> CompleteReceiptEntry([FromBody] DmeReceiptCompleteRequestDto request)
+        {
+            if (request == null || request.UserId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (request.PoId <= 0 || request.LocationId <= 0 || request.IssueId <= 0 || request.ReceiptId <= 0)
+                return BadRequest(new { message = "PO, consignee, issue and receipt are required." });
+
+            try
+            {
+                await using var con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                if (!await ReceiptBelongsToFacilityUserAsync(con, request.ReceiptId, request.UserId))
+                    return NotFound(new { message = "Receipt not found for this facility user." });
+
+                const string countSql = "SELECT COUNT(*) FROM dbo.receipt_item_details WHERE receipt_id = @ReceiptId";
+                await using (var countCmd = new SqlCommand(countSql, con))
+                {
+                    countCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    int count = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+                    if (count == 0)
+                        return BadRequest(new { message = "Please save installation details before completion." });
+                }
+
+                const string dispatchCountSql = "SELECT COUNT(*) FROM dbo.Issue_item_details WHERE Issue_id = @IssueId";
+                int dispatchCount;
+                await using (var dispatchCountCmd = new SqlCommand(dispatchCountSql, con))
+                {
+                    dispatchCountCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                    dispatchCount = Convert.ToInt32(await dispatchCountCmd.ExecuteScalarAsync());
+                }
+
+                int installedCount;
+                await using (var installedCountCmd = new SqlCommand(countSql, con))
+                {
+                    installedCountCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    installedCount = Convert.ToInt32(await installedCountCmd.ExecuteScalarAsync());
+                }
+
+                if (dispatchCount != installedCount)
+                    return BadRequest(new { message = "Number of dispatched items and installed items do not match." });
+
+                const string updateReceiptSql = @"
+UPDATE dbo.receipts
+SET IsSUPInstEntry = 'Y', status = 'C', entryDT = GETDATE()
+WHERE receipt_id = @ReceiptId";
+                await using (var recCmd = new SqlCommand(updateReceiptSql, con))
+                {
+                    recCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    await recCmd.ExecuteNonQueryAsync();
+                }
+
+                const string updateDetailsSql = @"
+UPDATE dbo.receipt_item_details
+SET status = 'C', entryDT = GETDATE()
+WHERE receipt_id = @ReceiptId";
+                await using (var detCmd = new SqlCommand(updateDetailsSql, con))
+                {
+                    detCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    await detCmd.ExecuteNonQueryAsync();
+                }
+
+                const string updateDispatchSql = @"
+UPDATE dbo.SupplierDispatch
+SET status = 'C'
+WHERE Issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId";
+                await using (var dspCmd = new SqlCommand(updateDispatchSql, con))
+                {
+                    dspCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                    dspCmd.Parameters.AddWithValue("@PoId", request.PoId);
+                    dspCmd.Parameters.AddWithValue("@LocId", request.LocationId);
+                    await dspCmd.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new { message = "Equipment installation completed successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error completing installation.", error = ex.Message });
+            }
+        }
+
+        /// <summary>Facility_InstallationReportDME.aspx — readonly installation lines.</summary>
+        [HttpGet("installation-report")]
+        public async Task<IActionResult> GetInstallationReport(
+            [FromQuery] int userId,
+            [FromQuery] int receiptId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (receiptId <= 0)
+                return BadRequest(new { message = "Receipt id is required." });
+
+            try
+            {
+                await using var con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await ReceiptBelongsToFacilityUserAsync(con, receiptId, userId))
+                    return NotFound(new { message = "Receipt not found for this facility user." });
+
+                const string headerSql = @"
+SELECT receipt_id,
+       CONVERT(VARCHAR, recieved_date, 103) AS received_date,
+       ISNULL(BulkInst, 'N') AS BulkInst,
+       ISNULL(InstalationReportFile, 'N') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, 'N') AS InstalationPhoto,
+       ISNULL(Challanfile, 'N') AS Challanfile,
+       ISNULL(WarrantyCardFile, 'N') AS WarrantyCardFile
+FROM dbo.receipts
+WHERE receipt_id = @ReceiptId";
+
+                const string rowsSql = @"
+SELECT ri.item_detail_id,
+       ri.make_no,
+       CONVERT(VARCHAR, ri.installation_date, 103) AS installation_date,
+       CONVERT(VARCHAR, ri.warenty_from, 103) AS warenty_from,
+       CONVERT(VARCHAR, ri.warenty_to, 103) AS warenty_to,
+       ri.received_qty,
+       ri.warranty_certificate_no,
+       ri.installation_location,
+       ISNULL(ri.ISmongo, 'N') AS ISmongo,
+       ISNULL(ri.InstalationReportFile, '') AS InstalationReportFile,
+       ISNULL(ri.InstalationPhoto, '') AS InstalationPhoto,
+       ISNULL(ri.Challanfile, '') AS Challanfile,
+       ISNULL(ri.WarrantyCardFile, '') AS WarrantyCardFile
+FROM dbo.receipt_item_details ri
+WHERE ri.receipt_id = @ReceiptId
+ORDER BY ri.item_detail_id";
+
+                var page = new DmeInstallationReportPageDto { ReceiptId = receiptId };
+
+                await using (var headerCmd = new SqlCommand(headerSql, con))
+                {
+                    headerCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    await using var reader = await headerCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Receipt not found." });
+
+                    page.ReceivedDate = ReadStringColumn(reader, "received_date");
+                    page.BulkInst = ReadStringColumn(reader, "BulkInst").Equals("Y", StringComparison.OrdinalIgnoreCase);
+                    page.HasBulkInstallationReport = HasInstallationFileValue(
+                        ReadStringColumn(reader, "InstalationReportFile"));
+                    page.HasBulkInstallationPhoto = HasInstallationFileValue(
+                        ReadStringColumn(reader, "InstalationPhoto"));
+                    page.HasBulkWarrantyCard = HasInstallationFileValue(
+                        ReadStringColumn(reader, "WarrantyCardFile"));
+                    page.HasBulkChallan = HasInstallationFileValue(
+                        ReadStringColumn(reader, "Challanfile"));
+                }
+
+                int slNo = 0;
+                await using (var rowsCmd = new SqlCommand(rowsSql, con))
+                {
+                    rowsCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    await using var reader = await rowsCmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        slNo++;
+                        bool isMongo = ReadStringColumn(reader, "ISmongo")
+                            .Equals("Y", StringComparison.OrdinalIgnoreCase);
+
+                        page.Rows.Add(new DmeInstallationReportRowDto
+                        {
+                            SlNo = slNo,
+                            ItemDetailId = ReadIntColumn(reader, "item_detail_id"),
+                            SerialNo = ReadStringColumn(reader, "make_no"),
+                            InstallationDate = ReadStringColumn(reader, "installation_date"),
+                            WarrantyFrom = ReadStringColumn(reader, "warenty_from"),
+                            WarrantyTo = ReadStringColumn(reader, "warenty_to"),
+                            ReceivedQty = ReadDecimalColumn(reader, "received_qty"),
+                            WarrantyCardNo = ReadStringColumn(reader, "warranty_certificate_no"),
+                            InstallationLocation = ReadStringColumn(reader, "installation_location"),
+                            IsMongo = isMongo,
+                            HasInstallationReport = HasInstallationFileValue(
+                                ReadStringColumn(reader, "InstalationReportFile")),
+                            HasInstallationPhoto = HasInstallationFileValue(
+                                ReadStringColumn(reader, "InstalationPhoto")),
+                            HasWarrantyCard = HasInstallationFileValue(
+                                ReadStringColumn(reader, "WarrantyCardFile")),
+                            HasChallan = HasInstallationFileValue(
+                                ReadStringColumn(reader, "Challanfile")),
+                        });
+                    }
+                }
+
+                return Ok(page);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading installation report.", error = ex.Message });
+            }
+        }
+
+        /// <summary>Facility_InstallationReportDME.aspx — download installation attachment.</summary>
+        [HttpGet("installation-report/file")]
+        public async Task<IActionResult> DownloadInstallationFile(
+            [FromQuery] int userId,
+            [FromQuery] int receiptId,
+            [FromQuery] string fileType,
+            [FromQuery] int itemDetailId = 0,
+            [FromQuery] bool bulk = false)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (receiptId <= 0)
+                return BadRequest(new { message = "Receipt id is required." });
+            if (!bulk && itemDetailId <= 0)
+                return BadRequest(new { message = "Item detail id is required." });
+
+            string normalizedType = (fileType ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalizedType is not ("insreport" or "insphoto" or "waranty" or "chalan"))
+                return BadRequest(new { message = "Invalid file type." });
+
+            try
+            {
+                await using var con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await ReceiptBelongsToFacilityUserAsync(con, receiptId, userId))
+                    return NotFound(new { message = "Receipt not found for this facility user." });
+
+                string columnName = normalizedType switch
+                {
+                    "insreport" => "InstalationReportFile",
+                    "insphoto" => "InstalationPhoto",
+                    "waranty" => "WarrantyCardFile",
+                    _ => "Challanfile",
+                };
+
+                string? fileRef;
+                bool isMongo;
+                string? photoExt = null;
+                int mongoLookupId;
+
+                if (bulk)
+                {
+                    const string bulkSql = @"
+SELECT ISNULL(InstalationReportFile, 'N') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, 'N') AS InstalationPhoto,
+       ISNULL(Challanfile, 'N') AS Challanfile,
+       ISNULL(WarrantyCardFile, 'N') AS WarrantyCardFile
+FROM receipts
+WHERE receipt_id = @ReceiptId";
+
+                    await using var bulkCmd = new SqlCommand(bulkSql, con);
+                    bulkCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    await using var reader = await bulkCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Receipt not found." });
+
+                    fileRef = ReadStringColumn(reader, columnName);
+                    isMongo = true;
+                    mongoLookupId = receiptId;
+                }
+                else
+                {
+                    string itemSql = $@"
+SELECT ISNULL({columnName}, '') AS FileRef,
+       ISNULL(ISmongo, 'N') AS ISmongo,
+       ISNULL(InstalationPhoto, '') AS InstalationPhoto
+FROM receipt_item_details
+WHERE item_detail_id = @ItemDetailId AND receipt_id = @ReceiptId";
+
+                    await using var itemCmd = new SqlCommand(itemSql, con);
+                    itemCmd.Parameters.AddWithValue("@ItemDetailId", itemDetailId);
+                    itemCmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+                    await using var reader = await itemCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
+                        return NotFound(new { message = "Receipt item not found." });
+
+                    fileRef = ReadStringColumn(reader, "FileRef");
+                    isMongo = ReadStringColumn(reader, "ISmongo")
+                        .Equals("Y", StringComparison.OrdinalIgnoreCase);
+                    photoExt = Path.GetExtension(ReadStringColumn(reader, "InstalationPhoto"));
+                    mongoLookupId = itemDetailId;
+                }
+
+                if (!HasInstallationFileValue(fileRef))
+                    return NotFound(new { message = "File not found." });
+
+                byte[]? fileBytes;
+                string contentType;
+                string downloadName;
+
+                if (isMongo)
+                {
+                    ReceiptItemFiles? mongoFile = await _mongoService.GetFile(mongoLookupId);
+                    if (mongoFile == null)
+                        return NotFound(new { message = "File not found." });
+
+                    fileBytes = normalizedType switch
+                    {
+                        "chalan" => mongoFile.FileChalan,
+                        "waranty" => mongoFile.FileWarrantyCard,
+                        "insphoto" => mongoFile.FilePhoto,
+                        _ => mongoFile.File,
+                    };
+
+                    string extension = normalizedType == "insphoto" && !string.IsNullOrWhiteSpace(photoExt)
+                        ? photoExt
+                        : ".pdf";
+                    contentType = GetInstallationContentType(extension);
+                    downloadName = $"{fileRef}{extension}";
+                }
+                else
+                {
+                    string physicalPath = ResolveLegacyVirtualPath(fileRef!);
+                    if (!System.IO.File.Exists(physicalPath))
+                        return NotFound(new { message = "File not found on server." });
+
+                    fileBytes = await System.IO.File.ReadAllBytesAsync(physicalPath);
+                    contentType = GetInstallationContentType(Path.GetExtension(physicalPath));
+                    downloadName = Path.GetFileName(physicalPath);
+                }
+
+                if (fileBytes == null || fileBytes.Length == 0)
+                    return NotFound(new { message = "File not found." });
+
+                return File(fileBytes, contentType, downloadName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading installation file.", error = ex.Message });
+            }
+        }
+
+        private static async Task<bool> LocationBelongsToUserAsync(SqlConnection con, int locId, int userId)
+        {
+            const string sql = @"
+SELECT 1
+FROM dbo.maslocations
+WHERE location_id = @LocId AND user_id = @UserId";
+            await using var cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@LocId", locId);
+            cmd.Parameters.AddWithValue("@UserId", userId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<bool> ReceiptBelongsToFacilityUserAsync(
+            SqlConnection con, int receiptId, int userId)
+        {
+            const string sql = @"
+SELECT 1
+FROM dbo.receipts r
+INNER JOIN dbo.maslocations ml ON ml.location_id = r.location_id
+WHERE r.receipt_id = @ReceiptId AND ml.user_id = @UserId";
+            await using var cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@ReceiptId", receiptId);
+            cmd.Parameters.AddWithValue("@UserId", userId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<bool> PoBelongsToFacilityUserAsync(
+            SqlConnection con, int poId, int userId)
+        {
+            const string sql = @"
+SELECT TOP 1 1
+FROM dbo.po_items pi
+INNER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
+WHERE pi.po_id = @PoId AND l.user_id = @UserId";
+            await using var cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@UserId", userId);
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<DmeReceiptEntryPageDto> LoadDmeReceiptEntryPageAsync(
+            SqlConnection con,
+            int userId,
+            int poId,
+            int locId,
+            int issueId)
+        {
+            const string headerSql = @"
+SELECT TOP 1
+       d.po_id,
+       d.location_id,
+       d.issue_id,
+       mi.categoryid,
+       mi.item_code_as_per_tender AS item_code,
+       mi.item_name,
+       CAST(poi.percentage AS VARCHAR(10)) + ' %' AS taxPercent,
+       po.outward_no + '-' + po.po_no AS po_no,
+       CASE WHEN po.soissueDT IS NOT NULL THEN CONVERT(VARCHAR, po.soissueDT, 103)
+            ELSE CONVERT(VARCHAR, po.po_date, 103) END AS po_date,
+       t.tender_no,
+       ml.location_name,
+       ISNULL(ci.model, '') AS model,
+       ISNULL(ci.make, '') AS make,
+       poi.basicrate,
+       poi.totalbasicPrice,
+       poi.totalprice,
+       (SELECT SUM(quantity) FROM dbo.po_items WHERE po_id = @PoId) AS poqty_all,
+       poi.quantity AS poqty_consignee,
+       ISNULL(sup.Supplyqty, 0) AS dispatched_qty,
+       poi.quantity - ISNULL(sup.Supplyqty, 0) AS bal_qty,
+       CAST(pt.tranche_days AS VARCHAR(20)) AS tranche_days,
+       ISNULL(t.warranty_year, 1) AS warranty_year,
+       CASE
+           WHEN t.cancellationdays IS NULL THEN ''
+           ELSE CAST(t.cancellationdays AS VARCHAR(20))
+       END AS cancellation_days,
+       CASE
+           WHEN po.extendeddate > po.po_date THEN CONVERT(VARCHAR, po.extendeddate, 103)
+           WHEN t.cancellationdays IS NOT NULL THEN CONVERT(
+               VARCHAR,
+               DATEADD(DAY, t.cancellationdays, CASE WHEN po.soissueDT IS NOT NULL THEN po.soissueDT ELSE po.po_date END),
+               103)
+           ELSE '-'
+       END AS ldate,
+       d.challan_no,
+       CONVERT(VARCHAR, d.challan_date, 103) AS challan_date,
+       d.invoice_no,
+       CONVERT(VARCHAR, d.invoice_date, 103) AS invoice_date,
+       d.dispatch_no,
+       CONVERT(VARCHAR, d.dispatch_date, 103) AS dispatch_date,
+       d.remarks AS supplier_remarks
+FROM dbo.SupplierDispatch d
+INNER JOIN dbo.purchase_order po ON po.po_id = d.po_id
+INNER JOIN dbo.po_items poi ON poi.po_id = d.po_id AND poi.consignee_id = d.location_id
+LEFT JOIN dbo.po_tranche pt ON pt.po_id = po.po_id
+LEFT JOIN dbo.contract_items ci ON ci.contract_item_id = poi.contract_item_id
+INNER JOIN dbo.masitems mi ON mi.item_id = poi.item_id
+LEFT OUTER JOIN dbo.tenders t ON t.tender_id = po.tender_id
+INNER JOIN dbo.maslocations ml ON ml.location_id = d.location_id
+LEFT OUTER JOIN (
+    SELECT sd.issue_id, SUM(i.Supplyqty) AS Supplyqty
+    FROM dbo.SupplierDispatch sd
+    INNER JOIN dbo.Issue_item_details i ON i.Issue_id = sd.Issue_id
+    GROUP BY sd.issue_id
+) sup ON sup.issue_id = d.issue_id
+WHERE d.po_id = @PoId AND d.location_id = @LocId AND d.issue_id = @IssueId
+  AND ml.user_id = @UserId";
+
+            DmeReceiptEntryPageDto? page = null;
+            await using (var cmd = new SqlCommand(headerSql, con))
+            {
+                cmd.Parameters.AddWithValue("@PoId", poId);
+                cmd.Parameters.AddWithValue("@LocId", locId);
+                cmd.Parameters.AddWithValue("@IssueId", issueId);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    page = new DmeReceiptEntryPageDto
+                    {
+                        PoId = ReadIntColumn(reader, "po_id"),
+                        LocationId = ReadIntColumn(reader, "location_id"),
+                        IssueId = ReadIntColumn(reader, "issue_id"),
+                        CategoryId = ReadIntColumn(reader, "categoryid"),
+                        ItemCode = ReadStringColumn(reader, "item_code"),
+                        ItemName = ReadStringColumn(reader, "item_name"),
+                        TaxPercent = ReadStringColumn(reader, "taxPercent"),
+                        PoNo = ReadStringColumn(reader, "po_no"),
+                        PoDate = ReadStringColumn(reader, "po_date"),
+                        TenderNo = ReadStringColumn(reader, "tender_no"),
+                        ConsigneeName = ReadStringColumn(reader, "location_name"),
+                        ModelNo = ReadStringColumn(reader, "model"),
+                        Make = ReadStringColumn(reader, "make"),
+                        BasicRate = ReadDecimalColumn(reader, "basicrate"),
+                        TotalNetPoValue = ReadDecimalColumn(reader, "totalbasicPrice"),
+                        TotalGrossPoValue = ReadDecimalColumn(reader, "totalprice"),
+                        PoQtyAllConsignees = ReadDecimalColumn(reader, "poqty_all"),
+                        PoQtyConsignee = ReadDecimalColumn(reader, "poqty_consignee"),
+                        DispatchedQty = ReadDecimalColumn(reader, "dispatched_qty"),
+                        BalanceQty = ReadDecimalColumn(reader, "bal_qty"),
+                        SupplyDays = ReadStringColumn(reader, "tranche_days"),
+                        WarrantyYears = ReadIntColumn(reader, "warranty_year"),
+                        CancellationDays = ReadStringColumn(reader, "cancellation_days"),
+                        LastReceiptDate = ReadStringColumn(reader, "ldate"),
+                        ChallanNo = ReadStringColumn(reader, "challan_no"),
+                        ChallanDate = ReadStringColumn(reader, "challan_date"),
+                        InvoiceNo = ReadStringColumn(reader, "invoice_no"),
+                        InvoiceDate = ReadStringColumn(reader, "invoice_date"),
+                        DispatchNo = ReadStringColumn(reader, "dispatch_no"),
+                        DispatchDate = ReadStringColumn(reader, "dispatch_date"),
+                        SupplierRemarks = ReadStringColumn(reader, "supplier_remarks"),
+                    };
+                }
+            }
+
+            if (page == null)
+                throw new InvalidOperationException("Receipt issue not found for this facility.");
+            if (page.CategoryId == 2)
+                throw new InvalidOperationException("Reagent receipt entry is not migrated yet.");
+
+            const string receiptSql = @"
+SELECT TOP 1 receipt_id,
+       CONVERT(VARCHAR, recieved_date, 103) AS recieved_date,
+       receipt_no,
+       receipt_qty,
+       remarks,
+       ISNULL(BulkInst, 'N') AS BulkInst,
+       ISNULL(InstalationReportFile, '') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, '') AS InstalationPhoto,
+       ISNULL(WarrantyCardFile, '') AS WarrantyCardFile,
+       ISNULL(Challanfile, '') AS Challanfile
+FROM dbo.receipts
+WHERE issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId
+ORDER BY receipt_id DESC";
+            await using (var receiptCmd = new SqlCommand(receiptSql, con))
+            {
+                receiptCmd.Parameters.AddWithValue("@IssueId", issueId);
+                receiptCmd.Parameters.AddWithValue("@PoId", poId);
+                receiptCmd.Parameters.AddWithValue("@LocId", locId);
+                await using var reader = await receiptCmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    page.ReceiptId = ReadIntColumn(reader, "receipt_id");
+                    page.ReceivedDate = ReadStringColumn(reader, "recieved_date");
+                    page.ReceiptNo = ReadStringColumn(reader, "receipt_no");
+                    page.ReceiptQty = ReadStringColumn(reader, "receipt_qty");
+                    page.ReceiptRemarks = ReadStringColumn(reader, "remarks");
+                    page.BulkInst = ReadStringColumn(reader, "BulkInst")
+                        .Equals("Y", StringComparison.OrdinalIgnoreCase);
+                    page.HasBulkInstallationReport = HasInstallationFileValue(
+                        ReadStringColumn(reader, "InstalationReportFile"));
+                    page.HasBulkInstallationPhoto = HasInstallationFileValue(
+                        ReadStringColumn(reader, "InstalationPhoto"));
+                    page.HasBulkWarrantyCard = HasInstallationFileValue(
+                        ReadStringColumn(reader, "WarrantyCardFile"));
+                    page.HasBulkChallan = HasInstallationFileValue(
+                        ReadStringColumn(reader, "Challanfile"));
+                }
+            }
+
+            const string issueDetailsSql = @"
+SELECT issue_detail_id, make_no, warranty_certificate_no, Supplyqty
+FROM dbo.Issue_item_details
+WHERE Issue_id = @IssueId
+ORDER BY issue_detail_id";
+            await using (var itemCmd = new SqlCommand(issueDetailsSql, con))
+            {
+                itemCmd.Parameters.AddWithValue("@IssueId", issueId);
+                await using var reader = await itemCmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    page.IssueDetailOptions.Add(new DmeReceiptIssueDetailOptionDto
+                    {
+                        IssueDetailId = ReadIntColumn(reader, "issue_detail_id"),
+                        SerialNo = ReadStringColumn(reader, "make_no"),
+                        WarrantyCertificateNo = ReadStringColumn(reader, "warranty_certificate_no", "Warranty_CertificateNo"),
+                        DispatchedQty = ReadDecimalColumn(reader, "Supplyqty"),
+                    });
+                }
+            }
+
+            if (page.ReceiptId > 0)
+            {
+                const string linesSql = @"
+SELECT item_detail_id, issue_detail_id, make_no, warranty_certificate_no, warranty_card_no, received_qty,
+       CONVERT(VARCHAR, installation_date, 103) AS installation_date,
+       CONVERT(VARCHAR, warenty_from, 103) AS warenty_from,
+       CONVERT(VARCHAR, warenty_to, 103) AS warenty_to,
+       installation_by, installation_location, cgmsc_log_printed, warranty_validity, manual_provided,
+       opening_manual_provided, calibration_certificate_prov, org_warranty_card_rec, other_statutory,
+       inticated_po_are_received,
+       ISNULL(InstalationReportFile, '') AS InstalationReportFile,
+       ISNULL(InstalationPhoto, '') AS InstalationPhoto,
+       ISNULL(WarrantyCardFile, '') AS WarrantyCardFile,
+       ISNULL(Challanfile, '') AS Challanfile
+FROM dbo.receipt_item_details
+WHERE receipt_id = @ReceiptId
+ORDER BY item_detail_id";
+                await using var linesCmd = new SqlCommand(linesSql, con);
+                linesCmd.Parameters.AddWithValue("@ReceiptId", page.ReceiptId);
+                await using var reader = await linesCmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    page.InstallationLines.Add(new DmeReceiptInstallationLineDto
+                    {
+                        ItemDetailId = ReadIntColumn(reader, "item_detail_id"),
+                        IssueDetailId = ReadIntColumn(reader, "issue_detail_id"),
+                        SerialNo = ReadStringColumn(reader, "make_no"),
+                        WarrantyCertificateNo = ReadStringColumn(reader, "warranty_certificate_no"),
+                        WarrantyCardNo = ReadStringColumn(reader, "warranty_card_no"),
+                        ReceivedQty = ReadDecimalColumn(reader, "received_qty"),
+                        InstallationDate = ReadStringColumn(reader, "installation_date"),
+                        WarrantyFromDate = ReadStringColumn(reader, "warenty_from"),
+                        WarrantyToDate = ReadStringColumn(reader, "warenty_to"),
+                        InstallationBy = ReadStringColumn(reader, "installation_by"),
+                        InstallationLocation = ReadStringColumn(reader, "installation_location"),
+                        CgmscLogoPrinted = ReadStringColumn(reader, "cgmsc_log_printed"),
+                        WarrantyValidity = ReadStringColumn(reader, "warranty_validity"),
+                        ServiceManual = ReadStringColumn(reader, "manual_provided"),
+                        OperatingManual = ReadStringColumn(reader, "opening_manual_provided"),
+                        CalibrationCertificate = ReadStringColumn(reader, "calibration_certificate_prov"),
+                        WarrantyCard = ReadStringColumn(reader, "org_warranty_card_rec"),
+                        OtherStatutory = ReadStringColumn(reader, "other_statutory"),
+                        PoDocuments = ReadStringColumn(reader, "inticated_po_are_received"),
+                        HasInstallationReport = HasInstallationFileValue(
+                            ReadStringColumn(reader, "InstalationReportFile")),
+                        HasInstallationPhoto = HasInstallationFileValue(
+                            ReadStringColumn(reader, "InstalationPhoto")),
+                        HasWarrantyCard = HasInstallationFileValue(
+                            ReadStringColumn(reader, "WarrantyCardFile")),
+                        HasChallan = HasInstallationFileValue(
+                            ReadStringColumn(reader, "Challanfile")),
+                    });
+                }
+            }
+
+            return page;
+        }
+
+        private static bool HasInstallationFileValue(string? value) =>
+            !string.IsNullOrWhiteSpace(value) && !value.Trim().Equals("N", StringComparison.OrdinalIgnoreCase);
+
+        private string ResolveLegacyVirtualPath(string virtualPath)
+        {
+            string relative = virtualPath.Trim();
+            if (relative.StartsWith("~/", StringComparison.Ordinal))
+                relative = relative[2..];
+            else if (relative.StartsWith('/'))
+                relative = relative.TrimStart('/');
+
+            return Path.GetFullPath(Path.Combine(
+                _emsRoleRoot,
+                relative.Replace('/', Path.DirectorySeparatorChar)));
+        }
+
+        private static string GetInstallationContentType(string extension)
+        {
+            return extension.ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".pdf" => "application/pdf",
+                _ => "application/octet-stream",
+            };
+        }
+
+        private static int ReadIntColumn(SqlDataReader reader, params string[] columnNames)
+        {
+            foreach (string columnName in columnNames)
+            {
+                try
+                {
+                    int ordinal = reader.GetOrdinal(columnName);
+                    if (!reader.IsDBNull(ordinal))
+                        return Convert.ToInt32(reader.GetValue(ordinal));
+                }
+                catch (IndexOutOfRangeException)
+                {
+                }
+            }
+
+            return 0;
+        }
+
+        private static string ReadStringColumn(SqlDataReader reader, params string[] columnNames)
+        {
+            foreach (string columnName in columnNames)
+            {
+                try
+                {
+                    int ordinal = reader.GetOrdinal(columnName);
+                    if (!reader.IsDBNull(ordinal))
+                        return reader.GetValue(ordinal)?.ToString() ?? string.Empty;
+                }
+                catch (IndexOutOfRangeException)
+                {
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static decimal ReadDecimalColumn(SqlDataReader reader, params string[] columnNames)
+        {
+            foreach (string columnName in columnNames)
+            {
+                try
+                {
+                    int ordinal = reader.GetOrdinal(columnName);
+                    if (!reader.IsDBNull(ordinal))
+                        return Convert.ToDecimal(reader.GetValue(ordinal));
+                }
+                catch (IndexOutOfRangeException)
+                {
+                }
+            }
+
+            return 0;
+        }
+
+        private static bool TryParseLegacyDate(string? value, out DateTime result)
+        {
+            result = DateTime.MinValue;
+            if (string.IsNullOrWhiteSpace(value) || value.Trim() == "-")
+                return false;
+
             var formats = new[] { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd" };
             return DateTime.TryParseExact(
                 value.Trim(),
