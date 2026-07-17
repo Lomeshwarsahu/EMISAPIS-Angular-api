@@ -583,6 +583,30 @@ namespace EMISAPIS.DTOS
         public decimal BalanceQty { get; set; }
     }
 
+    /// <summary>PendingInstallDrillDownsupplier.aspx — consignee-wise drill-down for one PO.</summary>
+    public class SupplierPendingInstallDrillDownDto
+    {
+        public int PoId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = string.Empty;
+        public string Supplier { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string PrintDate { get; set; } = string.Empty;
+        public List<SupplierPendingInstallDrillDownRowDto> Rows { get; set; } = new();
+    }
+
+    public class SupplierPendingInstallDrillDownRowDto
+    {
+        public string District { get; set; } = string.Empty;
+        public string Consignee { get; set; } = string.Empty;
+        public decimal PoQty { get; set; }
+        public decimal DispatchedQty { get; set; }
+        public decimal ReceiptQty { get; set; }
+        public decimal InstalledQty { get; set; }
+        public string Remarks { get; set; } = string.Empty;
+    }
+
     /// <summary>SanctionsRDLC.aspx — PO item header line on sanction report.</summary>
     public class SupplierSanctionReportItemDto
     {

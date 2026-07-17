@@ -16,9 +16,11 @@ namespace EMISAPIS.Controllers
         private readonly string _emsRoleRoot;
         private readonly string _indentUploadsRoot;
         private readonly MongoService _mongoService;
+        private readonly OtpSmsService _otpSms;
 
-        public DMEOrderController(IConfiguration configuration, IWebHostEnvironment env)
+        public DMEOrderController(IConfiguration configuration, IWebHostEnvironment env, OtpSmsService otpSms)
         {
+            _otpSms = otpSms;
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("DefaultConnection missing.");
 
@@ -1065,6 +1067,301 @@ WHERE indentid = @IndentId AND user_id = @UserId AND directorate_id = 12";
             {
                 return StatusCode(500, new { message = "Error downloading indent file.", detail = ex.Message });
             }
+        }
+
+        /// <summary>DMEFACADDIndent.aspx FillOTPDetails — store officer mobile/email for finalize modal.</summary>
+        [HttpGet("facility-indents/{indentId:int}/otp-contact")]
+        public async Task<IActionResult> GetFacilityIndentOtpContact(int indentId, [FromQuery] int userId)
+        {
+            if (indentId <= 0 || userId <= 0)
+                return BadRequest(new { message = "indentId and userId are required." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                if (!await FacilityIndentBelongsToUserAsync(conn, indentId, userId))
+                    return NotFound(new { message = "Indent not found." });
+
+                const string sql = @"
+SELECT ISNULL(storeOfficerMob, '') AS storeOfficerMob,
+       ISNULL(emailID, '') AS emailID,
+       ISNULL(user_name, '') AS user_name
+FROM dbo.users WHERE user_id = @UserId";
+
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "User not found." });
+
+                return Ok(new FacilityIndentOtpContactDto
+                {
+                    Mobile = reader["storeOfficerMob"]?.ToString()?.Trim() ?? string.Empty,
+                    Email = reader["emailID"]?.ToString()?.Trim() ?? string.Empty,
+                    FacilityName = reader["user_name"]?.ToString()?.Trim() ?? string.Empty,
+                });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading OTP contact.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>DMEFACADDIndent.aspx lnkSentOtp — store OTP on users.pwdChangeOTP + smslog.</summary>
+        [HttpPost("facility-indents/{indentId:int}/send-otp")]
+        public async Task<IActionResult> SendFacilityIndentOtp(int indentId, [FromBody] FacilityIndentSendOtpRequest req)
+        {
+            if (indentId <= 0 || req == null || req.UserId <= 0)
+                return BadRequest(new { message = "indentId and userId are required." });
+
+            var mobile = (req.Mobile ?? string.Empty).Trim();
+            var email = (req.Email ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(mobile))
+                return BadRequest(new { message = "Please Provide Mobile Number." });
+            if (string.IsNullOrWhiteSpace(email))
+                return BadRequest(new { message = "Please Provide Email Id." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                var status = await GetFacilityIndentStatusAsync(conn, indentId, req.UserId);
+                if (status == null)
+                    return NotFound(new { message = "Indent not found." });
+                if (string.Equals(status, "C", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { message = "Indent is Complete , Now No updation is allowed." });
+
+                var itemCount = await CountFacilityIndentItemsAsync(conn, indentId);
+                if (itemCount <= 0)
+                    return BadRequest(new { message = "Please Enter Indent First" });
+
+                var otp = Random.Shared.Next(1000, 9999).ToString();
+
+                await using (var updateCmd = new SqlCommand(
+                    "UPDATE dbo.users SET pwdChangeOTP = @Otp WHERE user_id = @UserId", conn))
+                {
+                    updateCmd.Parameters.AddWithValue("@Otp", otp);
+                    updateCmd.Parameters.AddWithValue("@UserId", req.UserId);
+                    if (await updateCmd.ExecuteNonQueryAsync() == 0)
+                        return NotFound(new { message = "User not found." });
+                }
+
+                try
+                {
+                    var sms = _otpSms.BuildMessage(otp);
+                    await using var logCmd = new SqlCommand(
+                        @"INSERT INTO dbo.smslog(mobno, sms, entrydate, module, reason)
+                          VALUES(@Mob, @Sms, GETDATE(), 'FAC', 'New Indent')", conn);
+                    logCmd.Parameters.AddWithValue("@Mob", mobile);
+                    logCmd.Parameters.AddWithValue("@Sms", sms);
+                    await logCmd.ExecuteNonQueryAsync();
+                }
+                catch
+                {
+                    // smslog schema may differ; OTP is already on users.
+                }
+
+                var templateId = _otpSms.Options.Templates?.IndentFinalize
+                    ?? "1407163911599431374";
+                var (sent, detail) = await _otpSms.TrySendOtpAsync(mobile, otp, templateId);
+                if (!sent && _otpSms.Options.Enabled)
+                {
+                    return StatusCode(502, new
+                    {
+                        message = "OTP saved but SMS gateway failed. Please retry or check OtpSms settings.",
+                        detail,
+                    });
+                }
+
+                var mobileMask = mobile.Length >= 4 ? "xxxxxx" + mobile[^4..] : mobile;
+                return Ok(new
+                {
+                    message = $"OTP is sent to Your Mobile Number ({mobileMask}) / Email.",
+                });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Failed to send OTP.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// DMEFACADDIndent.aspx btnYes — verify OTP, save letter+spec PDFs, set Status=C + dispatch fields.
+        /// </summary>
+        [HttpPost("facility-indents/{indentId:int}/finalize")]
+        [RequestSizeLimit(8_000_000)]
+        public async Task<IActionResult> FinalizeFacilityIndent(int indentId)
+        {
+            if (indentId <= 0)
+                return BadRequest(new { message = "indentId is required." });
+
+            if (!int.TryParse(Request.Form["userId"], out var userId) || userId <= 0)
+                return BadRequest(new { message = "userId is required." });
+
+            var otp = (Request.Form["otp"].ToString() ?? string.Empty).Trim();
+            var dispatchNo = (Request.Form["dispatchNo"].ToString() ?? string.Empty).Trim();
+            var dispatchDateRaw = (Request.Form["dispatchDate"].ToString() ?? string.Empty).Trim();
+            var letter = Request.Form.Files.GetFile("letter") ?? Request.Form.Files.GetFile("Letter");
+            var spec = Request.Form.Files.GetFile("spec") ?? Request.Form.Files.GetFile("Spec");
+
+            if (string.IsNullOrWhiteSpace(otp))
+                return BadRequest(new { message = "Please Submit 4 digit OTP sent on your mobile/email " });
+            if (string.IsNullOrWhiteSpace(dispatchNo))
+                return BadRequest(new { message = "Please enter Dispatch No." });
+            if (string.IsNullOrWhiteSpace(dispatchDateRaw))
+                return BadRequest(new { message = "Please enter Dispatch Date." });
+
+            if (!DateTime.TryParseExact(
+                    dispatchDateRaw,
+                    new[] { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd" },
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var dispatchDate))
+            {
+                return BadRequest(new { message = "Dispatch Date must be dd/MM/yyyy." });
+            }
+
+            if (letter == null || letter.Length == 0)
+                return BadRequest(new { message = "Please Select Document to Upload." });
+            if (spec == null || spec.Length == 0)
+                return BadRequest(new { message = "Please Upload Specificaiton in Single PDF File" });
+
+            static bool IsPdf(IFormFile f) =>
+                Path.GetExtension(f.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+
+            if (!IsPdf(letter) || !IsPdf(spec))
+                return BadRequest(new { message = "Please upload pdf file only" });
+            if (letter.Length > 2_000_000)
+                return BadRequest(new { message = "You can't upload file more then 2 mb." });
+            if (spec.Length > 5_000_000)
+                return BadRequest(new { message = "You can't upload file more then 5 mb." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                var status = await GetFacilityIndentStatusAsync(conn, indentId, userId);
+                if (status == null)
+                    return NotFound(new { message = "Indent not found." });
+                if (string.Equals(status, "C", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { message = "Indent is Complete , Now No updation is allowed." });
+
+                var itemCount = await CountFacilityIndentItemsAsync(conn, indentId);
+                if (itemCount <= 0)
+                    return BadRequest(new { message = "Please Enter Indent First" });
+
+                string storedOtp;
+                await using (var otpCmd = new SqlCommand(
+                    "SELECT ISNULL(CAST(pwdChangeOTP AS VARCHAR(20)), '') AS otp FROM dbo.users WHERE user_id = @UserId",
+                    conn))
+                {
+                    otpCmd.Parameters.AddWithValue("@UserId", userId);
+                    storedOtp = (await otpCmd.ExecuteScalarAsync())?.ToString()?.Trim() ?? string.Empty;
+                }
+
+                if (string.IsNullOrWhiteSpace(storedOtp))
+                    return BadRequest(new { message = "Please click to send OTP first" });
+                if (!string.Equals(storedOtp, otp, StringComparison.Ordinal))
+                    return BadRequest(new { message = "The OTP Entered is incorrect." });
+
+                Directory.CreateDirectory(_indentUploadsRoot);
+                var stamp = $"ID{DateTime.Now.Day}{DateTime.Now.Month}{DateTime.Now:yy}_{indentId}";
+                var letterName = $"{stamp}_indentDoc.pdf";
+                var specName = $"{stamp}_indentSpex.pdf";
+                var letterPhysical = Path.Combine(_indentUploadsRoot, letterName);
+                var specPhysical = Path.Combine(_indentUploadsRoot, specName);
+                var letterDbPath = $"~/Uploads/{letterName}";
+                var specDbPath = $"~/Uploads/{specName}";
+
+                await using (var letterStream = System.IO.File.Create(letterPhysical))
+                    await letter.CopyToAsync(letterStream);
+                await using (var specStream = System.IO.File.Create(specPhysical))
+                    await spec.CopyToAsync(specStream);
+
+                const string updateSql = @"
+UPDATE dbo.mas_indentfacility
+SET pathSpex = @PathSpex,
+    filenameSpex = @FileSpex,
+    path = @Path,
+    filename = @FileName,
+    Status = 'C',
+    DispatchNo = @DispatchNo,
+    DispatchDT = @DispatchDT,
+    DispatchEntryDT = GETDATE()
+WHERE indentid = @IndentId AND user_id = @UserId AND directorate_id = 12";
+
+                await using (var updateCmd = new SqlCommand(updateSql, conn))
+                {
+                    updateCmd.Parameters.AddWithValue("@PathSpex", specDbPath);
+                    updateCmd.Parameters.AddWithValue("@FileSpex", specName);
+                    updateCmd.Parameters.AddWithValue("@Path", letterDbPath);
+                    updateCmd.Parameters.AddWithValue("@FileName", letterName);
+                    updateCmd.Parameters.AddWithValue("@DispatchNo", dispatchNo);
+                    updateCmd.Parameters.AddWithValue("@DispatchDT", dispatchDate);
+                    updateCmd.Parameters.AddWithValue("@IndentId", indentId);
+                    updateCmd.Parameters.AddWithValue("@UserId", userId);
+                    if (await updateCmd.ExecuteNonQueryAsync() == 0)
+                        return NotFound(new { message = "Indent not found." });
+                }
+
+                try
+                {
+                    await using var clearOtp = new SqlCommand(
+                        "UPDATE dbo.users SET pwdChangeOTP = NULL WHERE user_id = @UserId", conn);
+                    clearOtp.Parameters.AddWithValue("@UserId", userId);
+                    await clearOtp.ExecuteNonQueryAsync();
+                }
+                catch
+                {
+                    // optional clear
+                }
+
+                return Ok(new { message = "Uploaded Successfully." });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Failed to Upload ,Please Retry", detail = ex.Message });
+            }
+            catch (IOException ex)
+            {
+                return StatusCode(500, new { message = "Somthing Wrong in Uploading", detail = ex.Message });
+            }
+        }
+
+        private static async Task<bool> FacilityIndentBelongsToUserAsync(SqlConnection conn, int indentId, int userId)
+        {
+            const string sql = @"
+SELECT 1 FROM dbo.mas_indentfacility
+WHERE indentid = @IndentId AND user_id = @UserId AND directorate_id = 12";
+            await using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@IndentId", indentId);
+            cmd.Parameters.AddWithValue("@UserId", userId);
+            var result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<string?> GetFacilityIndentStatusAsync(SqlConnection conn, int indentId, int userId)
+        {
+            const string sql = @"
+SELECT ISNULL(status, 'N') FROM dbo.mas_indentfacility
+WHERE indentid = @IndentId AND user_id = @UserId AND directorate_id = 12";
+            await using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@IndentId", indentId);
+            cmd.Parameters.AddWithValue("@UserId", userId);
+            var result = await cmd.ExecuteScalarAsync();
+            return result == null || result == DBNull.Value ? null : result.ToString();
+        }
+
+        private static async Task<int> CountFacilityIndentItemsAsync(SqlConnection conn, int indentId)
+        {
+            const string sql = "SELECT COUNT(1) FROM dbo.mas_item_indent WHERE indentid = @IndentId";
+            await using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@IndentId", indentId);
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync());
         }
 
         /// <summary>Indent_ReportDME_MCwise.aspx — annual indent report by ICID.</summary>

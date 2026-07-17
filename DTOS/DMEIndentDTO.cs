@@ -109,6 +109,21 @@ namespace EMISAPIS.DTOS
         public List<int> IndentItemIds { get; set; } = new();
     }
 
+    /// <summary>DMEFACADDIndent.aspx — OTP contact from users table.</summary>
+    public class FacilityIndentOtpContactDto
+    {
+        public string Mobile { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string FacilityName { get; set; } = string.Empty;
+    }
+
+    public class FacilityIndentSendOtpRequest
+    {
+        public int UserId { get; set; }
+        public string? Mobile { get; set; }
+        public string? Email { get; set; }
+    }
+
     public class FacilityIndentReportDto
     {
         public FacilityIndentHeaderDto Header { get; set; } = new();

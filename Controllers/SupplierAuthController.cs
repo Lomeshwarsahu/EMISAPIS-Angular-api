@@ -21,9 +21,14 @@ namespace EMISAPIS.Controllers
         private readonly string _invoiceDocRoot;
         private readonly string _emsRoleRoot;
         private readonly MongoService _mongoService;
+        private readonly OtpSmsService _otpSms;
 
-        public SupplierAuthController(IConfiguration configuration, IWebHostEnvironment env)
+        public SupplierAuthController(
+            IConfiguration configuration,
+            IWebHostEnvironment env,
+            OtpSmsService otpSms)
         {
+            _otpSms = otpSms;
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("DefaultConnection is not configured.");
 
@@ -181,7 +186,7 @@ namespace EMISAPIS.Controllers
 
                 try
                 {
-                    string content = $"OTP for submission in EMIS is {otpText}. Please do not share with anyone.";
+                    string content = _otpSms.BuildMessage(otpText);
                     string logType = emailAck && smsAck ? "Email_Reg_Mob" : emailAck ? "Email" : "Reg_Mob";
 
                     using SqlCommand logCmd = new SqlCommand(
@@ -198,6 +203,21 @@ namespace EMISAPIS.Controllers
                 catch
                 {
                     // OTP is saved on massuppliers; smslog is optional (schema may differ on some servers).
+                }
+
+                if (smsAck)
+                {
+                    var templateId = _otpSms.Options.Templates?.SupplierAuth
+                        ?? "1407162263151118865";
+                    var (sent, detail) = await _otpSms.TrySendOtpAsync(mobile, otpText, templateId);
+                    if (!sent && _otpSms.Options.Enabled)
+                    {
+                        return StatusCode(502, new
+                        {
+                            message = "OTP saved but SMS gateway failed. Please retry or check OtpSms settings.",
+                            detail,
+                        });
+                    }
                 }
 
                 string mobileMask = mobile.Length >= 4 ? "xxxxxx" + mobile[^4..] : mobile;
@@ -4851,6 +4871,150 @@ ORDER BY p.po_date DESC";
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Error loading balance status report.", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// PendingInstallDrillDownsupplier.aspx — consignee-wise pending receipt/install for one PO.
+        /// SQL ported from Common/PendingInstallDrillDown1.ascx.cs fillgrid.
+        /// </summary>
+        [HttpGet("balance-status/drill-down/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierBalanceStatusDrillDown(
+            int userId,
+            [FromQuery] int poId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (poId <= 0)
+                return BadRequest(new { message = "Invalid PO id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found for this supplier." });
+
+                const string sql = @"
+SELECT d.DBStart_Name_En, l.location_name, m.item_code_as_per_tender, m.item_name,
+       sp.name AS Supplier, p.po_no AS PoNo,
+       (CASE WHEN p.soissueDT IS NULL THEN CONVERT(VARCHAR, p.po_date, 103)
+             ELSE CONVERT(VARCHAR, p.soissueDT, 103) END) AS po_dat,
+       SUM(pi.quantity) AS quantity, ISNULL(Supplyqty, 0) AS DispatchedQTY,
+       ISNULL(receiptQTY, 0) AS receiptQTY, ISNULL(insqty, 0) AS insqty,
+       pi.po_id, pi.item_id, l.location_id, d.DP_DistrictID,
+       CASE WHEN (ISNULL(receiptQTY, 0) > ISNULL(insqty, 0)) THEN 'To be installed'
+            ELSE 'To be received' END AS remarks
+FROM po_items pi
+INNER JOIN purchase_order p ON p.po_id = pi.po_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+INNER JOIN massuppliers sp ON sp.supplier_id = p.supplier_id
+INNER JOIN maslocations l ON l.location_id = pi.consignee_id
+LEFT OUTER JOIN Districts d ON d.DP_DistrictID = l.DP_DistrictID
+LEFT OUTER JOIN (
+    SELECT po_id, ISNULL(SUM(Supplyqty), 0) AS Supplyqty, d.location_id
+    FROM SupplierDispatch d
+    INNER JOIN Issue_item_details i ON d.Issue_id = i.Issue_id
+    WHERE d.status = 'C'
+    GROUP BY po_id, d.location_id
+) AS sup ON sup.po_id = pi.po_id AND sup.location_id = pi.consignee_id
+LEFT OUTER JOIN (
+    SELECT SUM(receiptQTY) AS receiptQTY, SUM(insqty) AS insqty, po_id, location_id
+    FROM (
+        SELECT ISNULL(r.receipt_qty, 0) AS receiptQTY, ISNULL(insqty, 0) AS insqty,
+               r.po_id, r.location_id, r.receipt_id
+        FROM receipts r
+        LEFT OUTER JOIN (
+            SELECT SUM(ri.received_qty) AS insqty, r.po_id, r.location_id, r.receipt_id
+            FROM receipts r
+            LEFT OUTER JOIN receipt_item_details ri ON ri.receipt_id = r.receipt_id
+            WHERE r.recieved_date IS NOT NULL AND r.status IN ('C')
+            GROUP BY r.po_id, r.location_id, r.receipt_id
+        ) AS ins ON ins.po_id = r.po_id AND ins.location_id = r.location_id AND ins.receipt_id = r.receipt_id
+        WHERE r.recieved_date IS NOT NULL AND r.status IN ('C', 'Received')
+    ) a
+    GROUP BY po_id, location_id
+) AS re ON re.po_id = pi.po_id AND re.location_id = l.location_id
+WHERE p.po_id = @PoId
+  AND p.status IN ('Order Placed', 'Completed', 'Partially Received')
+GROUP BY pi.po_id, pi.item_id, l.location_name, l.location_id, d.DP_DistrictID, d.DBStart_Name_En,
+         receiptQTY, insqty, Supplyqty, m.item_code_as_per_tender, m.item_name, sp.name,
+         p.soissueDT, p.po_date, p.po_no
+HAVING SUM(pi.quantity) > ISNULL(insqty, 0)
+ORDER BY d.DBStart_Name_En";
+
+                var result = new SupplierPendingInstallDrillDownDto
+                {
+                    PoId = poId,
+                    PrintDate = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss"),
+                };
+                var rows = new List<SupplierPendingInstallDrillDownRowDto>();
+
+                using (SqlCommand cmd = new SqlCommand(sql, con))
+                {
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (string.IsNullOrEmpty(result.PoNo))
+                        {
+                            result.ItemName = ReadStringColumn(reader, "item_name");
+                            result.ItemCode = ReadStringColumn(reader, "item_code_as_per_tender");
+                            result.Supplier = ReadStringColumn(reader, "Supplier");
+                            result.PoNo = ReadStringColumn(reader, "PoNo");
+                            result.PoDate = ReadStringColumn(reader, "po_dat");
+                        }
+
+                        rows.Add(new SupplierPendingInstallDrillDownRowDto
+                        {
+                            District = ReadStringColumn(reader, "DBStart_Name_En"),
+                            Consignee = ReadStringColumn(reader, "location_name"),
+                            PoQty = ReadDecimalColumn(reader, "quantity"),
+                            DispatchedQty = ReadDecimalColumn(reader, "DispatchedQTY"),
+                            ReceiptQty = ReadDecimalColumn(reader, "receiptQTY"),
+                            InstalledQty = ReadDecimalColumn(reader, "insqty"),
+                            Remarks = ReadStringColumn(reader, "remarks"),
+                        });
+                    }
+                }
+
+                if (string.IsNullOrEmpty(result.PoNo))
+                {
+                    const string headerSql = @"
+SELECT TOP 1 m.item_code_as_per_tender, m.item_name, sp.name AS Supplier, p.po_no AS PoNo,
+       (CASE WHEN p.soissueDT IS NULL THEN CONVERT(VARCHAR, p.po_date, 103)
+             ELSE CONVERT(VARCHAR, p.soissueDT, 103) END) AS po_dat
+FROM purchase_order p
+INNER JOIN massuppliers sp ON sp.supplier_id = p.supplier_id
+LEFT OUTER JOIN (
+    SELECT TOP 1 pi.po_id, pi.item_id FROM po_items pi WHERE pi.po_id = @PoId
+) pi ON pi.po_id = p.po_id
+LEFT OUTER JOIN masitems m ON m.item_id = pi.item_id
+WHERE p.po_id = @PoId";
+                    using SqlCommand headerCmd = new SqlCommand(headerSql, con);
+                    headerCmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader headerReader = await headerCmd.ExecuteReaderAsync();
+                    if (await headerReader.ReadAsync())
+                    {
+                        result.ItemName = ReadStringColumn(headerReader, "item_name");
+                        result.ItemCode = ReadStringColumn(headerReader, "item_code_as_per_tender");
+                        result.Supplier = ReadStringColumn(headerReader, "Supplier");
+                        result.PoNo = ReadStringColumn(headerReader, "PoNo");
+                        result.PoDate = ReadStringColumn(headerReader, "po_dat");
+                    }
+                }
+
+                result.Rows = rows;
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading pending install drill-down.", error = ex.Message });
             }
         }
 
