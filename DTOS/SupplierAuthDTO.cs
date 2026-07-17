@@ -264,6 +264,8 @@ namespace EMISAPIS.DTOS
         public int IssueDetailId { get; set; }
         public string SerialNo { get; set; } = string.Empty;
         public string WarrantyCardNo { get; set; } = string.Empty;
+        public string MfgDate { get; set; } = string.Empty;
+        public string ExpDate { get; set; } = string.Empty;
         public decimal SupplyQty { get; set; }
     }
 
@@ -273,6 +275,8 @@ namespace EMISAPIS.DTOS
         public int IssueDetailId { get; set; }
         public string SerialNo { get; set; } = string.Empty;
         public string WarrantyCardNo { get; set; } = string.Empty;
+        public string MfgDate { get; set; } = string.Empty;
+        public string ExpDate { get; set; } = string.Empty;
         public decimal SupplyQty { get; set; }
     }
 
@@ -383,8 +387,35 @@ namespace EMISAPIS.DTOS
         public string ReceiptNo { get; set; } = string.Empty;
         public string ReceiptQty { get; set; } = string.Empty;
         public string ReceiptRemarks { get; set; } = string.Empty;
+        public string ReceiptStatus { get; set; } = string.Empty;
+        public bool CanDeleteInstallation { get; set; }
+        public string DeniedStatus { get; set; } = string.Empty;
+        public int DescrepencyId { get; set; }
+        public decimal DeniedQty { get; set; }
+        public string DeniedRemarks { get; set; } = string.Empty;
+        public bool HasDeniedLetter { get; set; }
+        public bool HasReceivedCopy { get; set; }
+        public decimal MaxDeniedInstallQty { get; set; }
         public List<SupplierReceiptIssueDetailOptionDto> IssueDetailOptions { get; set; } = new();
         public List<SupplierReceiptInstallationLineDto> InstallationLines { get; set; } = new();
+    }
+
+    public class SupplierReceiptDeniedSaveRequestDto
+    {
+        public int PoId { get; set; }
+        public int LocationId { get; set; }
+        public int IssueId { get; set; }
+        public string DeniedStatus { get; set; } = string.Empty;
+        public decimal DeniedQty { get; set; }
+        public string Remarks { get; set; } = string.Empty;
+    }
+
+    public class SupplierReceiptDeleteRequestDto
+    {
+        public int PoId { get; set; }
+        public int LocationId { get; set; }
+        public int IssueId { get; set; }
+        public int ReceiptId { get; set; }
     }
 
     public class SupplierReceiptIssueDetailOptionDto

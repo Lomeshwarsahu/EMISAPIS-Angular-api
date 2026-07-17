@@ -44,6 +44,8 @@ namespace EMISAPIS.DTOS
         public string ReceiptNo { get; set; } = string.Empty;
         public string ReceiptQty { get; set; } = string.Empty;
         public string ReceiptRemarks { get; set; } = string.Empty;
+        public string InstallDispatchNo { get; set; } = string.Empty;
+        public string InstallDispatchDate { get; set; } = string.Empty;
         public List<DmeReceiptIssueDetailOptionDto> IssueDetailOptions { get; set; } = new();
         public List<DmeReceiptInstallationLineDto> InstallationLines { get; set; } = new();
     }
@@ -123,6 +125,8 @@ namespace EMISAPIS.DTOS
         public int LocationId { get; set; }
         public int IssueId { get; set; }
         public int ReceiptId { get; set; }
+        public string InstallDispatchNo { get; set; } = string.Empty;
+        public string InstallDispatchDate { get; set; } = string.Empty;
     }
 
     public class DmeInstallationReportRowDto
