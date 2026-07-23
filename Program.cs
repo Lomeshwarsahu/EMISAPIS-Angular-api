@@ -1,6 +1,23 @@
+using EMISAPIS.Helpers;
+
+// 1) Load `.env` into process environment
+EnvFileLoader.Load();
+
 var builder = WebApplication.CreateBuilder(args);
 
+// 2) Expand `${ENV_VAR}` placeholders in appsettings*.json from environment / .env
+EnvPlaceholderResolver.Expand(builder.Configuration);
+
 // Add services to the container.
+
+builder.Services.Configure<OtpSmsOptions>(
+    builder.Configuration.GetSection(OtpSmsOptions.SectionName));
+builder.Services.AddHttpClient(nameof(OtpSmsService), client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(".NET Framework");
+});
+builder.Services.AddSingleton<OtpSmsService>();
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

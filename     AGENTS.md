@@ -42,3 +42,5 @@ When you **create or update** supplier/DME EMS migration code (Angular component
 | Route or architecture change | `documentation/<area>-ems-migration/project-architecture.md` |
 
 `<area>` is `supplier` or `dme` depending on which module you touched. Keep entries short and factual — same session, same PR.
+
+AI may make mistakes. Double-check all generated code.

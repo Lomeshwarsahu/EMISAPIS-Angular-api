@@ -264,6 +264,8 @@ namespace EMISAPIS.DTOS
         public int IssueDetailId { get; set; }
         public string SerialNo { get; set; } = string.Empty;
         public string WarrantyCardNo { get; set; } = string.Empty;
+        public string MfgDate { get; set; } = string.Empty;
+        public string ExpDate { get; set; } = string.Empty;
         public decimal SupplyQty { get; set; }
     }
 
@@ -273,6 +275,8 @@ namespace EMISAPIS.DTOS
         public int IssueDetailId { get; set; }
         public string SerialNo { get; set; } = string.Empty;
         public string WarrantyCardNo { get; set; } = string.Empty;
+        public string MfgDate { get; set; } = string.Empty;
+        public string ExpDate { get; set; } = string.Empty;
         public decimal SupplyQty { get; set; }
     }
 
@@ -383,8 +387,35 @@ namespace EMISAPIS.DTOS
         public string ReceiptNo { get; set; } = string.Empty;
         public string ReceiptQty { get; set; } = string.Empty;
         public string ReceiptRemarks { get; set; } = string.Empty;
+        public string ReceiptStatus { get; set; } = string.Empty;
+        public bool CanDeleteInstallation { get; set; }
+        public string DeniedStatus { get; set; } = string.Empty;
+        public int DescrepencyId { get; set; }
+        public decimal DeniedQty { get; set; }
+        public string DeniedRemarks { get; set; } = string.Empty;
+        public bool HasDeniedLetter { get; set; }
+        public bool HasReceivedCopy { get; set; }
+        public decimal MaxDeniedInstallQty { get; set; }
         public List<SupplierReceiptIssueDetailOptionDto> IssueDetailOptions { get; set; } = new();
         public List<SupplierReceiptInstallationLineDto> InstallationLines { get; set; } = new();
+    }
+
+    public class SupplierReceiptDeniedSaveRequestDto
+    {
+        public int PoId { get; set; }
+        public int LocationId { get; set; }
+        public int IssueId { get; set; }
+        public string DeniedStatus { get; set; } = string.Empty;
+        public decimal DeniedQty { get; set; }
+        public string Remarks { get; set; } = string.Empty;
+    }
+
+    public class SupplierReceiptDeleteRequestDto
+    {
+        public int PoId { get; set; }
+        public int LocationId { get; set; }
+        public int IssueId { get; set; }
+        public int ReceiptId { get; set; }
     }
 
     public class SupplierReceiptIssueDetailOptionDto
@@ -583,6 +614,103 @@ namespace EMISAPIS.DTOS
         public decimal BalanceQty { get; set; }
     }
 
+    /// <summary>PendingInstallDrillDownsupplier.aspx — consignee-wise drill-down for one PO.</summary>
+    public class SupplierPendingInstallDrillDownDto
+    {
+        public int PoId { get; set; }
+        public string ItemName { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = string.Empty;
+        public string Supplier { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string PrintDate { get; set; } = string.Empty;
+        public List<SupplierPendingInstallDrillDownRowDto> Rows { get; set; } = new();
+    }
+
+    public class SupplierPendingInstallDrillDownRowDto
+    {
+        public string District { get; set; } = string.Empty;
+        public string Consignee { get; set; } = string.Empty;
+        public decimal PoQty { get; set; }
+        public decimal DispatchedQty { get; set; }
+        public decimal ReceiptQty { get; set; }
+        public decimal InstalledQty { get; set; }
+        public string Remarks { get; set; } = string.Empty;
+    }
+
+    /// <summary>SanctionsRDLC.aspx — PO item header line on sanction report.</summary>
+    public class SupplierSanctionReportItemDto
+    {
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public decimal PercentValue { get; set; }
+        public decimal BasicRate { get; set; }
+        public decimal FinalRate { get; set; }
+        public decimal PoQty { get; set; }
+        public decimal PoValue { get; set; }
+    }
+
+    /// <summary>SanctionsRDLC.aspx — invoice / consignee sanction line.</summary>
+    public class SupplierSanctionReportLineDto
+    {
+        public string LocationName { get; set; } = string.Empty;
+        public string InvoiceNo { get; set; } = string.Empty;
+        public string InvoiceDate { get; set; } = string.Empty;
+        public decimal OrderedQty { get; set; }
+        public decimal InvoiceAbsQty { get; set; }
+        public decimal Gst { get; set; }
+        public decimal BasicRate { get; set; }
+        public decimal Sup { get; set; }
+        public string PaymentType { get; set; } = string.Empty;
+        public decimal InvoiceValueOnBill { get; set; }
+        public string ReceivedDate { get; set; } = string.Empty;
+        public int DaysTaken { get; set; }
+        public int LdDays { get; set; }
+        public decimal PenaltyAmount { get; set; }
+        public string Logo { get; set; } = string.Empty;
+        public decimal LogoPenaltyAmt { get; set; }
+    }
+
+    /// <summary>SanctionsRDLC.aspx — tax deduction / addition line.</summary>
+    public class SupplierSanctionTaxLineDto
+    {
+        public int SanctionId { get; set; }
+        public decimal TaxPer { get; set; }
+        public string TaxTypeName { get; set; } = string.Empty;
+        public decimal TaxValue { get; set; }
+        public string TaxCategory { get; set; } = string.Empty;
+        public int TaxTypeId { get; set; }
+    }
+
+    /// <summary>SanctionsRDLC.aspx — printable sanction report payload.</summary>
+    public class SupplierSanctionReportDto
+    {
+        public int PoId { get; set; }
+        public int SanctionId { get; set; }
+        public string SanctionNo { get; set; } = string.Empty;
+        public string SanctionDate { get; set; } = string.Empty;
+        public string FinReceiptDate { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string AccYear { get; set; } = string.Empty;
+        public string SupplierName { get; set; } = string.Empty;
+        public string SchemeName { get; set; } = string.Empty;
+        public string OutwardNo { get; set; } = string.Empty;
+        public string SoIssueDate { get; set; } = string.Empty;
+        public string SupGst { get; set; } = string.Empty;
+        public string HsnCode { get; set; } = string.Empty;
+        public string Remarks { get; set; } = string.Empty;
+        public decimal TotalDeductions { get; set; }
+        public decimal TotalAdditions { get; set; }
+        public decimal PaidAmount { get; set; }
+        public decimal GrossInvoiceAmount { get; set; }
+        public string PaidAmountWords { get; set; } = string.Empty;
+        public string GrossAmountWords { get; set; } = string.Empty;
+        public List<SupplierSanctionReportItemDto> Items { get; set; } = new();
+        public List<SupplierSanctionReportLineDto> Lines { get; set; } = new();
+        public List<SupplierSanctionTaxLineDto> Taxes { get; set; } = new();
+    }
+
     /// <summary>SDdetailSupplier.aspx — MasSD payment mode option.</summary>
     public class SupplierSdPaymentModeDto
     {
@@ -698,5 +826,67 @@ namespace EMISAPIS.DTOS
         public string AllAccessoriesReceived { get; set; } = string.Empty;
         public string DispatchNo { get; set; } = string.Empty;
         public string DispatchDate { get; set; } = string.Empty;
+    }
+
+    /// <summary>rdlcPoReport.aspx — printable purchase order.</summary>
+    public class SupplierPoPrintItemDto
+    {
+        public string ItemCode { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public decimal Quantity { get; set; }
+        public decimal SingleUnitPrice { get; set; }
+        public decimal LineAmount { get; set; }
+    }
+
+    public class SupplierPoPrintTermDto
+    {
+        public int TermConditionId { get; set; }
+        public string TermCondition { get; set; } = string.Empty;
+    }
+
+    public class SupplierPoPrintConsigneeDto
+    {
+        public string ConsolidatedDate { get; set; } = string.Empty;
+        public string LocationName { get; set; } = string.Empty;
+        public decimal Quantity { get; set; }
+    }
+
+    public class SupplierPoPrintCopyToDto
+    {
+        public string Designation { get; set; } = string.Empty;
+        public string Office { get; set; } = string.Empty;
+    }
+
+    public class SupplierPoPrintDto
+    {
+        public int PoId { get; set; }
+        public string OutwardNo { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string SupplierName { get; set; } = string.Empty;
+        public string SupplierAddress { get; set; } = string.Empty;
+        public string MobileNo { get; set; } = string.Empty;
+        public string EmailId { get; set; } = string.Empty;
+        public string TenderNo { get; set; } = string.Empty;
+        public string TenderDate { get; set; } = string.Empty;
+        public string TotalPoValueWords { get; set; } = string.Empty;
+        public decimal BasicRate { get; set; }
+        public decimal GstPercent { get; set; }
+        public int TrancheDays { get; set; }
+        public string GemPo { get; set; } = string.Empty;
+        public string Cmc1 { get; set; } = string.Empty;
+        public string Cmc2 { get; set; } = string.Empty;
+        public string Cmc3 { get; set; } = string.Empty;
+        public string Cmc4 { get; set; } = string.Empty;
+        public string Cmc5 { get; set; } = string.Empty;
+        public string AmendNo { get; set; } = string.Empty;
+        public string PreviousOutwardNo { get; set; } = string.Empty;
+        public string PreviousPoDate { get; set; } = string.Empty;
+        public decimal ItemsTotal { get; set; }
+        public List<SupplierPoPrintItemDto> Items { get; set; } = new();
+        public List<SupplierPoPrintTermDto> Terms { get; set; } = new();
+        public List<SupplierPoPrintConsigneeDto> Consignees { get; set; } = new();
+        public List<SupplierPoPrintCopyToDto> CopyTo { get; set; } = new();
     }
 }

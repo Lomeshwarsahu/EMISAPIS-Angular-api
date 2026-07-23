@@ -25,6 +25,7 @@ namespace EMISAPIS.DTOS
     public class OpeningStockRowDto
     {
         public int ExistingItemId { get; set; }
+        public int Pid { get; set; }
         public string ItemName { get; set; } = string.Empty;
         public string ItemCode { get; set; } = string.Empty;
         public string MakeSerialNo { get; set; } = string.Empty;

@@ -3,6 +3,70 @@
     public class GMFIDTOS
     {
     }
+
+    public class GetDashboardGridDto
+    {
+        public int PoId { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+        public string PoNo { get; set; } = string.Empty;
+        public string Supplier { get; set; } = string.Empty;
+        public string PoDate { get; set; } = string.Empty;
+        public string FacilityAutName { get; set; } = string.Empty;
+        public string ItemCodeAsPerTender { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public decimal POQty { get; set; }
+        public decimal POValue { get; set; }
+        public decimal SupplyQty { get; set; }
+        public decimal InsQty { get; set; }
+        public decimal ReceiptQty { get; set; }
+        public string LastRDate { get; set; } = string.Empty;
+        public string PoType { get; set; } = string.Empty;
+        public string FileNo { get; set; } = string.Empty;
+        public string FileDt { get; set; } = string.Empty;
+        public string PresentFile { get; set; } = string.Empty;
+        public int PresentUserId { get; set; }
+        public int ToUserId { get; set; }
+        public decimal PenaltyPercent { get; set; }
+        public int? ReasonId { get; set; }
+        public string ReasonName { get; set; } = string.Empty;
+        public string IsSolved { get; set; } = string.Empty;
+        public string SiteStatus { get; set; } = string.Empty;
+        public int RowNo { get; set; }
+        public string ToDate { get; set; } = string.Empty;
+        public string EntDT { get; set; } = string.Empty;
+        public string Conditond { get; set; } = string.Empty;
+        public string FinRemarks { get; set; } = string.Empty;
+        public string ExtStatus { get; set; } = string.Empty;
+        public int DeniedIn { get; set; }
+        public int DeniedRe { get; set; }
+    }
+
+    public class DashboardGridFilterDto
+    {
+        public string PoType { get; set; } = "All";
+        public string FitUnfit { get; set; } = "All";
+        public int EqType { get; set; } = 0;
+        public int AuthorityId { get; set; } = 5;
+    }
+
+    public class ReasonMasterDto
+    {
+        public int ReasonId { get; set; }
+        public string ReasonName { get; set; } = string.Empty;
+    }
+
+    public class AddReasonDto
+    {
+        public int UserId { get; set; }
+        public int ReasonId { get; set; }
+        public int PoId { get; set; }
+        public string Remarks { get; set; } = string.Empty;
+    }
+
+    public class ResolveReasonDto
+    {
+        public int SorId { get; set; }
+    }
     public class PurchaseOrderDropdownDto
     {
         public int PoId { get; set; } // po_id

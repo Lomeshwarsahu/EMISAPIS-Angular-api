@@ -21,9 +21,14 @@ namespace EMISAPIS.Controllers
         private readonly string _invoiceDocRoot;
         private readonly string _emsRoleRoot;
         private readonly MongoService _mongoService;
+        private readonly OtpSmsService _otpSms;
 
-        public SupplierAuthController(IConfiguration configuration, IWebHostEnvironment env)
+        public SupplierAuthController(
+            IConfiguration configuration,
+            IWebHostEnvironment env,
+            OtpSmsService otpSms)
         {
+            _otpSms = otpSms;
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("DefaultConnection is not configured.");
 
@@ -181,7 +186,7 @@ namespace EMISAPIS.Controllers
 
                 try
                 {
-                    string content = $"OTP for submission in EMIS is {otpText}. Please do not share with anyone.";
+                    string content = _otpSms.BuildMessage(otpText);
                     string logType = emailAck && smsAck ? "Email_Reg_Mob" : emailAck ? "Email" : "Reg_Mob";
 
                     using SqlCommand logCmd = new SqlCommand(
@@ -198,6 +203,21 @@ namespace EMISAPIS.Controllers
                 catch
                 {
                     // OTP is saved on massuppliers; smslog is optional (schema may differ on some servers).
+                }
+
+                if (smsAck)
+                {
+                    var templateId = _otpSms.Options.Templates?.SupplierAuth
+                        ?? "1407162263151118865";
+                    var (sent, detail) = await _otpSms.TrySendOtpAsync(mobile, otpText, templateId);
+                    if (!sent && _otpSms.Options.Enabled)
+                    {
+                        return StatusCode(502, new
+                        {
+                            message = "OTP saved but SMS gateway failed. Please retry or check OtpSms settings.",
+                            detail,
+                        });
+                    }
                 }
 
                 string mobileMask = mobile.Length >= 4 ? "xxxxxx" + mobile[^4..] : mobile;
@@ -1650,9 +1670,6 @@ ORDER BY c1.location_name";
                 if (page == null)
                     return NotFound(new { message = "Consignee PO line not found." });
 
-                if (page.CategoryId == 2)
-                    return BadRequest(new { message = "Reagent dispatch entry is not migrated yet. Use legacy reagent page." });
-
                 return Ok(page);
             }
             catch (Exception ex)
@@ -1858,6 +1875,16 @@ WHERE issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId AND supplie
                 if (dispatchMeta.Value.Status != "I")
                     return BadRequest(new { message = "Dispatch is already completed." });
 
+                int categoryId = await GetDispatchIssueCategoryIdAsync(con, request.IssueId);
+                bool isReagent = categoryId == 2;
+                if (isReagent)
+                {
+                    if (string.IsNullOrWhiteSpace(request.MfgDate) || string.IsNullOrWhiteSpace(request.ExpDate))
+                        return BadRequest(new { message = "Please enter Manufacturing and Expiry date." });
+                    if (!TryParseSdDate(request.MfgDate, out _) || !TryParseSdDate(request.ExpDate, out _))
+                        return BadRequest(new { message = "Invalid Manufacturing/Expiry date format. Use DD/MM/YYYY" });
+                }
+
                 decimal balanceQty = await GetDispatchBalanceQtyAsync(
                     con, dispatchMeta.Value.PoId, dispatchMeta.Value.LocationId);
                 string bulkVsSerial = await GetDispatchBulkVsSerialAsync(con, request.IssueId);
@@ -1872,27 +1899,74 @@ WHERE issue_id = @IssueId AND po_id = @PoId AND location_id = @LocId AND supplie
                     if (balanceQty < request.SupplyQty)
                         return BadRequest(new { message = "Please Check Dispatch QTY" });
 
+                    if (isReagent)
+                    {
+                        const string insertReagentSql = @"
+INSERT INTO Issue_item_details
+    (model_no, make, make_no, issue_id, item_id, equpitment_code, Supplyqty, status, entry_date, mfgDate, expDate)
+VALUES
+    (@ModelNo, @Make, @SerialNo, @IssueId, @ItemId, @ItemCode, @SupplyQty, 'I', GETDATE(),
+     CONVERT(date, @MfgDate, 103), CONVERT(date, @ExpDate, 103))";
+
+                        using SqlCommand insertCmd = new SqlCommand(insertReagentSql, con);
+                        insertCmd.Parameters.AddWithValue("@ModelNo", dispatchMeta.Value.ModelNo);
+                        insertCmd.Parameters.AddWithValue("@Make", dispatchMeta.Value.Make);
+                        insertCmd.Parameters.AddWithValue("@SerialNo", request.SerialNo?.Trim() ?? string.Empty);
+                        insertCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                        insertCmd.Parameters.AddWithValue("@ItemId", dispatchMeta.Value.ItemId);
+                        insertCmd.Parameters.AddWithValue("@ItemCode", dispatchMeta.Value.ItemCode);
+                        insertCmd.Parameters.AddWithValue("@SupplyQty", request.SupplyQty);
+                        insertCmd.Parameters.AddWithValue("@MfgDate", request.MfgDate.Trim());
+                        insertCmd.Parameters.AddWithValue("@ExpDate", request.ExpDate.Trim());
+                        await insertCmd.ExecuteNonQueryAsync();
+                        return Ok(new { message = "Saved Successfully" });
+                    }
+
                     const string insertSql = @"
 INSERT INTO Issue_item_details
     (model_no, make, make_no, issue_id, item_id, equpitment_code, Supplyqty, status, entry_date, warranty_certificate_no)
 VALUES
     (@ModelNo, @Make, @SerialNo, @IssueId, @ItemId, @ItemCode, @SupplyQty, 'I', GETDATE(), @WarrantyCardNo)";
 
-                    using SqlCommand insertCmd = new SqlCommand(insertSql, con);
-                    insertCmd.Parameters.AddWithValue("@ModelNo", dispatchMeta.Value.ModelNo);
-                    insertCmd.Parameters.AddWithValue("@Make", dispatchMeta.Value.Make);
-                    insertCmd.Parameters.AddWithValue("@SerialNo", request.SerialNo?.Trim() ?? string.Empty);
-                    insertCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
-                    insertCmd.Parameters.AddWithValue("@ItemId", dispatchMeta.Value.ItemId);
-                    insertCmd.Parameters.AddWithValue("@ItemCode", dispatchMeta.Value.ItemCode);
-                    insertCmd.Parameters.AddWithValue("@SupplyQty", request.SupplyQty);
-                    insertCmd.Parameters.AddWithValue("@WarrantyCardNo", request.WarrantyCardNo?.Trim() ?? string.Empty);
-                    await insertCmd.ExecuteNonQueryAsync();
+                    using SqlCommand insertEqCmd = new SqlCommand(insertSql, con);
+                    insertEqCmd.Parameters.AddWithValue("@ModelNo", dispatchMeta.Value.ModelNo);
+                    insertEqCmd.Parameters.AddWithValue("@Make", dispatchMeta.Value.Make);
+                    insertEqCmd.Parameters.AddWithValue("@SerialNo", request.SerialNo?.Trim() ?? string.Empty);
+                    insertEqCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                    insertEqCmd.Parameters.AddWithValue("@ItemId", dispatchMeta.Value.ItemId);
+                    insertEqCmd.Parameters.AddWithValue("@ItemCode", dispatchMeta.Value.ItemCode);
+                    insertEqCmd.Parameters.AddWithValue("@SupplyQty", request.SupplyQty);
+                    insertEqCmd.Parameters.AddWithValue("@WarrantyCardNo", request.WarrantyCardNo?.Trim() ?? string.Empty);
+                    await insertEqCmd.ExecuteNonQueryAsync();
                     return Ok(new { message = "Saved Successfully" });
                 }
 
                 if (balanceQty + request.SupplyQty < request.SupplyQty)
                     return BadRequest(new { message = "Please Check Dispatch QTY" });
+
+                if (isReagent)
+                {
+                    const string updateReagentSql = @"
+UPDATE Issue_item_details
+SET make_no = @SerialNo,
+    mfgDate = CONVERT(date, @MfgDate, 103),
+    expDate = CONVERT(date, @ExpDate, 103),
+    Supplyqty = @SupplyQty, entry_date = GETDATE()
+WHERE issue_detail_id = @IssueDetailId AND issue_id = @IssueId";
+
+                    using SqlCommand updateReagentCmd = new SqlCommand(updateReagentSql, con);
+                    updateReagentCmd.Parameters.AddWithValue("@SerialNo", request.SerialNo?.Trim() ?? string.Empty);
+                    updateReagentCmd.Parameters.AddWithValue("@MfgDate", request.MfgDate.Trim());
+                    updateReagentCmd.Parameters.AddWithValue("@ExpDate", request.ExpDate.Trim());
+                    updateReagentCmd.Parameters.AddWithValue("@SupplyQty", request.SupplyQty);
+                    updateReagentCmd.Parameters.AddWithValue("@IssueDetailId", request.IssueDetailId);
+                    updateReagentCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
+                    int reagentRows = await updateReagentCmd.ExecuteNonQueryAsync();
+                    if (reagentRows == 0)
+                        return NotFound(new { message = "Dispatch line not found." });
+
+                    return Ok(new { message = "Update Successfully" });
+                }
 
                 const string updateSql = @"
 UPDATE Issue_item_details
@@ -2002,14 +2076,14 @@ SET status = 'C',
 WHERE issue_id = @IssueId";
 
                 using SqlCommand updateItemsCmd = new SqlCommand(updateItemsSql, con);
-                updateItemsCmd.Parameters.AddWithValue("@CgmscLogo", NormalizeYesNo(request.CgmscLogoPrinted));
-                updateItemsCmd.Parameters.AddWithValue("@OperatingManual", NormalizeYesNo(request.OperatingManual));
-                updateItemsCmd.Parameters.AddWithValue("@CalibrationCertificate", NormalizeYesNo(request.CalibrationCertificate));
-                updateItemsCmd.Parameters.AddWithValue("@WarrantyCard", NormalizeYesNo(request.WarrantyCard));
-                updateItemsCmd.Parameters.AddWithValue("@OtherStatutory", NormalizeYesNo(request.OtherStatutory));
-                updateItemsCmd.Parameters.AddWithValue("@WarrantyValidity", NormalizeYesNo(request.WarrantyValidity));
-                updateItemsCmd.Parameters.AddWithValue("@PoDocuments", NormalizeYesNo(request.PoDocuments));
-                updateItemsCmd.Parameters.AddWithValue("@ServiceManual", NormalizeYesNo(request.ServiceManual));
+                updateItemsCmd.Parameters.AddWithValue("@CgmscLogo", NormalizeYesNoNa(request.CgmscLogoPrinted));
+                updateItemsCmd.Parameters.AddWithValue("@OperatingManual", NormalizeYesNoNa(request.OperatingManual));
+                updateItemsCmd.Parameters.AddWithValue("@CalibrationCertificate", NormalizeYesNoNa(request.CalibrationCertificate));
+                updateItemsCmd.Parameters.AddWithValue("@WarrantyCard", NormalizeYesNoNa(request.WarrantyCard));
+                updateItemsCmd.Parameters.AddWithValue("@OtherStatutory", NormalizeYesNoNa(request.OtherStatutory));
+                updateItemsCmd.Parameters.AddWithValue("@WarrantyValidity", NormalizeYesNoNa(request.WarrantyValidity));
+                updateItemsCmd.Parameters.AddWithValue("@PoDocuments", NormalizeYesNoNa(request.PoDocuments));
+                updateItemsCmd.Parameters.AddWithValue("@ServiceManual", NormalizeYesNoNa(request.ServiceManual));
                 updateItemsCmd.Parameters.AddWithValue("@IssueId", request.IssueId);
                 await updateItemsCmd.ExecuteNonQueryAsync();
 
@@ -3015,6 +3089,280 @@ WHERE item_detail_id = @ItemDetailId AND receipt_id = @ReceiptId";
             }
         }
 
+        [HttpPost("receipt-entry/delete/by-user/{userId:int}")]
+        public async Task<IActionResult> DeleteSupplierReceiptInstallation(
+            int userId,
+            [FromBody] SupplierReceiptDeleteRequestDto request)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (request.ReceiptId <= 0 || request.PoId <= 0)
+                return BadRequest(new { message = "Receipt and PO are required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                if (!await ReceiptBelongsToSupplierAsync(con, request.ReceiptId, supplierId.Value))
+                    return NotFound(new { message = "Receipt not found for this supplier." });
+
+                const string statusSql = @"
+SELECT ISNULL(status, '') FROM receipts
+WHERE receipt_id = @ReceiptId AND po_id = @PoId";
+                string status;
+                using (SqlCommand statusCmd = new SqlCommand(statusSql, con))
+                {
+                    statusCmd.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    statusCmd.Parameters.AddWithValue("@PoId", request.PoId);
+                    object? statusObj = await statusCmd.ExecuteScalarAsync();
+                    status = statusObj?.ToString()?.Trim() ?? string.Empty;
+                }
+
+                if (!status.Equals("Received", StringComparison.OrdinalIgnoreCase) &&
+                    !status.Equals("Incomplete", StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new
+                    {
+                        message = "Can not Delete as Installation has been Completed,Please Mail to Equipment Cell on equipment.cgmsc@gov.in for communication",
+                    });
+                }
+
+                using (SqlCommand delDetails = new SqlCommand(
+                    "DELETE FROM receipt_item_details WHERE receipt_id = @ReceiptId", con))
+                {
+                    delDetails.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    await delDetails.ExecuteNonQueryAsync();
+                }
+
+                using (SqlCommand delReceipt = new SqlCommand(
+                    "DELETE FROM receipts WHERE po_id = @PoId AND receipt_id = @ReceiptId", con))
+                {
+                    delReceipt.Parameters.AddWithValue("@PoId", request.PoId);
+                    delReceipt.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                    await delReceipt.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new
+                {
+                    message = "Deleted Successfully ,Now Please Enter Correct Information with PDF Files Upload",
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error deleting installation.", error = ex.Message });
+            }
+        }
+
+        [HttpPost("receipt-entry/denied/by-user/{userId:int}")]
+        public async Task<IActionResult> SaveSupplierReceiptDenied(
+            int userId,
+            [FromBody] SupplierReceiptDeniedSaveRequestDto request)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (request.PoId <= 0 || request.LocationId <= 0 || request.IssueId <= 0)
+                return BadRequest(new { message = "PO, consignee and issue are required." });
+
+            string deniedStatus = (request.DeniedStatus ?? string.Empty).Trim().ToUpperInvariant();
+            if (deniedStatus is not ("I" or "RI"))
+                return BadRequest(new { message = "Please select deny type." });
+            if (request.DeniedQty <= 0)
+                return BadRequest(new { message = "Please enter denied quantity." });
+            if (string.IsNullOrWhiteSpace(request.Remarks))
+                return BadRequest(new { message = "Please enter remarks." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                SupplierReceiptEntryPageDto page = await LoadSupplierReceiptEntryPageAsync(
+                    con, supplierId.Value, request.PoId, request.LocationId, request.IssueId);
+
+                if (page.ReceiptId > 0)
+                    deniedStatus = "I";
+
+                if (deniedStatus == "I")
+                {
+                    if (page.ReceiptId <= 0)
+                        return BadRequest(new { message = "Receipt must exist before installation deny." });
+                    if (request.DeniedQty > page.MaxDeniedInstallQty)
+                        return BadRequest(new { message = "Denied qty cannot exceed remaining received qty." });
+                }
+                else if (request.DeniedQty > page.PoQtyConsignee)
+                {
+                    return BadRequest(new { message = "Denied qty cannot exceed consignee PO qty." });
+                }
+
+                int descrepencyId;
+                if (deniedStatus == "I")
+                {
+                    const string insertSql = @"
+INSERT INTO Descrepency (ponoid, consigneeid, issued, remarks, receiptid, DeniedQTY)
+VALUES (@PoId, @LocId, @Issued, @Remarks, @ReceiptId, @DeniedQty);
+SELECT CAST(SCOPE_IDENTITY() AS INT);";
+                    using SqlCommand insertCmd = new SqlCommand(insertSql, con);
+                    insertCmd.Parameters.AddWithValue("@PoId", request.PoId);
+                    insertCmd.Parameters.AddWithValue("@LocId", request.LocationId);
+                    insertCmd.Parameters.AddWithValue("@Issued", deniedStatus);
+                    insertCmd.Parameters.AddWithValue("@Remarks", request.Remarks.Trim());
+                    insertCmd.Parameters.AddWithValue("@ReceiptId", page.ReceiptId);
+                    insertCmd.Parameters.AddWithValue("@DeniedQty", request.DeniedQty);
+                    descrepencyId = Convert.ToInt32(await insertCmd.ExecuteScalarAsync());
+                }
+                else
+                {
+                    const string insertSql = @"
+INSERT INTO Descrepency (ponoid, consigneeid, issued, remarks, DeniedQTY)
+VALUES (@PoId, @LocId, @Issued, @Remarks, @DeniedQty);
+SELECT CAST(SCOPE_IDENTITY() AS INT);";
+                    using SqlCommand insertCmd = new SqlCommand(insertSql, con);
+                    insertCmd.Parameters.AddWithValue("@PoId", request.PoId);
+                    insertCmd.Parameters.AddWithValue("@LocId", request.LocationId);
+                    insertCmd.Parameters.AddWithValue("@Issued", deniedStatus);
+                    insertCmd.Parameters.AddWithValue("@Remarks", request.Remarks.Trim());
+                    insertCmd.Parameters.AddWithValue("@DeniedQty", request.DeniedQty);
+                    descrepencyId = Convert.ToInt32(await insertCmd.ExecuteScalarAsync());
+                }
+
+                return Ok(new
+                {
+                    message = "Denied details saved. Please upload required PDF letters.",
+                    descrepencyId,
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving denied details.", error = ex.Message });
+            }
+        }
+
+        [HttpPost("receipt-entry/denied/file/by-user/{userId:int}")]
+        public async Task<IActionResult> UploadSupplierReceiptDeniedFile(
+            int userId,
+            [FromForm] int descrepencyId,
+            [FromForm] string fileKind,
+            IFormFile? file = null)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (descrepencyId <= 0)
+                return BadRequest(new { message = "Discrepancy id is required." });
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Please select a file to upload." });
+            if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Please upload pdf file only." });
+            if (file.Length > 5_000_000)
+                return BadRequest(new { message = "Your can't upload file more than 3mb." });
+
+            string kind = (fileKind ?? string.Empty).Trim().ToLowerInvariant();
+            if (kind is not ("deniedletter" or "receivedcopy" or "denied" or "received"))
+                return BadRequest(new { message = "Invalid file kind." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await DescrepencyBelongsToSupplierAsync(con, descrepencyId, supplierId.Value))
+                    return NotFound(new { message = "Denied record not found for this supplier." });
+
+                byte[] fileBytes;
+                await using (var memory = new MemoryStream())
+                {
+                    await file.CopyToAsync(memory);
+                    fileBytes = memory.ToArray();
+                }
+
+                bool isDeniedLetter = kind is "deniedletter" or "denied";
+                string fileToken = isDeniedLetter
+                    ? $"{descrepencyId}_Denied_Letter"
+                    : $"{descrepencyId}_Received_Copy";
+
+                await _mongoService.UpsertDescrepencyFile(
+                    descrepencyId,
+                    isDeniedLetter ? "deniedLetter" : "receivedCopy",
+                    fileToken,
+                    fileBytes);
+
+                string updateSql = isDeniedLetter
+                    ? @"UPDATE Descrepency
+SET uploadletterpath = @Token, filename = @Token, ext = '.pdf'
+WHERE decrepencyid = @Id"
+                    : @"UPDATE Descrepency
+SET uploadletterpath_reccopy = @Token, filename_reccopy = @Token, ext_reccopy = '.pdf'
+WHERE decrepencyid = @Id";
+
+                using SqlCommand updateCmd = new SqlCommand(updateSql, con);
+                updateCmd.Parameters.AddWithValue("@Token", fileToken);
+                updateCmd.Parameters.AddWithValue("@Id", descrepencyId);
+                await updateCmd.ExecuteNonQueryAsync();
+
+                return Ok(new { message = "File uploaded successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error uploading denied file.", error = ex.Message });
+            }
+        }
+
+        [HttpGet("receipt-entry/denied/file/by-user/{userId:int}")]
+        public async Task<IActionResult> DownloadSupplierReceiptDeniedFile(
+            int userId,
+            [FromQuery] int descrepencyId,
+            [FromQuery] string fileKind)
+        {
+            if (userId <= 0 || descrepencyId <= 0)
+                return BadRequest(new { message = "Invalid request." });
+
+            string kind = (fileKind ?? string.Empty).Trim().ToLowerInvariant();
+            bool isDeniedLetter = kind is "deniedletter" or "denied";
+            if (!isDeniedLetter && kind is not ("receivedcopy" or "received"))
+                return BadRequest(new { message = "Invalid file kind." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                if (!await DescrepencyBelongsToSupplierAsync(con, descrepencyId, supplierId.Value))
+                    return NotFound(new { message = "Denied record not found for this supplier." });
+
+                DescrepencyFiles? doc = await _mongoService.GetDescrepencyFile(descrepencyId);
+                byte[]? bytes = isDeniedLetter ? doc?.DeniedFile : doc?.ReceivedCopyFile;
+                if (bytes == null || bytes.Length == 0)
+                    return NotFound(new { message = "File not found." });
+
+                string fileName = isDeniedLetter
+                    ? $"{descrepencyId}_Denied_Letter.pdf"
+                    : $"{descrepencyId}_Received_Copy.pdf";
+                return File(bytes, "application/pdf", fileName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading denied file.", error = ex.Message });
+            }
+        }
+
         /// <summary>Facility_InstallationReportSUP.aspx — installation report grid for a receipt.</summary>
         [HttpGet("installation-report/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierInstallationReport(
@@ -3225,6 +3573,236 @@ WHERE ri.item_detail_id = @ReceiptItemId AND po.supplier_id = @SupplierId";
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Error loading installation print report.", error = ex.Message });
+            }
+        }
+
+        /// <summary>rdlcPoReport.aspx — printable purchase order.</summary>
+        [HttpGet("po-report/print/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierPoPrintReport(int userId, [FromQuery] int poId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (poId <= 0)
+                return BadRequest(new { message = "PO id is required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found for this supplier." });
+
+                const string itemsSql = @"
+SELECT dbo.purchase_order.outward_no,
+       CASE WHEN dbo.purchase_order.outward_no IS NOT NULL
+            THEN CONVERT(VARCHAR(10), dbo.purchase_order.po_date, 103) ELSE '' END AS po_date,
+       dbo.purchase_order.po_no,
+       dbo.purchase_order.po_id,
+       dbo.masitems.item_name,
+       dbo.massuppliers.name,
+       dbo.massuppliers.address,
+       dbo.massuppliers.mobile_no,
+       dbo.massuppliers.email_id,
+       dbo.tenders.tender_no,
+       CONVERT(VARCHAR(10), dbo.tenders.tender_date, 103) AS tender_date,
+       dbo.masitems.item_code_as_per_tender AS item_code,
+       dbo.masitems.item_desc,
+       dbo.contract_items.model,
+       dbo.contract_items.single_unit_price,
+       dbo.contract_items.basic_rate,
+       SUM(dbo.po_items.quantity) AS quantity,
+       dbo.purchase_order.total_po_valuew AS Expr2,
+       dbo.purchase_order.po_valuew AS Expr3,
+       dbo.purchase_order.total_po_value AS totalsum,
+       dbo.purchase_order.po_value,
+       dbo.contract_items.percentage,
+       dbo.po_tranche.tranche_days,
+       ISNULL(LTP.CMC1, 0) AS CMC1,
+       ISNULL(LTP.cmc2, 0) AS CMC2,
+       ISNULL(LTP.cmc3, 0) AS CMC3,
+       ISNULL(LTP.cmc4, 0) AS CMC4,
+       ISNULL(LTP.cmc5, 0) AS CMC5,
+       pia.Prev_SoissueNo,
+       CONVERT(VARCHAR(10), pia.Prev_SoissueDT, 103) AS Prev_SoissueDT,
+       ISNULL(amencount, 0) AS amencount,
+       CASE WHEN dbo.tenders.isGemTender = 'Y' THEN dbo.purchase_order.GeMBidno ELSE 'NA' END AS GemPO
+FROM dbo.purchase_order
+INNER JOIN dbo.po_items ON dbo.purchase_order.po_id = dbo.po_items.po_id
+INNER JOIN dbo.po_tranche ON dbo.po_tranche.po_id = dbo.purchase_order.po_id
+INNER JOIN dbo.masitems ON dbo.po_items.item_id = dbo.masitems.item_id
+INNER JOIN dbo.massuppliers ON dbo.purchase_order.supplier_id = dbo.massuppliers.supplier_id
+INNER JOIN dbo.tenders ON dbo.purchase_order.tender_id = dbo.tenders.tender_id
+LEFT OUTER JOIN DBO.tender_items TI ON TI.tender_id = DBO.tenders.tender_id AND TI.item_id = dbo.po_items.item_id
+LEFT OUTER JOIN live_tender_price LTP ON LTP.tender_item_id = TI.tender_item_id AND ltp.isaccept = 'Y'
+INNER JOIN dbo.maslocations ON dbo.po_items.consignee_id = dbo.maslocations.location_id
+INNER JOIN dbo.facility_aut ON dbo.facility_aut.facility_aut_id = dbo.maslocations.authority
+INNER JOIN dbo.contract_items ON dbo.contract_items.contract_item_id = dbo.po_items.contract_item_id
+INNER JOIN dbo.award_of_contract ON dbo.award_of_contract.award_of_contract_id = dbo.contract_items.award_of_contract_id
+LEFT OUTER JOIN (
+    SELECT po_id, MAX(po_ammdid) AS po_ammdid FROM PODTAmendment GROUP BY po_id
+) mAmd ON mAmd.po_id = dbo.purchase_order.po_id
+LEFT OUTER JOIN PODTAmendment pia ON pia.po_ammdid = mAmd.po_ammdid
+LEFT OUTER JOIN (
+    SELECT po_id, COUNT(po_ammdid) AS amencount FROM PODTAmendment GROUP BY po_id
+) mamtcount ON mamtcount.po_id = dbo.purchase_order.po_id
+WHERE dbo.purchase_order.po_id = @PoId
+GROUP BY dbo.purchase_order.po_no,
+         dbo.purchase_order.po_id,
+         dbo.masitems.item_name,
+         dbo.massuppliers.name,
+         dbo.massuppliers.address,
+         dbo.massuppliers.mobile_no,
+         dbo.massuppliers.email_id,
+         dbo.tenders.tender_no,
+         dbo.tenders.tender_date,
+         dbo.masitems.item_code_as_per_tender,
+         dbo.masitems.item_desc,
+         dbo.contract_items.model,
+         dbo.contract_items.single_unit_price,
+         dbo.contract_items.basic_rate,
+         dbo.purchase_order.outward_no,
+         dbo.purchase_order.po_date,
+         dbo.purchase_order.total_po_valuew,
+         dbo.purchase_order.po_valuew,
+         dbo.purchase_order.total_po_value,
+         dbo.purchase_order.po_value,
+         dbo.contract_items.percentage,
+         dbo.po_tranche.tranche_days,
+         LTP.cmc1, LTP.cmc2, LTP.cmc3, LTP.cmc4, LTP.cmc5,
+         pia.Prev_SoissueNo, pia.Prev_SoissueDT, amencount,
+         dbo.purchase_order.GeMBidno, dbo.tenders.isGemTender";
+
+                const string termsSql = @"
+SELECT term_condition_id, term_condition
+FROM terms_conditions t
+INNER JOIN purchase_order p ON p.tender_id = t.tender_id
+WHERE p.po_id = @PoId";
+
+                const string consigneeSql = @"
+SELECT DISTINCT CONVERT(VARCHAR, icd.consolidated_date, 103) AS consolidated_date,
+       ml.location_name,
+       i.quantity
+FROM po_items i
+INNER JOIN PURCHASE_ORDER p ON i.po_id = p.po_id
+INNER JOIN award_of_contract awc ON awc.tender_id = p.tender_id AND awc.supplier_id = p.supplier_id
+INNER JOIN maslocations ml ON ml.location_id = i.consignee_id
+INNER JOIN indent_items ii ON ii.item_id = i.item_id AND ii.indent_item_id = i.indent_item_id AND ii.indent_id = i.indent_id
+INNER JOIN indent id ON id.indent_id = ii.indent_id AND id.facility_id = ml.location_id
+INNER JOIN indent_cons_items ic ON ic.indent_cons_items_id = id.indent_cons_items_id AND ic.item_id = i.item_id
+INNER JOIN indent_consolidation icd ON icd.indent_consolidation_id = ic.indent_consolidated_id
+    AND icd.directorate_id = i.directorate_id AND icd.indent_consolidation_id = i.INDENT_CONSOLIDATION_ID
+WHERE p.po_id = @PoId";
+
+                var report = new SupplierPoPrintDto { PoId = poId };
+                bool hasItems = false;
+
+                using (SqlCommand itemsCmd = new SqlCommand(itemsSql, con))
+                {
+                    itemsCmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader reader = await itemsCmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (!hasItems)
+                        {
+                            hasItems = true;
+                            report.OutwardNo = ReadStringColumn(reader, "outward_no");
+                            report.PoDate = ReadStringColumn(reader, "po_date");
+                            report.PoNo = ReadStringColumn(reader, "po_no");
+                            report.SupplierName = ReadStringColumn(reader, "name");
+                            report.SupplierAddress = ReadStringColumn(reader, "address");
+                            report.MobileNo = ReadStringColumn(reader, "mobile_no");
+                            report.EmailId = ReadStringColumn(reader, "email_id");
+                            report.TenderNo = ReadStringColumn(reader, "tender_no");
+                            report.TenderDate = ReadStringColumn(reader, "tender_date");
+                            report.TotalPoValueWords = ReadStringColumn(reader, "Expr2");
+                            report.BasicRate = ReadDecimalColumn(reader, "basic_rate");
+                            report.GstPercent = ReadDecimalColumn(reader, "percentage");
+                            report.TrancheDays = (int)ReadDecimalColumn(reader, "tranche_days");
+                            report.GemPo = ReadStringColumn(reader, "GemPO");
+                            report.Cmc1 = FormatCmcValue(ReadStringColumn(reader, "CMC1"));
+                            report.Cmc2 = FormatCmcValue(ReadStringColumn(reader, "CMC2"));
+                            report.Cmc3 = FormatCmcValue(ReadStringColumn(reader, "CMC3"));
+                            report.Cmc4 = FormatCmcValue(ReadStringColumn(reader, "CMC4"));
+                            report.Cmc5 = FormatCmcValue(ReadStringColumn(reader, "CMC5"));
+                            report.AmendNo = ReadStringColumn(reader, "amencount");
+                            report.PreviousOutwardNo = ReadStringColumn(reader, "Prev_SoissueNo");
+                            report.PreviousPoDate = ReadStringColumn(reader, "Prev_SoissueDT");
+                        }
+
+                        decimal quantity = ReadDecimalColumn(reader, "quantity");
+                        decimal unitPrice = ReadDecimalColumn(reader, "single_unit_price");
+                        decimal lineAmount = quantity * unitPrice;
+                        report.Items.Add(new SupplierPoPrintItemDto
+                        {
+                            ItemCode = ReadStringColumn(reader, "item_code"),
+                            ItemName = ReadStringColumn(reader, "item_name"),
+                            Model = ReadStringColumn(reader, "model"),
+                            Quantity = quantity,
+                            SingleUnitPrice = unitPrice,
+                            LineAmount = lineAmount,
+                        });
+                        report.ItemsTotal += lineAmount;
+                    }
+                }
+
+                if (!hasItems)
+                    return NotFound(new { message = "Purchase order report not found." });
+
+                using (SqlCommand termsCmd = new SqlCommand(termsSql, con))
+                {
+                    termsCmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader reader = await termsCmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        report.Terms.Add(new SupplierPoPrintTermDto
+                        {
+                            TermConditionId = (int)ReadDecimalColumn(reader, "term_condition_id"),
+                            TermCondition = ReadStringColumn(reader, "term_condition"),
+                        });
+                    }
+                }
+
+                using (SqlCommand consigneeCmd = new SqlCommand(consigneeSql, con))
+                {
+                    consigneeCmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader reader = await consigneeCmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        report.Consignees.Add(new SupplierPoPrintConsigneeDto
+                        {
+                            ConsolidatedDate = ReadStringColumn(reader, "consolidated_date"),
+                            LocationName = ReadStringColumn(reader, "location_name"),
+                            Quantity = ReadDecimalColumn(reader, "quantity"),
+                        });
+                    }
+                }
+
+                string? copyToSql = await BuildPoPrintCopyToSqlAsync(con, poId);
+                if (!string.IsNullOrWhiteSpace(copyToSql))
+                {
+                    using SqlCommand copyCmd = new SqlCommand(copyToSql, con);
+                    copyCmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader reader = await copyCmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        report.CopyTo.Add(new SupplierPoPrintCopyToDto
+                        {
+                            Designation = ReadStringColumn(reader, "desig"),
+                            Office = ReadStringColumn(reader, "office"),
+                        });
+                    }
+                }
+
+                return Ok(report);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading PO print report.", error = ex.Message });
             }
         }
 
@@ -4197,6 +4775,314 @@ ORDER BY PAYMENTID";
             }
         }
 
+        /// <summary>SanctionsRDLC.aspx — printable sanction report for paid PO (supplier).</summary>
+        [HttpGet("sanction-report/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierSanctionReport(
+            int userId,
+            [FromQuery] int poId,
+            [FromQuery] int sanctionId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (poId <= 0 || sanctionId <= 0)
+                return BadRequest(new { message = "PO id and sanction id are required." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found for this supplier." });
+
+                const string ownSql = @"
+SELECT COUNT(1)
+FROM BLPSANCTIONS s
+INNER JOIN purchase_order p ON p.po_id = s.po_id
+WHERE s.SANCTIONID = @SanctionId AND s.po_id = @PoId AND p.supplier_id = @SupplierId";
+                using (SqlCommand ownCmd = new SqlCommand(ownSql, con))
+                {
+                    ownCmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    ownCmd.Parameters.AddWithValue("@PoId", poId);
+                    ownCmd.Parameters.AddWithValue("@SupplierId", supplierId.Value);
+                    int owned = Convert.ToInt32(await ownCmd.ExecuteScalarAsync() ?? 0);
+                    if (owned <= 0)
+                        return NotFound(new { message = "Sanction not found for this supplier PO." });
+                }
+
+                var report = new SupplierSanctionReportDto
+                {
+                    PoId = poId,
+                    SanctionId = sanctionId,
+                };
+
+                const string itemsSql = @"
+SELECT p.outward_no,
+       ISNULL(CONVERT(VARCHAR, p.soissueDT, 103), '-') AS soissueDate,
+       m.item_code_as_per_tender AS itemcode,
+       m.item_name AS itemname,
+       pi.percentage AS percentvalue,
+       pi.basicrate AS basicrate,
+       t.tender_no AS SchemeName,
+       CONVERT(VARCHAR, p.po_date, 103) AS PoDate,
+       f.year AS AccYear,
+       s.name AS SupplierName,
+       p.po_no AS PoNo,
+       ROUND(pi.basicrate + ((pi.basicrate * pi.percentage) / 100), 2) AS finalrate,
+       dbo.GetPOQTY(p.po_id) AS poqty,
+       ROUND((SUM(pi.quantity) * pi.basicrate), 0)
+         + ROUND((SUM(pi.quantity) * pi.basicrate * pi.percentage) / 100, 0) AS poValue,
+       ISNULL(sanc.SUPGST, '') AS SUPGST,
+       ISNULL(sanc.HSNcode, '-') AS HSNcode,
+       ISNULL(sanc.remarks, '-') AS sancremarks,
+       sanc.SANCTIONNO
+FROM purchase_order p
+INNER JOIN po_items pi ON pi.po_id = p.po_id
+INNER JOIN tenders t ON t.tender_id = p.tender_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+INNER JOIN mas_financial_year f ON f.financial_year_id = p.financial_year_id
+INNER JOIN massuppliers s ON s.supplier_id = p.supplier_id
+INNER JOIN BLPSANCTIONS sanc ON sanc.po_id = p.po_id
+WHERE p.po_id = @PoId AND sanc.SANCTIONID = @SanctionId
+GROUP BY pi.item_id, m.item_code_as_per_tender, m.item_name, pi.percentage, pi.basicrate,
+         p.po_date, t.tender_no, f.year, s.name, p.po_no, p.po_id, p.outward_no, p.soissueDT,
+         sanc.SUPGST, sanc.HSNcode, sanc.remarks, sanc.SANCTIONNO";
+
+                using (SqlCommand cmd = new SqlCommand(itemsSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (string.IsNullOrWhiteSpace(report.PoNo))
+                        {
+                            report.OutwardNo = ReadStringColumn(reader, "outward_no");
+                            report.SoIssueDate = ReadStringColumn(reader, "soissueDate");
+                            report.SchemeName = ReadStringColumn(reader, "SchemeName");
+                            report.PoDate = ReadStringColumn(reader, "PoDate");
+                            report.AccYear = ReadStringColumn(reader, "AccYear");
+                            report.SupplierName = ReadStringColumn(reader, "SupplierName");
+                            report.PoNo = ReadStringColumn(reader, "PoNo");
+                            report.SupGst = ReadStringColumn(reader, "SUPGST");
+                            report.HsnCode = ReadStringColumn(reader, "HSNcode");
+                            report.Remarks = ReadStringColumn(reader, "sancremarks");
+                            report.SanctionNo = ReadStringColumn(reader, "SANCTIONNO");
+                        }
+
+                        report.Items.Add(new SupplierSanctionReportItemDto
+                        {
+                            ItemCode = ReadStringColumn(reader, "itemcode"),
+                            ItemName = ReadStringColumn(reader, "itemname"),
+                            PercentValue = ReadDecimalColumn(reader, "percentvalue"),
+                            BasicRate = ReadDecimalColumn(reader, "basicrate"),
+                            FinalRate = ReadDecimalColumn(reader, "finalrate"),
+                            PoQty = ReadDecimalColumn(reader, "poqty"),
+                            PoValue = ReadDecimalColumn(reader, "poValue"),
+                        });
+                    }
+                }
+
+                const string linesSql = @"
+SELECT location_name,
+       invoice_no AS InvoiceNo,
+       invoice_date,
+       OrderedQTY AS OrderedQty,
+       SUM(received_qty) AS InvoiceAbsQty,
+       GST,
+       basicrate,
+       SUP,
+       CASE WHEN GROSSAMOUNT50 > 0 THEN '50%' ELSE '100%' END AS ptype,
+       CASE WHEN GROSSAMOUNT50 > 0
+            THEN ISNULL(GROSSAMOUNT50, (ROUND((SUM(received_qty) * basicrate), 0)
+                 + ROUND((SUM(received_qty) * basicrate * GST) / 100, 0)))
+            ELSE ISNULL(GROSSAMOUNT, (ROUND((SUM(received_qty) * basicrate), 0)
+                 + ROUND((SUM(received_qty) * basicrate * GST) / 100, 0)))
+       END AS Invalueonbill,
+       recieved_date,
+       DATEDIFF(DAY, (CASE WHEN soissueDT IS NULL THEN po_date ELSE soissueDT END), rDate) AS daystaken,
+       LDDays,
+       PenaltyAmount,
+       ISNULL(LogoCharges_HOVerified, 'NA') AS Logo,
+       LogoPenaltyAmt
+FROM (
+    SELECT b.InvoiceID,
+           m.location_name,
+           m.location_id,
+           r.receipt_id,
+           CASE WHEN b.INVOICENO IS NULL THEN d.invoice_no ELSE b.INVOICENO END AS invoice_no,
+           CASE WHEN b.INVOICEDATE IS NULL
+                THEN CONVERT(VARCHAR, d.invoice_date, 103)
+                ELSE CONVERT(VARCHAR, b.INVOICEDATE, 103)
+           END AS invoice_date,
+           CONVERT(VARCHAR, r.recieved_date, 103) AS recieved_date,
+           OrderedQTY,
+           pi.basicrate,
+           pi.GST,
+           CASE WHEN ri.received_qty IS NULL THEN r.receipt_qty ELSE ri.received_qty END AS received_qty,
+           b.GROSSAMOUNT,
+           b.GROSSAMOUNT50,
+           p.po_date,
+           p.soissueDT,
+           r.recieved_date AS rDate,
+           LogoCharges_HOVerified,
+           LogoPenaltyAmt,
+           LDDays,
+           PenaltyAmount,
+           ROUND(pi.basicrate + (pi.basicrate * pi.GST / 100), 2) AS SUP
+    FROM receipts r
+    LEFT OUTER JOIN receipt_item_details ri ON ri.receipt_id = r.receipt_id
+    INNER JOIN purchase_order p ON p.po_id = r.po_id
+    LEFT OUTER JOIN (
+        SELECT pi.po_item_id,
+               pi.po_id,
+               SUM(pi.quantity) AS OrderedQTY,
+               pi.percentage AS GST,
+               pi.basicrate,
+               pi.consignee_id
+        FROM po_items pi
+        GROUP BY pi.po_id, pi.percentage, pi.basicrate, pi.consignee_id, pi.po_item_id
+    ) pi ON pi.po_id = r.po_id AND pi.consignee_id = r.location_id
+    INNER JOIN maslocations m ON m.location_id = r.location_id
+    INNER JOIN SupplierDispatch d ON d.Issue_id = r.issue_id AND r.location_id = m.location_id
+    LEFT OUTER JOIN Issue_item_details sud ON sud.Issue_id = d.Issue_id AND sud.issue_detail_id = ri.issue_detail_id
+    INNER JOIN BLPINVOICES b ON b.RECEIPTID = r.receipt_id AND b.location_id = r.location_id AND b.po_id = r.po_id
+    WHERE r.po_id = @PoId
+      AND r.status IN ('C', 'Received')
+      AND ISNULL(b.SANCTIONIDP, b.SANCTIONID) = @SanctionId
+) a
+GROUP BY LogoCharges_HOVerified, soissueDT, receipt_id, location_id, location_name, invoice_no, invoice_date,
+         GST, basicrate, OrderedQTY, InvoiceID, GROSSAMOUNT, GROSSAMOUNT50, po_date, rDate, recieved_date,
+         LogoPenaltyAmt, LDDays, PenaltyAmount, a.SUP";
+
+                using (SqlCommand cmd = new SqlCommand(linesSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        var line = new SupplierSanctionReportLineDto
+                        {
+                            LocationName = ReadStringColumn(reader, "location_name"),
+                            InvoiceNo = ReadStringColumn(reader, "InvoiceNo"),
+                            InvoiceDate = ReadStringColumn(reader, "invoice_date"),
+                            OrderedQty = ReadDecimalColumn(reader, "OrderedQty"),
+                            InvoiceAbsQty = ReadDecimalColumn(reader, "InvoiceAbsQty"),
+                            Gst = ReadDecimalColumn(reader, "GST"),
+                            BasicRate = ReadDecimalColumn(reader, "basicrate"),
+                            Sup = ReadDecimalColumn(reader, "SUP"),
+                            PaymentType = ReadStringColumn(reader, "ptype"),
+                            InvoiceValueOnBill = ReadDecimalColumn(reader, "Invalueonbill"),
+                            ReceivedDate = ReadStringColumn(reader, "recieved_date"),
+                            DaysTaken = ReadIntColumn(reader, "daystaken"),
+                            LdDays = ReadIntColumn(reader, "LDDays"),
+                            PenaltyAmount = ReadDecimalColumn(reader, "PenaltyAmount"),
+                            Logo = ReadStringColumn(reader, "Logo"),
+                            LogoPenaltyAmt = ReadDecimalColumn(reader, "LogoPenaltyAmt"),
+                        };
+                        report.Lines.Add(line);
+                        report.GrossInvoiceAmount += line.InvoiceValueOnBill;
+                    }
+                }
+
+                report.GrossInvoiceAmount = Math.Round(report.GrossInvoiceAmount, 0);
+
+                const string taxSql = @"
+SELECT t.sanctionid,
+       t.TAXPER,
+       ty.taxtypename + ' (' + (CASE WHEN ty.taxcategory = 'D' THEN '-' ELSE '+' END) + ')'
+         + (CASE WHEN ty.taxper IS NOT NULL AND (t.taxtypeid = 247 OR t.taxtypeid = 248 OR t.taxtypeid = 249)
+                 THEN CAST(ty.taxper AS VARCHAR) + '%' ELSE '' END) AS taxtypename,
+       t.taxvalue,
+       ty.taxcategory,
+       t.taxtypeid
+FROM blptaxs t
+INNER JOIN blptaxtypes ty ON t.taxtypeid = ty.taxtypeid
+WHERE t.sanctionid = @SanctionId";
+
+                using (SqlCommand cmd = new SqlCommand(taxSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        report.Taxes.Add(new SupplierSanctionTaxLineDto
+                        {
+                            SanctionId = ReadIntColumn(reader, "sanctionid"),
+                            TaxPer = ReadDecimalColumn(reader, "TAXPER"),
+                            TaxTypeName = ReadStringColumn(reader, "taxtypename"),
+                            TaxValue = ReadDecimalColumn(reader, "taxvalue"),
+                            TaxCategory = ReadStringColumn(reader, "taxcategory"),
+                            TaxTypeId = ReadIntColumn(reader, "taxtypeid"),
+                        });
+                    }
+                }
+
+                const string totalsSql = @"
+SELECT ISNULL((SELECT SUM(ISNULL(TAXVALUE, 0)) FROM blpTaxs b
+               INNER JOIN blpTaxTypes b1 ON b1.TaxTypeID = b.TaxTypeID
+               WHERE sanctionid = @SanctionId AND taxcategory = 'D'), 0) AS totaldeductions,
+       ISNULL((SELECT SUM(ISNULL(TAXVALUE, 0)) FROM blpTaxs b
+               INNER JOIN blpTaxTypes b1 ON b1.TaxTypeID = b.TaxTypeID
+               WHERE sanctionid = @SanctionId AND taxcategory = 'A'), 0) AS totaladditions,
+       ISNULL((SELECT ISNULL(chequeAmt, 0) FROM BLPSANCTIONS WHERE SANCTIONID = @SanctionId), 0) AS Paid";
+
+                using (SqlCommand cmd = new SqlCommand(totalsSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        report.TotalDeductions = ReadDecimalColumn(reader, "totaldeductions");
+                        report.TotalAdditions = ReadDecimalColumn(reader, "totaladditions");
+                        report.PaidAmount = Math.Round(ReadDecimalColumn(reader, "Paid"), 0);
+                    }
+                }
+
+                const string datesSql = @"
+SELECT ISNULL(FinReceiptDT, 'Offline Receipt') AS FinReceiptDT,
+       CONVERT(VARCHAR, sanctiondate, 103) AS sanctiondate
+FROM blpsanctions sc
+LEFT OUTER JOIN (
+    SELECT MAX(fileid) AS fileid, ponoid
+    FROM MASFILEMOVEMENT
+    WHERE touserid = 5 AND flag = 'S'
+    GROUP BY ponoid
+) f ON f.ponoid = sc.po_id
+LEFT OUTER JOIN (
+    SELECT CONVERT(VARCHAR, todate, 103) AS FinReceiptDT, ponoid, fileid
+    FROM MASFILEMOVEMENT
+    WHERE touserid = 5 AND flag = 'S'
+) s ON s.ponoid = sc.po_id AND s.fileid = f.fileid
+WHERE sc.sanctionid = @SanctionId";
+
+                using (SqlCommand cmd = new SqlCommand(datesSql, con))
+                {
+                    cmd.Parameters.AddWithValue("@SanctionId", sanctionId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        report.FinReceiptDate = ReadStringColumn(reader, "FinReceiptDT");
+                        report.SanctionDate = ReadStringColumn(reader, "sanctiondate");
+                    }
+                }
+
+                report.PaidAmountWords = AmountToIndianWords(report.PaidAmount);
+                report.GrossAmountWords = AmountToIndianWords(report.GrossInvoiceAmount);
+
+                return Ok(report);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading sanction report.", error = ex.Message });
+            }
+        }
+
         /// <summary>BalanceStatussupplier.aspx — pending receipt/installation report.</summary>
         [HttpGet("balance-status/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierBalanceStatus(
@@ -4316,6 +5202,150 @@ ORDER BY p.po_date DESC";
             }
         }
 
+        /// <summary>
+        /// PendingInstallDrillDownsupplier.aspx — consignee-wise pending receipt/install for one PO.
+        /// SQL ported from Common/PendingInstallDrillDown1.ascx.cs fillgrid.
+        /// </summary>
+        [HttpGet("balance-status/drill-down/by-user/{userId:int}")]
+        public async Task<IActionResult> GetSupplierBalanceStatusDrillDown(
+            int userId,
+            [FromQuery] int poId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+            if (poId <= 0)
+                return BadRequest(new { message = "Invalid PO id." });
+
+            try
+            {
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                if (supplierId == null)
+                    return NotFound(new { message = "Supplier user not found." });
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                if (!await PoBelongsToSupplierAsync(con, poId, supplierId.Value))
+                    return NotFound(new { message = "Purchase order not found for this supplier." });
+
+                const string sql = @"
+SELECT d.DBStart_Name_En, l.location_name, m.item_code_as_per_tender, m.item_name,
+       sp.name AS Supplier, p.po_no AS PoNo,
+       (CASE WHEN p.soissueDT IS NULL THEN CONVERT(VARCHAR, p.po_date, 103)
+             ELSE CONVERT(VARCHAR, p.soissueDT, 103) END) AS po_dat,
+       SUM(pi.quantity) AS quantity, ISNULL(Supplyqty, 0) AS DispatchedQTY,
+       ISNULL(receiptQTY, 0) AS receiptQTY, ISNULL(insqty, 0) AS insqty,
+       pi.po_id, pi.item_id, l.location_id, d.DP_DistrictID,
+       CASE WHEN (ISNULL(receiptQTY, 0) > ISNULL(insqty, 0)) THEN 'To be installed'
+            ELSE 'To be received' END AS remarks
+FROM po_items pi
+INNER JOIN purchase_order p ON p.po_id = pi.po_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+INNER JOIN massuppliers sp ON sp.supplier_id = p.supplier_id
+INNER JOIN maslocations l ON l.location_id = pi.consignee_id
+LEFT OUTER JOIN Districts d ON d.DP_DistrictID = l.DP_DistrictID
+LEFT OUTER JOIN (
+    SELECT po_id, ISNULL(SUM(Supplyqty), 0) AS Supplyqty, d.location_id
+    FROM SupplierDispatch d
+    INNER JOIN Issue_item_details i ON d.Issue_id = i.Issue_id
+    WHERE d.status = 'C'
+    GROUP BY po_id, d.location_id
+) AS sup ON sup.po_id = pi.po_id AND sup.location_id = pi.consignee_id
+LEFT OUTER JOIN (
+    SELECT SUM(receiptQTY) AS receiptQTY, SUM(insqty) AS insqty, po_id, location_id
+    FROM (
+        SELECT ISNULL(r.receipt_qty, 0) AS receiptQTY, ISNULL(insqty, 0) AS insqty,
+               r.po_id, r.location_id, r.receipt_id
+        FROM receipts r
+        LEFT OUTER JOIN (
+            SELECT SUM(ri.received_qty) AS insqty, r.po_id, r.location_id, r.receipt_id
+            FROM receipts r
+            LEFT OUTER JOIN receipt_item_details ri ON ri.receipt_id = r.receipt_id
+            WHERE r.recieved_date IS NOT NULL AND r.status IN ('C')
+            GROUP BY r.po_id, r.location_id, r.receipt_id
+        ) AS ins ON ins.po_id = r.po_id AND ins.location_id = r.location_id AND ins.receipt_id = r.receipt_id
+        WHERE r.recieved_date IS NOT NULL AND r.status IN ('C', 'Received')
+    ) a
+    GROUP BY po_id, location_id
+) AS re ON re.po_id = pi.po_id AND re.location_id = l.location_id
+WHERE p.po_id = @PoId
+  AND p.status IN ('Order Placed', 'Completed', 'Partially Received')
+GROUP BY pi.po_id, pi.item_id, l.location_name, l.location_id, d.DP_DistrictID, d.DBStart_Name_En,
+         receiptQTY, insqty, Supplyqty, m.item_code_as_per_tender, m.item_name, sp.name,
+         p.soissueDT, p.po_date, p.po_no
+HAVING SUM(pi.quantity) > ISNULL(insqty, 0)
+ORDER BY d.DBStart_Name_En";
+
+                var result = new SupplierPendingInstallDrillDownDto
+                {
+                    PoId = poId,
+                    PrintDate = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss"),
+                };
+                var rows = new List<SupplierPendingInstallDrillDownRowDto>();
+
+                using (SqlCommand cmd = new SqlCommand(sql, con))
+                {
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (string.IsNullOrEmpty(result.PoNo))
+                        {
+                            result.ItemName = ReadStringColumn(reader, "item_name");
+                            result.ItemCode = ReadStringColumn(reader, "item_code_as_per_tender");
+                            result.Supplier = ReadStringColumn(reader, "Supplier");
+                            result.PoNo = ReadStringColumn(reader, "PoNo");
+                            result.PoDate = ReadStringColumn(reader, "po_dat");
+                        }
+
+                        rows.Add(new SupplierPendingInstallDrillDownRowDto
+                        {
+                            District = ReadStringColumn(reader, "DBStart_Name_En"),
+                            Consignee = ReadStringColumn(reader, "location_name"),
+                            PoQty = ReadDecimalColumn(reader, "quantity"),
+                            DispatchedQty = ReadDecimalColumn(reader, "DispatchedQTY"),
+                            ReceiptQty = ReadDecimalColumn(reader, "receiptQTY"),
+                            InstalledQty = ReadDecimalColumn(reader, "insqty"),
+                            Remarks = ReadStringColumn(reader, "remarks"),
+                        });
+                    }
+                }
+
+                if (string.IsNullOrEmpty(result.PoNo))
+                {
+                    const string headerSql = @"
+SELECT TOP 1 m.item_code_as_per_tender, m.item_name, sp.name AS Supplier, p.po_no AS PoNo,
+       (CASE WHEN p.soissueDT IS NULL THEN CONVERT(VARCHAR, p.po_date, 103)
+             ELSE CONVERT(VARCHAR, p.soissueDT, 103) END) AS po_dat
+FROM purchase_order p
+INNER JOIN massuppliers sp ON sp.supplier_id = p.supplier_id
+LEFT OUTER JOIN (
+    SELECT TOP 1 pi.po_id, pi.item_id FROM po_items pi WHERE pi.po_id = @PoId
+) pi ON pi.po_id = p.po_id
+LEFT OUTER JOIN masitems m ON m.item_id = pi.item_id
+WHERE p.po_id = @PoId";
+                    using SqlCommand headerCmd = new SqlCommand(headerSql, con);
+                    headerCmd.Parameters.AddWithValue("@PoId", poId);
+                    using SqlDataReader headerReader = await headerCmd.ExecuteReaderAsync();
+                    if (await headerReader.ReadAsync())
+                    {
+                        result.ItemName = ReadStringColumn(headerReader, "item_name");
+                        result.ItemCode = ReadStringColumn(headerReader, "item_code_as_per_tender");
+                        result.Supplier = ReadStringColumn(headerReader, "Supplier");
+                        result.PoNo = ReadStringColumn(headerReader, "PoNo");
+                        result.PoDate = ReadStringColumn(headerReader, "po_dat");
+                    }
+                }
+
+                result.Rows = rows;
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading pending install drill-down.", error = ex.Message });
+            }
+        }
+
         private static string GenerateEmdFileName(int supplierId)
         {
             return $"{supplierId}_{DateTime.Now:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}";
@@ -4378,6 +5408,135 @@ SELECT 1 FROM purchase_order WHERE po_id = @PoId AND supplier_id = @SupplierId";
             return result != null && result != DBNull.Value;
         }
 
+        /// <summary>Simple Indian-style amount-in-words (rupees, no paise).</summary>
+        private static string AmountToIndianWords(decimal amount)
+        {
+            long n = (long)Math.Round(Math.Abs(amount), MidpointRounding.AwayFromZero);
+            if (n == 0)
+                return "Zero Rupees Only";
+
+            string[] ones =
+            {
+                "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+                "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen",
+            };
+            string[] tens =
+            {
+                "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety",
+            };
+
+            string TwoDigits(long value)
+            {
+                if (value < 20)
+                    return ones[value];
+                long t = value / 10;
+                long o = value % 10;
+                return (tens[t] + (o > 0 ? " " + ones[o] : "")).Trim();
+            }
+
+            string ThreeDigits(long value)
+            {
+                long h = value / 100;
+                long rest = value % 100;
+                string part = h > 0 ? ones[h] + " Hundred" : "";
+                if (rest > 0)
+                    part = (part + " " + TwoDigits(rest)).Trim();
+                return part;
+            }
+
+            var parts = new List<string>();
+            long crore = n / 10000000;
+            n %= 10000000;
+            long lakh = n / 100000;
+            n %= 100000;
+            long thousand = n / 1000;
+            n %= 1000;
+            long hundred = n;
+
+            if (crore > 0)
+                parts.Add(TwoDigits(crore) + " Crore");
+            if (lakh > 0)
+                parts.Add(TwoDigits(lakh) + " Lakh");
+            if (thousand > 0)
+                parts.Add(TwoDigits(thousand) + " Thousand");
+            if (hundred > 0)
+                parts.Add(ThreeDigits(hundred));
+
+            return string.Join(" ", parts) + " Rupees Only";
+        }
+
+        private static string FormatCmcValue(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "NA";
+
+            return decimal.TryParse(value, out decimal parsed) && parsed == 0 ? "NA" : value;
+        }
+
+        private static async Task<string?> BuildPoPrintCopyToSqlAsync(SqlConnection con, int poId)
+        {
+            const string directorateSql = "SELECT directorate_id FROM purchase_order WHERE po_id = @PoId";
+            string directorateId = string.Empty;
+
+            using (SqlCommand directorateCmd = new SqlCommand(directorateSql, con))
+            {
+                directorateCmd.Parameters.AddWithValue("@PoId", poId);
+                object? result = await directorateCmd.ExecuteScalarAsync();
+                directorateId = result == null || result == DBNull.Value ? string.Empty : Convert.ToString(result) ?? string.Empty;
+            }
+
+            return directorateId switch
+            {
+                "12" => @"
+SELECT nameconsignee AS desig, ', ' + facility_aut_name AS office
+FROM facility_aut WHERE facility_aut_id = 12
+UNION ALL
+SELECT DISTINCT u.designation AS desig, ', ' + u.user_name AS office
+FROM po_items pi
+INNER JOIN purchase_order p ON p.po_id = pi.po_id
+INNER JOIN maslocations l ON l.location_id = pi.consignee_id
+INNER JOIN users u ON u.user_id = l.user_id
+LEFT OUTER JOIN facility_type ft ON ft.facility_type_id = l.facility_type_id
+WHERE pi.po_id = @PoId
+UNION ALL
+SELECT 'GM Finance' AS desig, ', CGMSC' AS office FROM facility_aut WHERE facility_aut_id = 12",
+                "5" => @"
+SELECT nameconsignee AS desig, ',' + facility_aut_name AS office
+FROM facility_aut WHERE facility_aut_id = 5
+UNION ALL
+SELECT DISTINCT 'CMHO' AS desig, ', ' + d.DBStart_Name_En AS office
+FROM po_items pi
+INNER JOIN purchase_order p ON p.po_id = pi.po_id
+INNER JOIN maslocations l ON l.location_id = pi.consignee_id
+INNER JOIN Districts d ON d.DP_DistrictID = l.DP_DistrictID
+LEFT OUTER JOIN facility_type ft ON ft.facility_type_id = l.facility_type_id
+WHERE pi.po_id = @PoId
+UNION ALL
+SELECT DISTINCT ft.designation, ',' + l.location_name AS office
+FROM po_items pi
+INNER JOIN purchase_order p ON p.po_id = pi.po_id
+INNER JOIN maslocations l ON l.location_id = pi.consignee_id
+LEFT OUTER JOIN facility_type ft ON ft.facility_type_id = l.facility_type_id
+WHERE pi.po_id = @PoId
+UNION ALL
+SELECT 'GM Finance' AS desig, ',CGMSC' AS office FROM facility_aut WHERE facility_aut_id = 12",
+                "9" or "11" or "1" or "7" or "6" or "13" => $@"
+SELECT nameconsignee AS desig, ', ' + facility_aut_name AS office
+FROM facility_aut WHERE facility_aut_id = {directorateId}
+UNION ALL
+SELECT DISTINCT u.designation AS desig, ', ' + u.user_name AS office
+FROM po_items pi
+INNER JOIN purchase_order p ON p.po_id = pi.po_id
+INNER JOIN maslocations l ON l.location_id = pi.consignee_id
+INNER JOIN users u ON u.user_id = l.user_id
+LEFT OUTER JOIN facility_type ft ON ft.facility_type_id = l.facility_type_id
+WHERE pi.po_id = @PoId
+UNION ALL
+SELECT 'GM Finance' AS desig, ', CGMSC' AS office FROM facility_aut WHERE facility_aut_id = 12",
+                _ => null,
+            };
+        }
+
         private static async Task<bool> ReceiptBelongsToSupplierAsync(
             SqlConnection con, int receiptId, int supplierId)
         {
@@ -4391,6 +5550,22 @@ WHERE r.receipt_id = @ReceiptId AND po.supplier_id = @SupplierId";
             cmd.Parameters.AddWithValue("@ReceiptId", receiptId);
             cmd.Parameters.AddWithValue("@SupplierId", supplierId);
 
+            object? result = await cmd.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<bool> DescrepencyBelongsToSupplierAsync(
+            SqlConnection con, int descrepencyId, int supplierId)
+        {
+            const string sql = @"
+SELECT 1
+FROM Descrepency d
+INNER JOIN purchase_order po ON po.po_id = d.ponoid
+WHERE d.decrepencyid = @Id AND po.supplier_id = @SupplierId";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@Id", descrepencyId);
+            cmd.Parameters.AddWithValue("@SupplierId", supplierId);
             object? result = await cmd.ExecuteScalarAsync();
             return result != null && result != DBNull.Value;
         }
@@ -4684,8 +5859,6 @@ WHERE d.po_id = @PoId AND d.location_id = @LocId AND d.issue_id = @IssueId AND p
 
             if (page == null)
                 throw new InvalidOperationException("Receipt issue not found for this supplier.");
-            if (page.CategoryId == 2)
-                throw new InvalidOperationException("Reagent receipt entry is not migrated yet.");
 
             const string receiptSql = @"
 SELECT TOP 1 receipt_id,
@@ -4693,6 +5866,7 @@ SELECT TOP 1 receipt_id,
        receipt_no,
        receipt_qty,
        remarks,
+       ISNULL(status, '') AS status,
        ISNULL(BulkInst, 'N') AS BulkInst,
        ISNULL(InstalationReportFile, '') AS InstalationReportFile,
        ISNULL(InstalationPhoto, '') AS InstalationPhoto,
@@ -4714,6 +5888,7 @@ ORDER BY receipt_id DESC";
                     page.ReceiptNo = ReadStringColumn(reader, "receipt_no");
                     page.ReceiptQty = ReadStringColumn(reader, "receipt_qty");
                     page.ReceiptRemarks = ReadStringColumn(reader, "remarks");
+                    page.ReceiptStatus = ReadStringColumn(reader, "status");
                     page.BulkInst = ReadStringColumn(reader, "BulkInst")
                         .Equals("Y", StringComparison.OrdinalIgnoreCase);
                     page.HasBulkInstallationReport = HasInstallationFileValue(
@@ -4724,8 +5899,60 @@ ORDER BY receipt_id DESC";
                         ReadStringColumn(reader, "WarrantyCardFile"));
                     page.HasBulkChallan = HasInstallationFileValue(
                         ReadStringColumn(reader, "Challanfile"));
+                    page.CanDeleteInstallation =
+                        page.ReceiptId > 0 &&
+                        (page.ReceiptStatus.Equals("Received", StringComparison.OrdinalIgnoreCase) ||
+                         page.ReceiptStatus.Equals("Incomplete", StringComparison.OrdinalIgnoreCase));
                 }
             }
+
+            if (page.ReceiptId > 0 &&
+                decimal.TryParse(page.ReceiptQty, out decimal parsedReceiptQty))
+            {
+                const string maxDenySql = @"
+SELECT @ReceiptQty - ISNULL((
+    SELECT SUM(ISNULL(received_qty, 0)) FROM receipt_item_details WHERE receipt_id = @ReceiptId
+), 0)";
+                using SqlCommand maxDenyCmd = new SqlCommand(maxDenySql, con);
+                maxDenyCmd.Parameters.AddWithValue("@ReceiptQty", parsedReceiptQty);
+                maxDenyCmd.Parameters.AddWithValue("@ReceiptId", page.ReceiptId);
+                object? maxResult = await maxDenyCmd.ExecuteScalarAsync();
+                page.MaxDeniedInstallQty = maxResult == null || maxResult == DBNull.Value
+                    ? parsedReceiptQty
+                    : Convert.ToDecimal(maxResult);
+            }
+            else
+            {
+                page.MaxDeniedInstallQty = page.PoQtyConsignee;
+            }
+
+            const string denySql = @"
+SELECT TOP 1 decrepencyid, issued, DeniedQTY, remarks,
+       ISNULL(uploadletterpath, '') AS uploadletterpath,
+       ISNULL(uploadletterpath_reccopy, '') AS uploadletterpath_reccopy
+FROM Descrepency
+WHERE ponoid = @PoId AND consigneeid = @LocId
+ORDER BY decrepencyid DESC";
+            using (SqlCommand denyCmd = new SqlCommand(denySql, con))
+            {
+                denyCmd.Parameters.AddWithValue("@PoId", poId);
+                denyCmd.Parameters.AddWithValue("@LocId", locId);
+                using SqlDataReader reader = await denyCmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    page.DescrepencyId = ReadIntColumn(reader, "decrepencyid");
+                    page.DeniedStatus = ReadStringColumn(reader, "issued");
+                    page.DeniedQty = ReadDecimalColumn(reader, "DeniedQTY");
+                    page.DeniedRemarks = ReadStringColumn(reader, "remarks");
+                    page.HasDeniedLetter = HasInstallationFileValue(
+                        ReadStringColumn(reader, "uploadletterpath"));
+                    page.HasReceivedCopy = HasInstallationFileValue(
+                        ReadStringColumn(reader, "uploadletterpath_reccopy"));
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(page.DeniedStatus))
+                page.DeniedStatus = page.ReceiptId > 0 ? "I" : "RI";
 
             const string issueDetailsSql = @"
 SELECT issue_detail_id, make_no, warranty_certificate_no, Supplyqty
@@ -5013,6 +6240,15 @@ ORDER BY ped.extensionId DESC";
             return string.Equals(value, "Y", StringComparison.OrdinalIgnoreCase) ? "Y" : "N";
         }
 
+        private static string NormalizeYesNoNa(string? value)
+        {
+            if (string.Equals(value, "Y", StringComparison.OrdinalIgnoreCase))
+                return "Y";
+            if (string.Equals(value, "NA", StringComparison.OrdinalIgnoreCase))
+                return "NA";
+            return "N";
+        }
+
         private async Task<SupplierDispatchEntryPageDto?> LoadDispatchEntryPageAsync(
             SqlConnection con,
             int poId,
@@ -5245,7 +6481,9 @@ ORDER BY gstid";
             SqlConnection con, int issueId)
         {
             const string sql = @"
-SELECT issue_detail_id, make_no, warranty_certificate_no, Supplyqty
+SELECT issue_detail_id, make_no, warranty_certificate_no, Supplyqty,
+       CASE WHEN mfgDate IS NULL THEN '' ELSE CONVERT(VARCHAR, mfgDate, 103) END AS mfgDate,
+       CASE WHEN expDate IS NULL THEN '' ELSE CONVERT(VARCHAR, expDate, 103) END AS expDate
 FROM Issue_item_details
 WHERE issue_id = @IssueId AND issue_detail_id IS NOT NULL
 ORDER BY issue_detail_id";
@@ -5261,10 +6499,28 @@ ORDER BY issue_detail_id";
                     IssueDetailId = ReadIntColumn(reader, "issue_detail_id"),
                     SerialNo = ReadStringColumn(reader, "make_no"),
                     WarrantyCardNo = ReadStringColumn(reader, "warranty_certificate_no"),
+                    MfgDate = ReadStringColumn(reader, "mfgDate"),
+                    ExpDate = ReadStringColumn(reader, "expDate"),
                     SupplyQty = ReadDecimalColumn(reader, "Supplyqty", "supplyqty"),
                 });
             }
             return list;
+        }
+
+        private static async Task<int> GetDispatchIssueCategoryIdAsync(SqlConnection con, int issueId)
+        {
+            const string sql = @"
+SELECT TOP 1 ISNULL(m.categoryid, 0)
+FROM SupplierDispatch d
+INNER JOIN po_items pi ON pi.po_id = d.po_id AND pi.consignee_id = d.location_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+WHERE d.Issue_id = @IssueId";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@IssueId", issueId);
+            object? result = await cmd.ExecuteScalarAsync();
+            if (result == null || result == DBNull.Value)
+                return 0;
+            return Convert.ToInt32(result);
         }
 
         private readonly record struct DispatchIssueMeta(
