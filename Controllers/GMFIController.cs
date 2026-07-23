@@ -4202,6 +4202,396 @@ GROUP BY
             }
         }
 
+        [HttpPost("SaveSanctionHeaderinfor")]
+        public async Task<IActionResult> SaveSanctionHeaderinfor([FromBody] SanctionSaveDto request)
+        {
+            // 1. Basic Validations (Replaces GenFunctions checks)
+            if (request.BudgetId == -1 || request.BudgetId == 0)
+            {
+                return BadRequest(new { message = "Please Select a valid Budget No." });
+            }
+            if (string.IsNullOrWhiteSpace(request.SanctionNo))
+            {
+                return BadRequest(new { message = "Sanction Number is required." });
+            }
+            if (string.IsNullOrWhiteSpace(request.HsnCode))
+            {
+                return BadRequest(new { message = "HSN Code is required." });
+            }
+            if (request.SanctionDate > DateTime.Now)
+            {
+                return BadRequest(new { message = "You Can't Select Greater than todays Date." });
+            }
+
+            // 2. GST Validation Logic (Replaces CheckSelectedGST method)
+            bool isGstValid = false;
+            if (request.GstNo == request.DispatchGstNo)
+            {
+                isGstValid = true;
+            }
+            else if (string.IsNullOrEmpty(request.DispatchGstNo) || request.DispatchGstNo == "-")
+            {
+                isGstValid = true;
+            }
+
+            if (request.IsGstOverrideChecked) // CheckBox3.Checked
+            {
+                isGstValid = true;
+            }
+
+            if (!isGstValid)
+            {
+                return BadRequest(new { message = "Supplier Dispatched GST No Not Matched" });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            int sanctionId = 0;
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    // 3. Levy Logic Check (Replaces CheckLeavy method)
+                    string levyQuery = "SELECT ISNULL(penaltypercent, 0) FROM tenders WITH (NOLOCK) WHERE tender_id = @TenderId";
+                    using (SqlCommand cmdLevy = new SqlCommand(levyQuery, conn))
+                    {
+                        cmdLevy.Parameters.AddWithValue("@TenderId", request.TenderId);
+                        object levyResult = await cmdLevy.ExecuteScalarAsync();
+
+                        decimal penaltyPercent = (levyResult != null && levyResult != DBNull.Value) ? Convert.ToDecimal(levyResult) : 0;
+
+                        if (penaltyPercent <= 0)
+                        {
+                            return BadRequest(new { message = "Please Enter Leavy Details in Tender Before Going to Sanctin or Communicate Equipment Tender Cell to Enter" });
+                        }
+                    }
+
+                    // 4. Check if Sanction ID already exists (Replaces getSanctinidIfExist method)
+                    string checkExistQuery = "SELECT ISNULL(SanctionID, 0) FROM blpSanctions WITH (NOLOCK) WHERE po_id = @PoId AND status = 'IN'";
+                    using (SqlCommand cmdExist = new SqlCommand(checkExistQuery, conn))
+                    {
+                        cmdExist.Parameters.AddWithValue("@PoId", request.PoId);
+                        object existResult = await cmdExist.ExecuteScalarAsync();
+
+                        if (existResult != null && existResult != DBNull.Value)
+                        {
+                            sanctionId = Convert.ToInt32(existResult);
+                        }
+                    }
+
+                    // 5. Save Data (Insert or Update logic)
+                    string sqlQuery = "";
+                    if (sanctionId == 0) // INSERT
+                    {
+                        sqlQuery = @"
+                    INSERT INTO blpSanctions (po_id, InvoiceType, SanctionNo, SanctionDate, BudgetID, Remarks, SupGST, status, auto_code, BUDGETAMT, EntryDT, HSNcode) 
+                    OUTPUT INSERTED.SanctionID
+                    VALUES (@PoId, 'NI', @SanctionNo, @SanctionDate, @BudgetId, @Remarks, @SupGst, 'IN', @AutoCode, @BudgetAmt, GETDATE(), @HsnCode)";
+                    }
+                    else // UPDATE
+                    {
+                        sqlQuery = @"
+                    UPDATE blpSanctions 
+                    SET po_id = @PoId, InvoiceType = 'NI', SanctionNo = @SanctionNo, SanctionDate = @SanctionDate, 
+                        BudgetID = @BudgetId, Remarks = @Remarks, SupGST = @SupGst, BUDGETAMT = @BudgetAmt, 
+                        EntryDT = GETDATE(), HSNcode = @HsnCode 
+                    WHERE SanctionID = @SanctionId";
+                    }
+
+                    using (SqlCommand cmdSave = new SqlCommand(sqlQuery, conn))
+                    {
+                        cmdSave.Parameters.AddWithValue("@PoId", request.PoId);
+                        cmdSave.Parameters.AddWithValue("@SanctionNo", request.SanctionNo);
+                        cmdSave.Parameters.AddWithValue("@SanctionDate", request.SanctionDate.ToString("yyyy/MM/dd HH:mm:ss.fff"));
+                        cmdSave.Parameters.AddWithValue("@BudgetId", request.BudgetId);
+                        cmdSave.Parameters.AddWithValue("@Remarks", string.IsNullOrEmpty(request.Remarks) ? (object)DBNull.Value : request.Remarks);
+                        cmdSave.Parameters.AddWithValue("@SupGst", string.IsNullOrEmpty(request.GstNo) ? (object)DBNull.Value : request.GstNo);
+                        cmdSave.Parameters.AddWithValue("@BudgetAmt", request.BudgetAmt);
+                        cmdSave.Parameters.AddWithValue("@HsnCode", request.HsnCode);
+
+                        if (sanctionId == 0)
+                        {
+                            cmdSave.Parameters.AddWithValue("@AutoCode", string.IsNullOrEmpty(request.AutoCode) ? (object)DBNull.Value : request.AutoCode);
+                            // Get newly inserted ID
+                            sanctionId = Convert.ToInt32(await cmdSave.ExecuteScalarAsync());
+                        }
+                        else
+                        {
+                            cmdSave.Parameters.AddWithValue("@SanctionId", sanctionId);
+                            await cmdSave.ExecuteNonQueryAsync();
+                        }
+                    }
+                }
+
+                // Return success with generated SanctionID so frontend can use it (e.g. for SetHeaderData)
+                return Ok(new
+                {
+                    message = "Saved Successfully",
+                    sanctionId = sanctionId,
+                    poId = request.PoId
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving sanction details.", error = ex.Message });
+            }
+        }
+
+
+        //[HttpGet("GetInvoiceDetails/{poId}/{invoiceId}")]
+        //public async Task<IActionResult> GetInvoiceDetails(int poId, int invoiceId)
+        //{
+        //    //|| invoiceId <= 0
+        //    if (poId <= 0 )
+        //    {
+        //        return BadRequest(new { message = "Please provide valid PO ID and Invoice ID." });
+        //    }
+
+        //    string connString = _config.GetConnectionString("DefaultConnection");
+        //    List<InvoiceDetailDto> invoiceDetailsList = new List<InvoiceDetailDto>();
+
+        //    string sqlQuery = @"
+        //    SELECT 
+        //    ISNULL(InvoiceID, 0) AS InvoiceID, 
+        //    receipt_id, 
+        //    location_id AS warehouseid, 
+        //    location_name, 
+        //    invoice_no AS InvoiceNo, 
+        //    invoice_date, 
+        //    OrderedQTY AS OrderedQty, 
+        //    SUM(received_qty) AS InvoiceAbsQty, 
+        //    GST, 
+        //    basicrate, 
+        //    ROUND((SUM(received_qty) * basicrate), 0) + ROUND((SUM(received_qty) * basicrate * GST) / 100, 0) AS OLDINVOICEVALUE, 
+        //    po_item_id, 
+        //    item_id, 
+        //    ISNULL(OLDINVOICEVALUE, (ROUND((SUM(received_qty) * basicrate), 0) + ROUND((SUM(received_qty) * basicrate * GST) / 100, 0))) AS Invalueonbill, 
+        //    item_detail_id, 
+        //    INVOICEITEMID
+        //FROM 
+        //(
+        //    SELECT 
+        //        0 SlNo, 
+        //        ISNULL(bi.INVOICEITEMID, 0) INVOICEITEMID, 
+        //        b.InvoiceID, 
+        //        m.location_name, 
+        //        m.location_id, 
+        //        r.receipt_id, 
+        //        po_item_id, 
+        //        item_id, 
+        //        ri.item_detail_id, 
+        //        d.invoice_no, 
+        //        CONVERT(varchar, d.invoice_date, 105) AS invoice_date, 
+        //        CONVERT(varchar, r.recieved_date, 105) AS recieved_date, 
+        //        CONVERT(varchar, ri.installation_date, 105) AS installation_date, 
+        //        OrderedQTY, 
+        //        pi.basicrate, 
+        //        pi.GST, 
+        //        sud.Supplyqty, 
+        //        ri.received_qty, 
+        //        b.OLDINVOICEVALUE
+        //    FROM receipts r WITH(NOLOCK)
+        //    LEFT OUTER JOIN receipt_item_details ri WITH(NOLOCK) ON ri.receipt_id = r.receipt_id
+        //    LEFT OUTER JOIN 
+        //    (
+        //        SELECT pi.po_item_id, pi.po_id, SUM(pi.quantity) AS OrderedQTY, pi.percentage AS GST, pi.basicrate, pi.consignee_id 
+        //        FROM po_items pi WITH(NOLOCK)
+        //        GROUP BY pi.po_id, pi.percentage, pi.basicrate, pi.consignee_id, pi.po_item_id
+        //    ) pi ON pi.po_id = r.po_id AND pi.consignee_id = r.location_id
+        //    INNER JOIN maslocations m WITH(NOLOCK) ON m.location_id = r.location_id 
+        //    INNER JOIN SupplierDispatch d WITH(NOLOCK) ON d.Issue_id = r.issue_id AND r.location_id = m.location_id
+        //    LEFT OUTER JOIN Issue_item_details sud WITH(NOLOCK) ON sud.Issue_id = d.Issue_id AND sud.issue_detail_id = ri.issue_detail_id
+        //    LEFT OUTER JOIN BLPINVOICES b WITH(NOLOCK) ON b.RECEIPTID = r.receipt_id AND b.location_id = r.location_id AND b.po_id = r.po_id
+        //    LEFT OUTER JOIN BLPINVOICEITEMS bi WITH(NOLOCK) ON bi.INVOICEID = b.INVOICEID
+        //    WHERE r.po_id = @PoId AND r.status IN ('C', 'Received')
+        //) a 
+        //WHERE InvoiceID = @InvoiceId
+        //GROUP BY 
+        //    receipt_id, location_id, location_name, invoice_no, invoice_date, 
+        //    GST, basicrate, OrderedQTY, InvoiceID, po_item_id, item_id, 
+        //    OLDINVOICEVALUE, item_detail_id, INVOICEITEMID";
+
+        //    try
+        //    {
+        //        using (SqlConnection conn = new SqlConnection(connString))
+        //        {
+        //            using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+        //            {
+        //                // Add Parameters to prevent SQL Injection
+        //                cmd.Parameters.AddWithValue("@PoId", poId);
+        //                cmd.Parameters.AddWithValue("@InvoiceId", invoiceId);
+
+        //                await conn.OpenAsync();
+
+        //                using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+        //                {
+        //                    while (await reader.ReadAsync())
+        //                    {
+        //                        invoiceDetailsList.Add(new InvoiceDetailDto
+        //                        {
+        //                            InvoiceId = reader["InvoiceID"] != DBNull.Value ? Convert.ToInt32(reader["InvoiceID"]) : 0,
+        //                            ReceiptId = reader["receipt_id"] != DBNull.Value ? Convert.ToInt32(reader["receipt_id"]) : 0,
+        //                            WarehouseId = reader["warehouseid"] != DBNull.Value ? Convert.ToInt32(reader["warehouseid"]) : 0,
+        //                            LocationName = reader["location_name"]?.ToString() ?? string.Empty,
+        //                            InvoiceNo = reader["InvoiceNo"]?.ToString() ?? string.Empty,
+        //                            InvoiceDate = reader["invoice_date"]?.ToString() ?? string.Empty,
+        //                            OrderedQty = reader["OrderedQty"] != DBNull.Value ? Convert.ToDecimal(reader["OrderedQty"]) : 0,
+        //                            InvoiceAbsQty = reader["InvoiceAbsQty"] != DBNull.Value ? Convert.ToDecimal(reader["InvoiceAbsQty"]) : 0,
+        //                            Gst = reader["GST"] != DBNull.Value ? Convert.ToDecimal(reader["GST"]) : 0,
+        //                            BasicRate = reader["basicrate"] != DBNull.Value ? Convert.ToDecimal(reader["basicrate"]) : 0,
+        //                            OldInvoiceValue = reader["OLDINVOICEVALUE"] != DBNull.Value ? Convert.ToDecimal(reader["OLDINVOICEVALUE"]) : 0,
+        //                            PoItemId = reader["po_item_id"] != DBNull.Value ? Convert.ToInt32(reader["po_item_id"]) : 0,
+        //                            ItemId = reader["item_id"] != DBNull.Value ? Convert.ToInt32(reader["item_id"]) : 0,
+        //                            InValueOnBill = reader["Invalueonbill"] != DBNull.Value ? Convert.ToDecimal(reader["Invalueonbill"]) : 0,
+        //                            ItemDetailId = reader["item_detail_id"] != DBNull.Value ? Convert.ToInt32(reader["item_detail_id"]) : 0,
+        //                            InvoiceItemId = reader["INVOICEITEMID"] != DBNull.Value ? Convert.ToInt32(reader["INVOICEITEMID"]) : 0
+        //                        });
+        //                    }
+        //                }
+        //            }
+        //        }
+
+        //        if (invoiceDetailsList.Count > 0)
+        //        {
+        //            return Ok(invoiceDetailsList);
+        //        }
+        //        else
+        //        {
+        //            return NotFound(new { message = "No invoice records found for the given PO ID and Invoice ID." });
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, new { message = "Error fetching invoice details.", error = ex.Message });
+        //    }
+        //}
+        // एक Route बिना InvoiceId के, और दूसरा InvoiceId के साथ
+        // यहाँ route में सिर्फ poId रखा है
+        [HttpGet("GetInvoiceDetails/{poId}")]
+        public async Task<IActionResult> GetInvoiceDetails(int poId, [FromQuery] int? invoiceId)
+        {
+            if (poId <= 0)
+            {
+                return BadRequest(new { message = "Please provide a valid PO ID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            List<InvoiceDetailDto> invoiceDetailsList = new List<InvoiceDetailDto>();
+
+            // SQL क्वेरी वही रहेगी
+            string sqlQuery = @"
+        SELECT 
+            ISNULL(InvoiceID, 0) AS InvoiceID, 
+            receipt_id, 
+            location_id AS warehouseid, 
+            location_name, 
+            invoice_no AS InvoiceNo, 
+            invoice_date, 
+            OrderedQTY AS OrderedQty, 
+            SUM(received_qty) AS InvoiceAbsQty, 
+            GST, 
+            basicrate, 
+            ROUND((SUM(received_qty) * basicrate), 0) + ROUND((SUM(received_qty) * basicrate * GST) / 100, 0) AS OLDINVOICEVALUE, 
+            po_item_id, 
+            item_id, 
+            ISNULL(OLDINVOICEVALUE, (ROUND((SUM(received_qty) * basicrate), 0) + ROUND((SUM(received_qty) * basicrate * GST) / 100, 0))) AS Invalueonbill, 
+            item_detail_id, 
+            INVOICEITEMID
+        FROM 
+        (
+            SELECT 
+                0 SlNo, 
+                ISNULL(bi.INVOICEITEMID, 0) INVOICEITEMID, 
+                b.InvoiceID, 
+                m.location_name, 
+                m.location_id, 
+                r.receipt_id, 
+                po_item_id, 
+                item_id, 
+                ri.item_detail_id, 
+                d.invoice_no, 
+                CONVERT(varchar, d.invoice_date, 105) AS invoice_date, 
+                CONVERT(varchar, r.recieved_date, 105) AS recieved_date, 
+                CONVERT(varchar, ri.installation_date, 105) AS installation_date, 
+                OrderedQTY, 
+                pi.basicrate, 
+                pi.GST, 
+                sud.Supplyqty, 
+                ri.received_qty, 
+                b.OLDINVOICEVALUE
+            FROM receipts r WITH(NOLOCK)
+            LEFT OUTER JOIN receipt_item_details ri WITH(NOLOCK) ON ri.receipt_id = r.receipt_id
+            LEFT OUTER JOIN 
+            (
+                SELECT pi.po_item_id, pi.po_id, SUM(pi.quantity) AS OrderedQTY, pi.percentage AS GST, pi.basicrate, pi.consignee_id 
+                FROM po_items pi WITH(NOLOCK)
+                GROUP BY pi.po_id, pi.percentage, pi.basicrate, pi.consignee_id, pi.po_item_id
+            ) pi ON pi.po_id = r.po_id AND pi.consignee_id = r.location_id
+            INNER JOIN maslocations m WITH(NOLOCK) ON m.location_id = r.location_id 
+            INNER JOIN SupplierDispatch d WITH(NOLOCK) ON d.Issue_id = r.issue_id AND r.location_id = m.location_id
+            LEFT OUTER JOIN Issue_item_details sud WITH(NOLOCK) ON sud.Issue_id = d.Issue_id AND sud.issue_detail_id = ri.issue_detail_id
+            LEFT OUTER JOIN BLPINVOICES b WITH(NOLOCK) ON b.RECEIPTID = r.receipt_id AND b.location_id = r.location_id AND b.po_id = r.po_id
+            LEFT OUTER JOIN BLPINVOICEITEMS bi WITH(NOLOCK) ON bi.INVOICEID = b.INVOICEID
+            WHERE r.po_id = @PoId AND r.status IN ('C', 'Received')
+        ) a 
+        WHERE (@InvoiceId IS NULL OR @InvoiceId = 0 OR InvoiceID = @InvoiceId)
+        GROUP BY 
+            receipt_id, location_id, location_name, invoice_no, invoice_date, 
+            GST, basicrate, OrderedQTY, InvoiceID, po_item_id, item_id, 
+            OLDINVOICEVALUE, item_detail_id, INVOICEITEMID";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@PoId", poId);
+                        // यहाँ invoiceId Nullable है, तो अगर ये पास नहीं होगा तो DBNull.Value जाएगा
+                        cmd.Parameters.AddWithValue("@InvoiceId", invoiceId.HasValue ? (object)invoiceId.Value : DBNull.Value);
+
+                        await conn.OpenAsync();
+
+                        // ... (बाकी का Read logic वही रहेगा)
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            // ... अंदर के loop में ये कोड रखें
+                            while (await reader.ReadAsync())
+                            {
+                                invoiceDetailsList.Add(new InvoiceDetailDto
+                                {
+                                    // यहाँ कॉलम के नाम SQL के 'AS' वाले नामों से मैच करें
+                                    InvoiceId = reader["InvoiceID"] != DBNull.Value ? Convert.ToInt32(reader["InvoiceID"]) : 0,
+                                    ReceiptId = reader["receipt_id"] != DBNull.Value ? Convert.ToInt32(reader["receipt_id"]) : 0,
+                                    WarehouseId = reader["warehouseid"] != DBNull.Value ? Convert.ToInt32(reader["warehouseid"]) : 0,
+                                    LocationName = reader["location_name"]?.ToString() ?? "",
+                                    InvoiceNo = reader["InvoiceNo"]?.ToString() ?? "",
+                                    InvoiceDate = reader["invoice_date"]?.ToString() ?? "",
+                                    OrderedQty = reader["OrderedQty"] != DBNull.Value ? Convert.ToDecimal(reader["OrderedQty"]) : 0,
+                                    InvoiceAbsQty = reader["InvoiceAbsQty"] != DBNull.Value ? Convert.ToDecimal(reader["InvoiceAbsQty"]) : 0,
+                                    Gst = reader["GST"] != DBNull.Value ? Convert.ToDecimal(reader["GST"]) : 0,
+                                    BasicRate = reader["basicrate"] != DBNull.Value ? Convert.ToDecimal(reader["basicrate"]) : 0,
+                                    OldInvoiceValue = reader["OLDINVOICEVALUE"] != DBNull.Value ? Convert.ToDecimal(reader["OLDINVOICEVALUE"]) : 0,
+                                    PoItemId = reader["po_item_id"] != DBNull.Value ? Convert.ToInt32(reader["po_item_id"]) : 0,
+                                    ItemId = reader["item_id"] != DBNull.Value ? Convert.ToInt32(reader["item_id"]) : 0,
+                                    InValueOnBill = reader["Invalueonbill"] != DBNull.Value ? Convert.ToDecimal(reader["Invalueonbill"]) : 0,
+                                    ItemDetailId = reader["item_detail_id"] != DBNull.Value ? Convert.ToInt32(reader["item_detail_id"]) : 0,
+                                    InvoiceItemId = reader["INVOICEITEMID"] != DBNull.Value ? Convert.ToInt32(reader["INVOICEITEMID"]) : 0
+                                });
+                            }
+                        }
+                    }
+                }
+                return invoiceDetailsList.Count > 0 ? Ok(invoiceDetailsList) : NotFound(new { message = "No records found." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error.", error = ex.Message });
+            }
+        }
+
     }
 }
 
