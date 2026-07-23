@@ -471,6 +471,42 @@ public class UpdateReceivedDateRequestDto
         public string Logo { get; set; } = string.Empty;
     }
 
+    public class SanctionSaveDto
+    {
+        public int PoId { get; set; }
+        public int BudgetId { get; set; }
+        public string GstNo { get; set; }
+        public string SanctionNo { get; set; }
+        public string HsnCode { get; set; }
+        public DateTime SanctionDate { get; set; }
+        public string Remarks { get; set; }
+        public decimal BudgetAmt { get; set; }
 
+        // Hidden fields / Labels required for logic
+        public string AutoCode { get; set; }
+        public int TenderId { get; set; }
+        public string DispatchGstNo { get; set; }
+        public bool IsGstOverrideChecked { get; set; } // CheckBox3.Checked के लिए
+    }
+
+    public class InvoiceDetailDto
+    {
+        public int InvoiceId { get; set; }
+        public int ReceiptId { get; set; }
+        public int WarehouseId { get; set; }
+        public string LocationName { get; set; }
+        public string InvoiceNo { get; set; }
+        public string InvoiceDate { get; set; }
+        public decimal OrderedQty { get; set; }
+        public decimal InvoiceAbsQty { get; set; }
+        public decimal Gst { get; set; }
+        public decimal BasicRate { get; set; }
+        public decimal OldInvoiceValue { get; set; }
+        public int PoItemId { get; set; }
+        public int ItemId { get; set; }
+        public decimal InValueOnBill { get; set; }
+        public int ItemDetailId { get; set; }
+        public int InvoiceItemId { get; set; }
+    }
 
 }
