@@ -1,4 +1,4 @@
-﻿using EMISAPIS.DTOS;
+using EMISAPIS.DTOS;
 using EMISAPIS.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -1007,6 +1007,50 @@ ReceiptCopy ,ext ,ext_reccopy,d.decrepencyid from descrepency d inner join maslo
 
         //            return Ok(list);
         //        }
+
+
+        // ============================================================
+        // GET /api/Payment/GetReasonList?poId=X
+        // Returns all SOORDERREASON entries for a given PO (used in Resolve modal)
+        // ============================================================
+        [HttpGet("GetReasonList")]
+        public async Task<IActionResult> GetReasonList(int poId)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "Invalid PO ID." });
+
+            string connStr = _config.GetConnectionString("DefaultConnection");
+            using SqlConnection con = new SqlConnection(connStr);
+            await con.OpenAsync();
+
+            string sql = @"
+                SELECT r.SORID, r.REASONID, rm.ReasonName, r.remarks,
+                       CONVERT(varchar, r.ENTRYDATE, 103) AS entryDate,
+                       CASE WHEN r.REASONID = 13 THEN 'Y' ELSE 'N' END AS isSolved
+                FROM SOORDERREASON r
+                INNER JOIN ReasonMaster rm ON rm.reasonid = r.REASONID
+                WHERE r.PONOID = @PoId AND r.REASONID NOT IN (1)
+                ORDER BY r.ENTRYDATE DESC";
+
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+
+            var list = new List<object>();
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new
+                {
+                    SorId       = Convert.ToInt32(reader["SORID"]),
+                    ReasonId    = Convert.ToInt32(reader["REASONID"]),
+                    ReasonName  = reader["ReasonName"]?.ToString() ?? "",
+                    Remarks     = reader["remarks"]?.ToString() ?? "",
+                    EntryDate   = reader["entryDate"]?.ToString() ?? "",
+                    IsSolved    = reader["isSolved"]?.ToString() ?? "N"
+                });
+            }
+            return Ok(list);
+        }
 
     }
 

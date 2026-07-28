@@ -1,4 +1,4 @@
-﻿namespace EMISAPIS.DTOS
+namespace EMISAPIS.DTOS
 {
     public class GMFIDTOS
     {
@@ -379,6 +379,12 @@ public class UpdateReceivedDateRequestDto
         public int ReasonId { get; set; }         // ddlReason
         public string Remarks { get; set; } = string.Empty; // txtReson.Text
         public int UserId { get; set; }           // sDet.DistId
+    }
+
+    // Reason resolve karne ke liye DTO (ResolveReason endpoint)
+    public class ResolveReasonRequestDto
+    {
+        public int SorId { get; set; }  // SOORDERREASON.SORID
     }
 
     // Document links fetch karne ke liye DTO

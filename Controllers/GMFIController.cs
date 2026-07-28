@@ -1,4 +1,4 @@
-﻿using EMISAPIS.DTOS;
+using EMISAPIS.DTOS;
 using EMISAPIS.DTOS.EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
@@ -3278,9 +3278,112 @@ where 1=1 order by b.BUDGETNAME";
             }
         }
 
-        // ========================================================
+        // ============================================================
+        // 2a. GET REASON MASTER LIST  (used in Add-Reason modal dropdown)
+        // GET /api/GMFI/GetReasons
+        // ============================================================
+        [HttpGet("GetReasons")]
+        public async Task<IActionResult> GetReasons()
+        {
+            string connStr = _config.GetConnectionString("DefaultConnection");
+            using SqlConnection con = new SqlConnection(connStr);
+            await con.OpenAsync();
+
+            string sql = "SELECT reasonid, ReasonName FROM ReasonMaster WHERE reasonid NOT IN (1) ORDER BY ReasonName";
+            using SqlCommand cmd = new SqlCommand(sql, con);
+
+            var list = new List<object>();
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new
+                {
+                    ReasonId   = Convert.ToInt32(reader["reasonid"]),
+                    ReasonName = reader["ReasonName"]?.ToString() ?? ""
+                });
+            }
+            return Ok(list);
+        }
+
+        // ============================================================
+        // 2b. ADD REASON  (alias of SaveReason — same logic)
+        // POST /api/GMFI/AddReason
+        // Body: { userId, reasonId, poId, remarks }
+        // ============================================================
+        [HttpPost("AddReason")]
+        public async Task<IActionResult> AddReason([FromBody] SaveReasonRequestDto request)
+        {
+            if (request == null || request.PoNoId <= 0 || request.ReasonId <= 0)
+                return BadRequest(new { message = "Please select a valid Reason and PO ID." });
+
+            string connStr = _config.GetConnectionString("DefaultConnection");
+            using SqlConnection conn = new SqlConnection(connStr);
+            await conn.OpenAsync();
+
+            using SqlTransaction trans = conn.BeginTransaction();
+            try
+            {
+                string insertSql = @"
+                    INSERT INTO SOORDERREASON(USERID, REASONID, PONOID, remarks, ENTRYDATE)
+                    VALUES(@UserId, @ReasonId, @PoNoId, @Remarks, GETDATE())";
+
+                using (SqlCommand insCmd = new SqlCommand(insertSql, conn, trans))
+                {
+                    insCmd.Parameters.AddWithValue("@UserId",   request.UserId);
+                    insCmd.Parameters.AddWithValue("@ReasonId", request.ReasonId);
+                    insCmd.Parameters.AddWithValue("@PoNoId",   request.PoNoId);
+                    insCmd.Parameters.AddWithValue("@Remarks",  request.Remarks ?? "");
+                    await insCmd.ExecuteNonQueryAsync();
+                }
+
+                if (request.ReasonId == 1)
+                {
+                    string updSql = "UPDATE purchase_order SET Ispayment='Y' WHERE po_id=@PoNoId";
+                    using SqlCommand updCmd = new SqlCommand(updSql, conn, trans);
+                    updCmd.Parameters.AddWithValue("@PoNoId", request.PoNoId);
+                    await updCmd.ExecuteNonQueryAsync();
+                }
+
+                await trans.CommitAsync();
+                return Ok(new { message = "Reason added successfully." });
+            }
+            catch (Exception ex)
+            {
+                await trans.RollbackAsync();
+                return StatusCode(500, new { message = "Failed to add reason.", error = ex.Message });
+            }
+        }
+
+        // ============================================================
+        // 2c. RESOLVE REASON  (mark SOORDERREASON row as solved)
+        // POST /api/GMFI/ResolveReason
+        // Body: { sorId }
+        // ============================================================
+        [HttpPost("ResolveReason")]
+        public async Task<IActionResult> ResolveReason([FromBody] ResolveReasonRequestDto request)
+        {
+            if (request == null || request.SorId <= 0)
+                return BadRequest(new { message = "Invalid SORID." });
+
+            string connStr = _config.GetConnectionString("DefaultConnection");
+            using SqlConnection conn = new SqlConnection(connStr);
+            await conn.OpenAsync();
+
+            // Mark reason as solved by updating reasonid to 13 (Resolved) or set issolved flag
+            string sql = "UPDATE SOORDERREASON SET REASONID = 13 WHERE SORID = @SorId";
+            using SqlCommand cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@SorId", request.SorId);
+
+            int rows = await cmd.ExecuteNonQueryAsync();
+            if (rows == 0)
+                return NotFound(new { message = "Record not found." });
+
+            return Ok(new { message = "Reason resolved successfully." });
+        }
+
+        // ============================================================
         // 3. FETCH DOCUMENT PATHS (Purana Challan/Photo View buttons)
-        // ========================================================
+        // ============================================================
         [HttpGet("GetReceiptDocuments/{receiptItemId}")]
         public async Task<IActionResult> GetReceiptDocuments(int receiptItemId)
         {
