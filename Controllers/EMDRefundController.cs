@@ -88,20 +88,21 @@ namespace EMISAPIS.Controllers
                 using var conn = new SqlConnection(ConnStr());
                 await conn.OpenAsync();
 
-                var where = " WHERE 1=1";
+                var where = " WHERE (fm.BMEApproval IS NULL OR fm.BMEApproval != 'Y')";
                 if (supplierId > 0)
                 {
                     where += " AND ed.SupId = @supplierId";
                 }
                 if (tenderId > 0)
                 {
-                    where += " AND (ed.TenderNo = CAST(@tenderId AS varchar(50)) OR t.tender_id = @tenderId)";
+                    // Filter by supplierId from tenders table via subquery to avoid varchar→int join on ed.TenderNo
+                    where += " AND ed.SupId IN (SELECT supplier_id FROM purchase_order WHERE tender_id = @tenderId)";
                 }
 
                 var sql = $@"
                     SELECT ed.id, ed.SupId, s.name AS SupplierName,
-                           CASE WHEN ISNULL(t.tender_no, '') != '' THEN t.tender_no ELSE ed.OtherTenderNo END AS TenderNo,
-                           ISNULL(ed.EMDAmt, 0) AS EMDAmt, ISNULL(d.dtypename, 'EMD') AS EMDType,
+                           ISNULL(NULLIF(ed.OtherTenderNo, ''), ed.TenderNo) AS TenderNo,
+                           ISNULL(ed.EMDAmt, 0) AS EMDAmt,
                            ISNULL(ed.EMDDocumentNo, '') AS EMDDocumentNo, ISNULL(ed.EMDDocument, '') AS EMDDocument,
                            CONVERT(varchar, ed.EMDDepositeDt, 103) AS EMDDepositeDt,
                            CONVERT(varchar, ed.EntryDate, 103) AS EntryDate,
@@ -109,8 +110,6 @@ namespace EMISAPIS.Controllers
                     FROM EMDDepositeDetail ed
                     INNER JOIN massuppliers s ON s.supplier_id = ed.SupId
                     LEFT JOIN EMDFileMovement fm ON fm.FileID = ed.Id AND fm.SupplierID = ed.SupId
-                    LEFT JOIN tenders t ON (CAST(t.tender_id AS varchar(50)) = ed.TenderNo OR t.tender_no = ed.TenderNo)
-                    LEFT JOIN MASDOCUMENTTYPE d ON CAST(d.dtypeid AS varchar(50)) = CAST(ed.EMDType AS varchar(50))
                     {where}
                     ORDER BY ed.EntryDate DESC";
 
@@ -125,12 +124,12 @@ namespace EMISAPIS.Controllers
                     var app = dr["BMEApproval"]?.ToString() ?? "N";
                     list.Add(new EmdRefundPendingDto
                     {
-                        Id = Convert.ToInt32(dr["id"]),
-                        SupId = Convert.ToInt32(dr["SupId"]),
+                        Id = dr["id"] != DBNull.Value ? Convert.ToInt32(dr["id"]) : 0,
+                        SupId = dr["SupId"] != DBNull.Value ? Convert.ToInt32(dr["SupId"]) : 0,
                         SupplierName = dr["SupplierName"]?.ToString() ?? string.Empty,
                         TenderNo = dr["TenderNo"]?.ToString() ?? string.Empty,
                         EmdAmt = dr["EMDAmt"] != DBNull.Value ? Convert.ToDecimal(dr["EMDAmt"]) : 0,
-                        EmdType = dr["EMDType"]?.ToString() ?? string.Empty,
+                        EmdType = string.Empty,
                         EmdDocumentNo = dr["EMDDocumentNo"]?.ToString() ?? string.Empty,
                         EmdDocument = doc,
                         EmdDepositDate = dr["EMDDepositeDt"]?.ToString() ?? string.Empty,
@@ -234,7 +233,8 @@ namespace EMISAPIS.Controllers
                 using var conn = new SqlConnection(ConnStr());
                 await conn.OpenAsync();
 
-                var where = " WHERE 1=1";
+                // Only show unreleased SD records — matching legacy SDReleaseFInance.aspx behavior
+                var where = " WHERE (ps.isreleased IS NULL OR ps.isreleased != 'Y')";
                 if (supplierId > 0)
                 {
                     where += " AND ms.supplier_id = @supplierId";
@@ -245,7 +245,11 @@ namespace EMISAPIS.Controllers
                 }
 
                 var sql = $@"
-                    SELECT p.po_id, t.tender_no AS Tender_NO, ISNULL(p.outward_no + '/', '') + p.po_no AS PONO, 
+                    WITH MasSDVarchar AS (
+                        SELECT CAST(SDMode AS varchar(50)) AS sd_mode_str, SDNAME
+                        FROM MasSD
+                    )
+                    SELECT p.po_id, ISNULL(t.tender_no, '') AS Tender_NO, ISNULL(p.outward_no + '/', '') + ISNULL(p.po_no, '') AS PONO, 
                            CONVERT(varchar, ISNULL(p.soissueDT, p.po_date), 103) AS PO_Date,
                            ms.name AS Supplier_Name, ISNULL(ps.SDAmount, 0) AS SDAmount, ISNULL(msd.SDNAME, 'SD') AS SDType,
                            CONVERT(varchar, ps.IssueDT, 103) AS SDIssueDate,
@@ -254,7 +258,7 @@ namespace EMISAPIS.Controllers
                     FROM PO_SDDetails ps
                     INNER JOIN purchase_order p ON p.po_id = ps.po_id
                     INNER JOIN massuppliers ms ON ms.supplier_id = p.supplier_id
-                    LEFT JOIN MasSD msd ON CAST(msd.SDMode AS varchar(50)) = CAST(ps.SDMode AS varchar(50))
+                    LEFT JOIN MasSDVarchar msd ON (msd.sd_mode_str = ps.SDMode OR msd.SDNAME = ps.SDMode)
                     LEFT JOIN tenders t ON t.tender_id = p.tender_id
                     {where}
                     ORDER BY ps.entryDT DESC";
@@ -268,17 +272,17 @@ namespace EMISAPIS.Controllers
                 {
                     list.Add(new SdReleasePendingDto
                     {
-                        PoId = Convert.ToInt32(dr["po_id"]),
+                        PoId = dr["po_id"] != DBNull.Value ? Convert.ToInt32(dr["po_id"]) : 0,
                         TenderNo = dr["Tender_NO"]?.ToString() ?? string.Empty,
                         PoNo = dr["PONO"]?.ToString() ?? string.Empty,
                         PoDate = dr["PO_Date"]?.ToString() ?? string.Empty,
                         SupplierName = dr["Supplier_Name"]?.ToString() ?? string.Empty,
-                        SdAmount = Convert.ToDecimal(dr["SDAmount"]),
+                        SdAmount = dr["SDAmount"] != DBNull.Value ? Convert.ToDecimal(dr["SDAmount"]) : 0,
                         SdType = dr["SDType"]?.ToString() ?? string.Empty,
                         SdIssueDate = dr["SDIssueDate"]?.ToString() ?? string.Empty,
                         SdMaturityDate = dr["SDMaturityDate"]?.ToString() ?? string.Empty,
                         SdEntryDate = dr["SDEntryDate"]?.ToString() ?? string.Empty,
-                        SdDetailsId = Convert.ToInt32(dr["SDDetailsID"])
+                        SdDetailsId = dr["SDDetailsID"] != DBNull.Value ? Convert.ToInt32(dr["SDDetailsID"]) : 0
                     });
                 }
                 return Ok(list);
