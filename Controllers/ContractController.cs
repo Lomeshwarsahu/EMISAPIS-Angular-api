@@ -1635,6 +1635,9 @@ left outer join mascoverstatus s on s.csid=a.csid and  A.TENDER_NO LIKE @search"
                     query = @"SELECT A.TENDER_ID,A.TENDER_NO,
             Convert(varchar(10),A.TENDER_DATE,103) AS TENDER_DATE,
             A.TENDER_DESCRIPTION,
+            A.FLAG,A.financial_year_id,A.warranty_year,A.import_days,A.domestic_days,
+            Convert(varchar(10),A.cover_a,103) AS cover_a,Convert(varchar(10),A.cover_b,103) AS cover_b,
+            Convert(varchar(10),A.cover_Demo,103) AS cover_Demo,Convert(varchar(10),A.cover_c,103) AS cover_c,
             s.cStatus,s.csid,
             isnull(t.totali,0) as totali,
             isnull(fnd.found,0) as found,
@@ -1652,13 +1655,13 @@ left outer join mascoverstatus s on s.csid=a.csid and  A.TENDER_NO LIKE @search"
             LEFT JOIN (select COUNT(*) reject,tender_id from tender_items where rejectdate is not null group by tender_id) r on r.tender_id=A.tender_id
             WHERE 1=1";
 
-                    if (!string.IsNullOrEmpty(yearId))
+                    if (!string.IsNullOrEmpty(yearId) && yearId != "undefined")
                     {
                         query += " AND A.financial_year_id = @yearId";
                         cmd.Parameters.AddWithValue("@yearId", yearId);
                     }
 
-                    if (!string.IsNullOrEmpty(status))
+                    if (!string.IsNullOrEmpty(status) && status != "undefined")
                     {
                         query += " AND s.csid = @status";
                         cmd.Parameters.AddWithValue("@status", status);
