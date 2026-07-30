@@ -197,6 +197,7 @@ namespace EMISAPIS.DTOS
         public string? ItemCode { get; set; }
         public string? ItemName { get; set; }
         public string? OutwardNo { get; set; }
+        public string? PoNo { get; set; }
         public string? PoDate { get; set; }
         public decimal? Quantity { get; set; }
         public decimal? BasicRate { get; set; }
@@ -210,6 +211,34 @@ namespace EMISAPIS.DTOS
         public string? Status { get; set; }
         public string? Remarks { get; set; }
         public string? DistrictName { get; set; }
+    }
+
+    public class POSummaryPOWiseDetailDTO
+    {
+        public string? PoNo { get; set; }
+        public string? PoDate { get; set; }
+        public string? ItemName { get; set; }
+        public decimal? Quantity { get; set; }
+        public decimal? BasicRate { get; set; }
+        public decimal? Percentage { get; set; }
+        public decimal? TotalPOValue { get; set; }
+        public string? SupplierName { get; set; }
+        public string? TenderNo { get; set; }
+    }
+
+    public class POSummaryReagentDetailDTO
+    {
+        public string? ItemName { get; set; }
+        public string? LocationName { get; set; }
+        public string? PoDate { get; set; }
+        public decimal? Quantity { get; set; }
+        public decimal? BasicRate { get; set; }
+        public decimal? Percentage { get; set; }
+        public decimal? SingleUnitPrice { get; set; }
+        public decimal? TotalPOValue { get; set; }
+        public string? SupplierName { get; set; }
+        public string? TenderNo { get; set; }
+        public string? PoNo { get; set; }
     }
 
     public class POSummaryConsigneeHODTO
@@ -436,5 +465,117 @@ namespace EMISAPIS.DTOS
         public string? WarrantyUpto { get; set; }
         public string? MakeSerialNo { get; set; }
         public string? EntryType { get; set; }
+    }
+
+    public class PaymentsCPReportDTO
+    {
+        public string? Supplier { get; set; }
+        public int? NoOfPOs { get; set; }
+        public decimal? SupplierChequeAmount { get; set; }
+        public decimal? AdminCharges { get; set; }
+        public decimal? TotalChequeAmount { get; set; }
+        public string? ChequeNo { get; set; }
+        public string? Budget { get; set; }
+        public string? ChequeDate { get; set; }
+        public string? BankLetterDate { get; set; }
+    }
+
+    public class POReceiptSummaryDTO
+    {
+        public string? TenderNo { get; set; }
+        public string? PoNo { get; set; }
+        public string? PoDate { get; set; }
+        public string? ItemCode { get; set; }
+        public string? ItemName { get; set; }
+        public string? SupplierName { get; set; }
+        public decimal? PoQty { get; set; }
+        public decimal? SupplyQty { get; set; }
+        public decimal? ReceiptQty { get; set; }
+        public decimal? InstallQty { get; set; }
+        public int? CancellationDays { get; set; }
+        public string? ReceivedDate { get; set; }
+        public int? DaysTakenToReceive { get; set; }
+        public string? LastDateToReceive { get; set; }
+    }
+
+    public class BalanceStatusSupplierDTO : BalanceDTO
+    {
+        public string? Authority { get; set; }
+    }
+
+    public class EmdRefundReportDTO
+    {
+        public string? tender_no { get; set; }
+        public decimal? requested_emd { get; set; }
+        public string? emd_deposit_dt { get; set; }
+        public decimal? refunded_emd { get; set; }
+        public string? cheque_no { get; set; }
+        public string? cheque_date { get; set; }
+        public decimal? previous_refunded_amt { get; set; }
+        public string? backlog_cheque_no { get; set; }
+        public string? backlog_cheque_dt { get; set; }
+    }
+
+    public class POPaidReportDTO
+    {
+        public string? po_no { get; set; }
+        public string? po_date { get; set; }
+        public string? supplier { get; set; }
+        public decimal? gross_amount { get; set; }
+        public decimal? total_deduction { get; set; }
+        public decimal? total_addition { get; set; }
+        public decimal? supplier_cheque_amount { get; set; }
+        public decimal? admin_charges { get; set; }
+        public decimal? total_cheque_amount { get; set; }
+        public string? cheque_date { get; set; }
+        public string? cheque_no { get; set; }
+        public string? budget { get; set; }
+        public string? payment_type { get; set; }
+    }
+
+    public class PaymentReportDTO
+    {
+        public string? po_no { get; set; }
+        public string? po_date { get; set; }
+        public string? supplier { get; set; }
+        public decimal? gross_amount { get; set; }
+        public decimal? total_deduction { get; set; }
+        public decimal? total_addition { get; set; }
+        public decimal? cheque_amount { get; set; }
+        public string? cheque_date { get; set; }
+        public string? cheque_no { get; set; }
+    }
+
+    public class TenderStatusReportDTO
+    {
+        public string? tender_no { get; set; }
+        public string? tender_date { get; set; }
+        public int? no_of_items { get; set; }
+        public string? cover_a_entry { get; set; }
+        public string? cover_b_entry { get; set; }
+        public string? cover_demo { get; set; }
+        public string? cover_c { get; set; }
+        public string? tender_status { get; set; }
+        public int? price_not_found { get; set; }
+        public int? price_found { get; set; }
+        public string? price_entry { get; set; }
+        public string? accept_reject { get; set; }
+        public string? tender_description { get; set; }
+    }
+
+    public class ComplainReportDTO
+    {
+        public string? complaint_no { get; set; }
+        public string? item_code_as_per_tender { get; set; }
+        public string? item_name { get; set; }
+        public string? serial_no { get; set; }
+        public string? complaint_date { get; set; }
+        public string? not_function_date { get; set; }
+        public string? district { get; set; }
+        public string? department_name { get; set; }
+        public string? complaint_details { get; set; }
+        public string? supplier { get; set; }
+        public string? email_id { get; set; }
+        public string? mobile_no { get; set; }
     }
 }
