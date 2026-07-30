@@ -493,7 +493,182 @@ namespace EMISAPIS.Controllers
             }
         }
 
+        [HttpGet("GetParticipatedItems")]
+        public async Task<IActionResult> GetParticipatedItems([FromQuery] string tenderid, [FromQuery] string schemestatusid)
+        {
+            if (string.IsNullOrEmpty(tenderid) || string.IsNullOrEmpty(schemestatusid))
+            {
+                return BadRequest(new { message = "Please provide both tenderid and schemestatusid." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            List<ParticipatedItemDto> participatedItemsList = new List<ParticipatedItemDto>();
+
+            string sqlQuery = @"
+                SELECT 
+                    sc.ChildID,
+                    m.item_code_as_per_tender,
+                    m.item_name,
+                    sc.itemid,
+                    sc.FLAGCOB,
+                    s.ISELIGIBLE_B,
+                    sc.SCHSTATUSDID,
+                    s.SCHEMEID,
+                    s.SUPPLIERID,
+                    sp.name,
+                    sc.RemarksA,
+                    sc.DemoRemarksID 
+                FROM masschemesstatusdetails s WITH (NOLOCK)
+                INNER JOIN schemestatusdetailschild sc WITH (NOLOCK) ON sc.SCHSTATUSDID = s.SCHSTATUSDID
+                INNER JOIN masitems m WITH (NOLOCK) ON m.item_id = sc.itemid
+                INNER JOIN massuppliers sp WITH (NOLOCK) ON sp.supplier_id = s.SUPPLIERID
+                WHERE 1 = 1 
+                  AND s.SCHEMEID = @TenderId 
+                  AND sc.SCHSTATUSDID = @SchemeStatusDid";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        // SQL Injection से बचने के लिए Parameterized Query
+                        cmd.Parameters.AddWithValue("@TenderId", Convert.ToInt32(tenderid));
+                        cmd.Parameters.AddWithValue("@SchemeStatusDid", Convert.ToInt32(schemestatusid));
+
+                        await conn.OpenAsync();
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                participatedItemsList.Add(new ParticipatedItemDto
+                                {
+                                    ChildId = reader["ChildID"] != DBNull.Value ? Convert.ToInt32(reader["ChildID"]) : 0,
+                                    ItemCodeAsPerTender = reader["item_code_as_per_tender"]?.ToString() ?? string.Empty,
+                                    ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                                    ItemId = reader["itemid"] != DBNull.Value ? Convert.ToInt32(reader["itemid"]) : 0,
+                                    FlagCob = reader["FLAGCOB"]?.ToString() ?? string.Empty,
+                                    IsEligibleB = reader["ISELIGIBLE_B"]?.ToString() ?? string.Empty,
+                                    SchStatusDid = reader["SCHSTATUSDID"] != DBNull.Value ? Convert.ToInt32(reader["SCHSTATUSDID"]) : 0,
+                                    SchemeId = reader["SCHEMEID"] != DBNull.Value ? Convert.ToInt32(reader["SCHEMEID"]) : 0,
+                                    SupplierId = reader["SUPPLIERID"] != DBNull.Value ? Convert.ToInt32(reader["SUPPLIERID"]) : 0,
+                                    Name = reader["name"]?.ToString() ?? string.Empty,
+                                    RemarksA = reader["RemarksA"]?.ToString() ?? string.Empty,
+                                    DemoRemarksId = reader["DemoRemarksID"] != DBNull.Value ? Convert.ToInt32(reader["DemoRemarksID"]) : 0
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if (participatedItemsList.Count > 0)
+                {
+                    return Ok(participatedItemsList);
+                }
+                else
+                {
+                    return NotFound(new { message = "No participated items found for the given criteria." });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching participated items.", error = ex.Message });
+            }
+        }
+
+
+        [HttpPost("UpdateParticipatedItems")]
+        public async Task<IActionResult> UpdateParticipatedItems([FromBody] UpdateParticipatedItemsRequestDto model)
+        {
+            if (model == null || model.Items == null || model.Items.Count == 0)
+            {
+                return BadRequest(new { message = "No items provided for update." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            int cnElig = 0;
+            int cnNElig = 0;
+            bool value = false;
+
+            // 1. Validation Logic (समान लॉजिक जो आपके वेबफोर्म्स में था)
+            foreach (var item in model.Items)
+            {
+                bool isChecked = item.IsChecked;
+                string reason = item.RemarksA?.Trim() ?? string.Empty;
+
+                if (isChecked && string.IsNullOrEmpty(reason))
+                {
+                    value = true; // अगर चेकबॉक्स टिक है पर रीज़न खाली है
+                }
+                else if (!isChecked && string.IsNullOrEmpty(reason))
+                {
+                    value = true; // यदि टिक नहीं है और रीज़न खाली है
+                }
+            }
+
+            // यदि वैलिडेशन फेल होता है (Remarks missing)
+            if (value)
+            {
+                return BadRequest(new { status = "ValidationError", message = "Remarks for Items Not Eligibility is required" });
+            }
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    await conn.OpenAsync();
+
+                    // 2. Database Update Loop
+                    foreach (var item in model.Items)
+                    {
+                        string status = item.IsChecked ? "Y" : "N";
+                        if (item.IsChecked) cnElig++; else cnNElig++;
+
+                        string updateQuery = @"
+                            UPDATE schemestatusdetailschild 
+                            SET FLAGCOB = @Status, RemarksA = @RemarksA 
+                            WHERE SCHSTATUSDID = @SchStatusDid 
+                              AND ChildID = @ChildId 
+                              AND itemid = @ItemId";
+
+                        using (SqlCommand cmd = new SqlCommand(updateQuery, conn))
+                        {
+                            cmd.Parameters.AddWithValue("@Status", status);
+                            cmd.Parameters.AddWithValue("@RemarksA", (object)item.RemarksA ?? DBNull.Value);
+                            cmd.Parameters.AddWithValue("@SchStatusDid", item.SchStatusDid);
+                            cmd.Parameters.AddWithValue("@ChildId", item.ChildId);
+                            cmd.Parameters.AddWithValue("@ItemId", item.ItemId);
+
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                    }
+                }
+
+                if (cnElig + cnNElig > 0)
+                {
+                    return Ok(new
+                    {
+                        status = "Success",
+                        message = $"{cnElig} nos Items Eligible and {cnNElig} nos Items Not Eligible",
+                        eligibleCount = cnElig,
+                        notEligibleCount = cnNElig
+                    });
+                }
+                else
+                {
+                    return BadRequest(new { status = "Failed", message = "Not Saved Successfully" });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error updating items.", error = ex.Message });
+            }
+        }
+
 
 
     }
+
+
 }

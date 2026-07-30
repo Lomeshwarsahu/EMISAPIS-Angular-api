@@ -105,4 +105,33 @@
         public string FinalCovrARemarks { get; set; }
         public string IsEligibleB { get; set; }
     }
+    public class ParticipatedItemDto
+    {
+        public int ChildId { get; set; }
+        public string ItemCodeAsPerTender { get; set; }
+        public string ItemName { get; set; }
+        public int ItemId { get; set; }
+        public string FlagCob { get; set; }
+        public string IsEligibleB { get; set; }
+        public int SchStatusDid { get; set; }
+        public int SchemeId { get; set; }
+        public int SupplierId { get; set; }
+        public string Name { get; set; }
+        public string RemarksA { get; set; }
+        public int DemoRemarksId { get; set; }
+    }
+    public class UpdateItemModel
+    {
+        public int SchStatusDid { get; set; }
+        public int ChildId { get; set; }
+        public int ItemId { get; set; }
+        public bool IsChecked { get; set; }
+        public string RemarksA { get; set; }
+    }
+
+    public class UpdateParticipatedItemsRequestDto
+    {
+        public List<UpdateItemModel> Items { get; set; }
+    }
+
 }
