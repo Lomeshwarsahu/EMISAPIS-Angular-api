@@ -290,7 +290,7 @@ WHERE user_name = @Username
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
 
-            string query = @"SELECT user_name, user_id, password, passcommon, user_type, roleid, e_mail_id 
+            string query = @"SELECT user_name, user_id, password, passcommon, user_type, roleid, e_mail_id, ISNULL(flagPwdChange, 'N') AS flagPwdChange 
                      FROM dbo.Users WHERE ";
 
             if (!string.IsNullOrEmpty(loginUser.EMAIL) && loginUser.EMAIL.ToUpper() == "EMAIL")
@@ -320,6 +320,7 @@ WHERE user_name = @Username
             string roleid = reader["roleid"]?.ToString();
             string user_id = reader["user_id"]?.ToString();
             string email_id = reader["e_mail_id"]?.ToString(); 
+            string flagPwdChange = reader["flagPwdChange"]?.ToString() ?? "N";
 
             string role = reader["user_type"] != DBNull.Value
                             ? reader["user_type"].ToString()
@@ -386,6 +387,7 @@ WHERE user_name = @Username
                 user_type = role,
                 email = email_id,
                 con_id = conId,
+                flagPwdChange = flagPwdChange,
                 token = new JwtSecurityTokenHandler().WriteToken(token),
                 message = "Login Successful"
             });

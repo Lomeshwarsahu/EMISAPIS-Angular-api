@@ -1332,6 +1332,164 @@ WHERE indentid = @IndentId AND user_id = @UserId AND directorate_id = 12";
             }
         }
 
+        /// <summary>ChangePasswordForcefully.aspx setfields — store officer mobile/email/name.</summary>
+        [HttpGet("change-password/contact")]
+        public async Task<IActionResult> GetChangePasswordContact([FromQuery] int userId)
+        {
+            if (userId <= 0)
+                return BadRequest(new { message = "Invalid user id." });
+
+            const string sql = @"
+SELECT user_id, user_name,
+       ISNULL(emailID, '') AS emailID,
+       ISNULL(storeOfficerMob, '') AS storeOfficerMob
+FROM dbo.users WHERE user_id = @UserId";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "User not found." });
+
+                return Ok(new ChangePasswordContactDto
+                {
+                    UserId = userId,
+                    UserName = reader["user_name"]?.ToString()?.Trim() ?? string.Empty,
+                    Email = reader["emailID"]?.ToString()?.Trim() ?? string.Empty,
+                    Mobile = reader["storeOfficerMob"]?.ToString()?.Trim() ?? string.Empty,
+                });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading user contact.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>ChangePasswordForcefully.aspx lnkBtnSendOTP — store OTP + send SMS/email.</summary>
+        [HttpPost("change-password/send-otp")]
+        public async Task<IActionResult> SendChangePasswordOtp([FromBody] ChangePasswordSendOtpRequest req)
+        {
+            if (req == null || req.UserId <= 0)
+                return BadRequest(new { message = "userId is required." });
+
+            var mobile = (req.Mobile ?? string.Empty).Trim();
+            var email = (req.Email ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(mobile))
+                return BadRequest(new { message = "Please Provide Mobile Number." });
+            if (string.IsNullOrWhiteSpace(email))
+                return BadRequest(new { message = "Please Provide Email Id." });
+
+            try
+            {
+                var otp = Random.Shared.Next(1000, 9999).ToString();
+
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                await using (var updateCmd = new SqlCommand(
+                    "UPDATE dbo.users SET pwdChangeOTP = @Otp, emailID = @Email, storeOfficerMob = @Mobile WHERE user_id = @UserId", conn))
+                {
+                    updateCmd.Parameters.AddWithValue("@Otp", otp);
+                    updateCmd.Parameters.AddWithValue("@Email", email);
+                    updateCmd.Parameters.AddWithValue("@Mobile", mobile);
+                    updateCmd.Parameters.AddWithValue("@UserId", req.UserId);
+                    if (await updateCmd.ExecuteNonQueryAsync() == 0)
+                        return NotFound(new { message = "User not found." });
+                }
+
+                var smsContent = _otpSms.BuildMessage(otp);
+                var templateId = _otpSms.Options.Templates?.SupplierAuth ?? "1407163911599431374";
+                var (sent, detail) = await _otpSms.TrySendOtpAsync(mobile, otp, templateId);
+                if (!sent && _otpSms.Options.Enabled)
+                {
+                    return StatusCode(502, new
+                    {
+                        message = "OTP saved but SMS gateway failed. Please retry or check OtpSms settings.",
+                        detail,
+                    });
+                }
+
+                return Ok(new { message = "OTP is sent to Your Mobile Number." });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Failed to send OTP.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>ChangePasswordForcefully.aspx btnChange — verify OTP and update password.</summary>
+        [HttpPost("change-password/update")]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest req)
+        {
+            if (req == null || req.UserId <= 0)
+                return BadRequest(new { message = "Invalid user." });
+
+            var otp = (req.OTP ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(otp))
+                return BadRequest(new { message = "Please Provide OTP." });
+
+            var newPassword = req.NewPassword ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(newPassword) || newPassword != (req.ConfirmPassword ?? string.Empty))
+                return BadRequest(new { message = "Password confirmation does not match." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                string storedOtp;
+                await using (var otpCmd = new SqlCommand(
+                    "SELECT ISNULL(CAST(pwdChangeOTP AS VARCHAR(20)), '') FROM dbo.users WHERE user_id = @UserId", conn))
+                {
+                    otpCmd.Parameters.AddWithValue("@UserId", req.UserId);
+                    storedOtp = (await otpCmd.ExecuteScalarAsync())?.ToString()?.Trim() ?? string.Empty;
+                }
+
+                if (string.IsNullOrWhiteSpace(storedOtp))
+                    return BadRequest(new { message = "Please Send the OTP first." });
+                if (!string.Equals(storedOtp, otp, StringComparison.Ordinal))
+                    return BadRequest(new { message = "The OTP you entered is invalid. Please enter the correct OTP." });
+
+                var storedPassword = SaltedHash.CreateStored(newPassword);
+                await using (var updateCmd = new SqlCommand(
+                    @"UPDATE dbo.users
+                      SET password = @Password, passcommon = @Password, flagPwdChange = 'Y', lastPwdChangeDate = GETDATE()
+                      WHERE user_id = @UserId", conn))
+                {
+                    updateCmd.Parameters.AddWithValue("@Password", storedPassword);
+                    updateCmd.Parameters.AddWithValue("@UserId", req.UserId);
+                    if (await updateCmd.ExecuteNonQueryAsync() == 0)
+                        return NotFound(new { message = "User not found." });
+                }
+
+                var reason = string.IsNullOrWhiteSpace(req.Reason) ? "Password Change By User After Login" : req.Reason.Trim();
+                try
+                {
+                    await using var logCmd = new SqlCommand(
+                        @"INSERT INTO dbo.smslog(mobno, sms, entrydate, module, reason)
+                          VALUES(@Mob, @Sms, GETDATE(), 'FAC', @Reason)", conn);
+                    logCmd.Parameters.AddWithValue("@Mob", (req.Mobile ?? string.Empty).Trim());
+                    logCmd.Parameters.AddWithValue("@Sms", $"Password changed for user {req.UserId}.");
+                    logCmd.Parameters.AddWithValue("@Reason", reason);
+                    await logCmd.ExecuteNonQueryAsync();
+                }
+                catch
+                {
+                    // smslog schema may differ; password already updated.
+                }
+
+                return Ok(new { message = "Your password has been successfully changed. Please login with new password." });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Password not saved.", detail = ex.Message });
+            }
+        }
+
         private static async Task<bool> FacilityIndentBelongsToUserAsync(SqlConnection conn, int indentId, int userId)
         {
             const string sql = @"
@@ -2966,6 +3124,828 @@ GROUP BY re.receipt_id, d.Issue_id, dispatch_date, Tentative_Sdate, d.status, di
             }
 
             return list;
+        }
+
+        /// <summary>MasFileNo.aspx — financial year options for outward-no search.</summary>
+        [HttpGet("file-no-years")]
+        public async Task<IActionResult> GetFileNoYears()
+        {
+            const string sql = @"SELECT financial_year_id, year FROM dbo.mas_financial_year ORDER BY OrderDP DESC";
+            var list = new List<KeyValuePair<int, string>>();
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new KeyValuePair<int, string>(
+                        Convert.ToInt32(reader["financial_year_id"]),
+                        reader["year"]?.ToString() ?? string.Empty));
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading financial years.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>MasFileNo.aspx — search PO by PO number or outward no + financial year.</summary>
+        [HttpGet("file-no-search")]
+        public async Task<IActionResult> SearchFileNo(
+            [FromQuery] string? poNo = null,
+            [FromQuery] string? outwardNo = null,
+            [FromQuery] int? financialYearId = null)
+        {
+            string whereClause;
+            if (!string.IsNullOrWhiteSpace(poNo))
+            {
+                whereClause = $"so.po_no LIKE '%{poNo.Trim().Replace("'", "''")}%'";
+            }
+            else if (!string.IsNullOrWhiteSpace(outwardNo) && financialYearId.HasValue && financialYearId.Value > 0)
+            {
+                whereClause = $"so.financial_year_id = '{financialYearId.Value}' AND so.outward_no = '{outwardNo.Trim().Replace("'", "''")}'";
+            }
+            else
+            {
+                return BadRequest(new { message = "Provide PO number or outward number with financial year." });
+            }
+
+            var sql = $@"
+SELECT DISTINCT so.po_id AS ponoid, so.po_no AS pono, CONVERT(VARCHAR, so.po_date, 103) AS PODT,
+mc.tender_no AS schemecode, m.item_code_as_per_tender AS itemcode,
+s.name AS suppliername, s.supplier_id AS supplierid, ISNULL(so.fileNo, '-') AS fileNo,
+CONVERT(VARCHAR, so.fileDT, 103) AS fileDT
+FROM purchase_order so
+INNER JOIN po_items OI ON oi.po_id = so.po_id
+INNER JOIN masitems m ON m.item_id = oi.item_id
+INNER JOIN tenders mc ON mc.tender_id = so.tender_id
+INNER JOIN massuppliers s ON s.supplier_id = so.supplier_id
+WHERE so.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled') AND {whereClause}";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                var list = new List<MasFileNoRowDto>();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(ReadMasFileNoRow(reader));
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error searching PO for file number.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>MasFileNo.aspx — POs that already have a file number.</summary>
+        [HttpGet("file-no-list")]
+        public async Task<IActionResult> GetFileNoList()
+        {
+            const string sql = @"
+SELECT DISTINCT so.po_id AS ponoid, so.po_no AS pono, CONVERT(VARCHAR, so.po_date, 103) AS PODT,
+mc.tender_no AS schemecode, m.item_code_as_per_tender AS itemcode,
+s.name AS suppliername, s.supplier_id AS supplierid, ISNULL(so.fileNo, '-') AS fileNo,
+CONVERT(VARCHAR, so.fileDT, 103) AS fileDT
+FROM purchase_order so
+INNER JOIN po_items OI ON oi.po_id = so.po_id
+INNER JOIN masitems m ON m.item_id = oi.item_id
+INNER JOIN tenders mc ON mc.tender_id = so.tender_id
+INNER JOIN massuppliers s ON s.supplier_id = so.supplier_id
+WHERE so.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled') AND so.fileNo IS NOT NULL";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                var list = new List<MasFileNoRowDto>();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(ReadMasFileNoRow(reader));
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading file number list.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>MasFileNo.aspx — save generated file number for a PO.</summary>
+        [HttpPost("file-no-save")]
+        public async Task<IActionResult> SaveFileNo([FromBody] MasFileNoSaveRequest request)
+        {
+            if (request.PoId <= 0)
+                return BadRequest(new { message = "poId is required." });
+            if (string.IsNullOrWhiteSpace(request.FileNo))
+                return BadRequest(new { message = "Please Enter File No" });
+            if (!DateTime.TryParse(request.FileDt, out DateTime fileDt))
+                return BadRequest(new { message = "Please enter a valid file creation date." });
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                const string sql = @"UPDATE purchase_order SET fileNo = @FileNo, fileDT = @FileDt, FileEntryDT = GETDATE() WHERE po_id = @PoId";
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@FileNo", request.FileNo.Trim());
+                cmd.Parameters.AddWithValue("@FileDt", fileDt.Date);
+                cmd.Parameters.AddWithValue("@PoId", request.PoId);
+                await cmd.ExecuteNonQueryAsync();
+                return Ok(new { message = "Generated Successfully" });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error saving file number.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>PORealloaction.aspx — header summary for a PO (by PoNoID).</summary>
+        [HttpGet("po-reallocation/header")]
+        public async Task<IActionResult> GetPoReallocationHeader([FromQuery] int poId)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+
+            const string sql = @"
+SELECT p.po_id, m.item_name, m.item_code_as_per_tender AS itemcode,
+       CONVERT(VARCHAR, p.po_date, 103) AS po_date, s.name AS SupplierName,
+       SUM(pi.quantity) AS poqty, dir.facility_aut_name, dir.facility_aut_id
+FROM purchase_order p
+INNER JOIN po_items pi ON pi.po_id = p.po_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+INNER JOIN massuppliers s ON s.supplier_id = p.supplier_id
+INNER JOIN facility_aut dir ON dir.facility_aut_id = p.directorate_id
+WHERE p.po_id = @PoId
+GROUP BY p.po_id, m.item_name, m.item_code_as_per_tender, p.po_date, s.name,
+         dir.facility_aut_name, dir.facility_aut_id";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@PoId", poId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "PO not found." });
+
+                return Ok(new PoReallocationHeaderDto
+                {
+                    PoId = poId,
+                    ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                    ItemCode = reader["itemcode"]?.ToString() ?? string.Empty,
+                    PoNo = reader["po_no"]?.ToString() ?? string.Empty,
+                    PoDate = reader["po_date"]?.ToString() ?? string.Empty,
+                    SupplierName = reader["SupplierName"]?.ToString() ?? string.Empty,
+                    TotalPoQty = reader["poqty"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["poqty"]),
+                    DirectorateName = reader["facility_aut_name"]?.ToString() ?? string.Empty,
+                    DirectorateId = reader["facility_aut_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["facility_aut_id"]),
+                });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading PO reallocation header.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>PORealloaction.aspx — consignee rows for the grid.</summary>
+        [HttpGet("po-reallocation/rows")]
+        public async Task<IActionResult> GetPoReallocationRows([FromQuery] int poId)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+
+            const string sql = @"
+SELECT p.po_id, p.po_item_id, p.consignee_id, p.indent_item_id, p.indent_id,
+       p.INDENT_CONSOLIDATION_ID, l.location_name, p.quantity,
+       ISNULL(sd.Issue_id, 0) AS Issue_id, ISNULL(ld.location_name, '') AS DLocation,
+       ISNULL(r.receipt_id, 0) AS receipt_id, ISNULL(lr.location_name, '') AS Rlocation
+FROM po_items p
+INNER JOIN maslocations l ON l.location_id = p.consignee_id
+LEFT OUTER JOIN SupplierDispatch sd ON sd.po_id = p.po_id AND sd.location_id = p.consignee_id
+LEFT OUTER JOIN maslocations ld ON ld.location_id = sd.location_id
+LEFT OUTER JOIN receipts r ON r.po_id = p.po_id AND r.location_id = p.consignee_id AND r.issue_id = sd.Issue_id
+LEFT OUTER JOIN maslocations lr ON lr.location_id = r.location_id
+WHERE p.po_id = @PoId";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@PoId", poId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                var list = new List<PoReallocationRowDto>();
+                while (await reader.ReadAsync())
+                {
+                    int receiptId = reader["receipt_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["receipt_id"]);
+                    list.Add(new PoReallocationRowDto
+                    {
+                        PoId = reader["po_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_id"]),
+                        PoItemId = reader["po_item_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_item_id"]),
+                        ConsigneeId = reader["consignee_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["consignee_id"]),
+                        IndentItemId = reader["indent_item_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["indent_item_id"]),
+                        IndentId = reader["indent_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["indent_id"]),
+                        IndentConsolidationId = reader["INDENT_CONSOLIDATION_ID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["INDENT_CONSOLIDATION_ID"]),
+                        LocationName = reader["location_name"]?.ToString() ?? string.Empty,
+                        Quantity = reader["quantity"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["quantity"]),
+                        IssueId = reader["Issue_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["Issue_id"]),
+                        DLocation = reader["DLocation"]?.ToString() ?? string.Empty,
+                        ReceiptId = receiptId,
+                        RLocation = reader["Rlocation"]?.ToString() ?? string.Empty,
+                        CanReallocate = receiptId == 0,
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading PO reallocation rows.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>PORealloaction.aspx — district dropdown options.</summary>
+        [HttpGet("po-reallocation/districts")]
+        public async Task<IActionResult> GetDistricts()
+        {
+            const string sql = @"SELECT DP_DistrictID, DBStart_Name_En FROM Districts ORDER BY DBStart_Name_En";
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                var list = new List<DistrictOptionDto>();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new DistrictOptionDto
+                    {
+                        DistrictId = reader["DP_DistrictID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["DP_DistrictID"]),
+                        DistrictName = reader["DBStart_Name_En"]?.ToString() ?? string.Empty,
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading districts.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>PORealloaction.aspx — locations for a district within a directorate.</summary>
+        [HttpGet("po-reallocation/locations")]
+        public async Task<IActionResult> GetLocationsByDistrict([FromQuery] int districtId, [FromQuery] int authorityId)
+        {
+            if (districtId <= 0)
+                return BadRequest(new { message = "districtId is required." });
+
+            const string sql = @"
+SELECT location_id, location_name FROM maslocations
+WHERE DP_DistrictID = @DistrictId AND (@AuthorityId = 0 OR authority = @AuthorityId)
+ORDER BY location_name";
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@DistrictId", districtId);
+                cmd.Parameters.AddWithValue("@AuthorityId", authorityId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                var list = new List<LocationOptionDto>();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new LocationOptionDto
+                    {
+                        LocationId = reader["location_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["location_id"]),
+                        LocationName = reader["location_name"]?.ToString() ?? string.Empty,
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading locations.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>PORealloaction.aspx — reallocation history grid.</summary>
+        [HttpGet("po-reallocation/history")]
+        public async Task<IActionResult> GetPoReallocationHistory([FromQuery] int poId)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+
+            const string sql = @"
+SELECT p.po_no, oldl.location_name AS oldLocation, upL.location_name AS newLocation,
+       CONVERT(VARCHAR, pa.entryDT, 103) AS entryDT, pa.remark, '.pdf' AS ext,
+       pa.doc_id AS extensionId, pa.doc_id AS path
+FROM PO_Reallocation pa
+INNER JOIN purchase_order p ON p.po_id = pa.po_id
+INNER JOIN maslocations oldl ON oldl.location_id = pa.PrevLocationid
+INNER JOIN maslocations upL ON upL.location_id = pa.UpLocationid
+WHERE p.po_id = @PoId AND pa.UpdateCat = 'Reallocation'
+ORDER BY pa.entryDT DESC";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@PoId", poId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                var list = new List<PoReallocationHistoryRowDto>();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new PoReallocationHistoryRowDto
+                    {
+                        PoNo = reader["po_no"]?.ToString() ?? string.Empty,
+                        OldLocation = reader["oldLocation"]?.ToString() ?? string.Empty,
+                        NewLocation = reader["newLocation"]?.ToString() ?? string.Empty,
+                        Remark = reader["remark"]?.ToString() ?? string.Empty,
+                        EntryDate = reader["entryDT"]?.ToString() ?? string.Empty,
+                        ExtensionId = reader["extensionId"] == DBNull.Value ? 0 : Convert.ToInt32(reader["extensionId"]),
+                        Path = reader["path"]?.ToString() ?? string.Empty,
+                        Ext = reader["ext"]?.ToString() ?? string.Empty,
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading reallocation history.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>PORealloaction.aspx BtnReallocate_Click — apply reallocation for checked rows + store approval PDF.</summary>
+        [HttpPost("po-reallocation")]
+        public async Task<IActionResult> SavePoReallocation(
+            [FromForm] int poId,
+            [FromForm] string remark,
+            [FromForm] string items,
+            [FromForm] IFormFile? file)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+            if (string.IsNullOrWhiteSpace(items))
+                return BadRequest(new { message = "Select at least one row." });
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Upload Approval Notesheet/Letter in PDF Format." });
+            if (!string.Equals(Path.GetExtension(file.FileName), ".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Please upload pdf file only." });
+
+            List<PoReallocationSaveItemDto>? parsedItems;
+            try
+            {
+                parsedItems = System.Text.Json.JsonSerializer.Deserialize<List<PoReallocationSaveItemDto>>(items);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return BadRequest(new { message = "Invalid items payload." });
+            }
+
+            if (parsedItems == null || parsedItems.Count == 0)
+                return BadRequest(new { message = "No Checkbox is selected." });
+
+            foreach (var item in parsedItems)
+            {
+                if (item.NewLocationId <= 0)
+                    return BadRequest(new { message = "Please Select Location." });
+            }
+
+            try
+            {
+                byte[] fileBytes;
+                await using (var ms = new MemoryStream())
+                {
+                    await file.CopyToAsync(ms);
+                    fileBytes = ms.ToArray();
+                }
+
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                foreach (var item in parsedItems)
+                {
+                    // Update indent facility
+                    const string updateIndent = @"
+UPDATE indent SET facility_id = @NewLocationId
+WHERE facility_id = @ConsigneeId AND indent_id = @IndentId AND indent_consolidation_id = @IndentConsolidationId";
+                    await using (var cmd = new SqlCommand(updateIndent, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@NewLocationId", item.NewLocationId);
+                        cmd.Parameters.AddWithValue("@ConsigneeId", item.ConsigneeId);
+                        cmd.Parameters.AddWithValue("@IndentId", item.IndentId);
+                        cmd.Parameters.AddWithValue("@IndentConsolidationId", item.IndentConsolidationId);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+
+                    // Update supplier dispatch (only when a dispatch exists)
+                    if (item.IssueId != 0)
+                    {
+                        const string updateDispatch = @"
+UPDATE SupplierDispatch SET location_id = @NewLocationId
+WHERE location_id = @ConsigneeId AND po_id = @PoId AND Issue_id = @IssueId";
+                        await using (var cmd = new SqlCommand(updateDispatch, conn))
+                        {
+                            cmd.Parameters.AddWithValue("@NewLocationId", item.NewLocationId);
+                            cmd.Parameters.AddWithValue("@ConsigneeId", item.ConsigneeId);
+                            cmd.Parameters.AddWithValue("@PoId", item.PoId);
+                            cmd.Parameters.AddWithValue("@IssueId", item.IssueId);
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                    }
+
+                    // Update PO items consignee
+                    const string updatePoItems = @"
+UPDATE po_items SET consignee_id = @NewLocationId
+WHERE consignee_id = @ConsigneeId AND po_id = @PoId AND po_item_id = @PoItemId";
+                    await using (var cmd = new SqlCommand(updatePoItems, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@NewLocationId", item.NewLocationId);
+                        cmd.Parameters.AddWithValue("@ConsigneeId", item.ConsigneeId);
+                        cmd.Parameters.AddWithValue("@PoId", item.PoId);
+                        cmd.Parameters.AddWithValue("@PoItemId", item.PoItemId);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+
+                    // Insert reallocation record
+                    const string insertRealloc = @"
+INSERT INTO PO_Reallocation(po_id, po_item_id, remark, PrevLocationid, UpLocationid, EntryDT, UpdateCat)
+VALUES(@PoId, @PoItemId, @Remark, @ConsigneeId, @NewLocationId, GETDATE(), 'Reallocation')";
+                    await using (var cmd = new SqlCommand(insertRealloc, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@PoId", item.PoId);
+                        cmd.Parameters.AddWithValue("@PoItemId", item.PoItemId);
+                        cmd.Parameters.AddWithValue("@Remark", string.IsNullOrWhiteSpace(remark) ? DBNull.Value : remark.Trim());
+                        cmd.Parameters.AddWithValue("@ConsigneeId", item.ConsigneeId);
+                        cmd.Parameters.AddWithValue("@NewLocationId", item.NewLocationId);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+
+                // Store approval PDF in Mongo (PORealloaction collection keyed by extensionId)
+                int relocCount = 0;
+                const string countSql = @"SELECT COUNT(RelocID) FROM PO_Reallocation WHERE po_id = @PoId";
+                await using (var countCmd = new SqlCommand(countSql, conn))
+                {
+                    countCmd.Parameters.AddWithValue("@PoId", poId);
+                    var count = await countCmd.ExecuteScalarAsync();
+                    relocCount = count == null || count == DBNull.Value ? 0 : Convert.ToInt32(count);
+                }
+                int docId = relocCount + 1;
+
+                await _mongoService.UpsertReallocationFile(docId, fileBytes, ".pdf");
+
+                const string updateDoc = @"
+UPDATE PO_Reallocation SET FileName = @DocId, doc_id = @DocId, doc_Name = @DocName
+WHERE po_id = @PoId AND FileName IS NULL";
+                await using (var docCmd = new SqlCommand(updateDoc, conn))
+                {
+                    docCmd.Parameters.AddWithValue("@DocId", docId);
+                    docCmd.Parameters.AddWithValue("@DocName", $"{poId}_{docId}_ReAlloc");
+                    docCmd.Parameters.AddWithValue("@PoId", poId);
+                    await docCmd.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new { message = "Reallocation has been Saved Successfully" });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error saving reallocation.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>DisplayPOAllocationFile.ashx — download reallocation approval PDF from Mongo.</summary>
+        [HttpGet("po-reallocation/file/{docId:int}")]
+        public async Task<IActionResult> DownloadReallocationFile(int docId)
+        {
+            try
+            {
+                var mongoFile = await _mongoService.GetReallocationFile(docId);
+                if (mongoFile == null || mongoFile.ExtFile == null || mongoFile.ExtFile.Length == 0)
+                    return NotFound(new { message = "File not found." });
+
+                string ext = string.IsNullOrWhiteSpace(mongoFile.Ext) ? ".pdf" : mongoFile.Ext;
+                string contentType = ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase) ? "application/pdf" : "application/octet-stream";
+                return File(mongoFile.ExtFile, contentType, $"POReallocation_{docId}{ext}");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading file.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>EMSPOAmmendment.aspx fillpos — header summary for a PO.</summary>
+        [HttpGet("po-amendment/header")]
+        public async Task<IActionResult> GetPoAmendmentHeader([FromQuery] int poId)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+
+            const string sql = @"
+SELECT p.po_id, m.item_name, m.item_code_as_per_tender AS itemcode,
+       t.tender_no AS SchemeName, f.year AS AccYear, s.name AS SupplierName,
+       p.po_no, CONVERT(VARCHAR, p.po_date, 103) AS PoDate,
+       CONVERT(VARCHAR, p.soissueDT, 103) AS soissueDT, ISNULL(p.outward_no, '') AS outward_no,
+       SUM(pi.quantity) AS poqty,
+       ROUND(SUM(pi.quantity) * pi.basicrate, 0) + ROUND(SUM(pi.quantity) * pi.basicrate * pi.percentage / 100, 0) AS poValue,
+       MAX(pi.basicrate) AS basicrate, MAX(pi.percentage) AS percentvalue,
+       ROUND(MAX(pi.basicrate) + (MAX(pi.basicrate) * MAX(pi.percentage) / 100), 2) AS finalrate
+FROM purchase_order p
+INNER JOIN po_items pi ON pi.po_id = p.po_id
+INNER JOIN tenders t ON t.tender_id = p.tender_id
+INNER JOIN masitems m ON m.item_id = pi.item_id
+INNER JOIN mas_financial_year f ON f.financial_year_id = p.financial_year_id
+INNER JOIN massuppliers s ON s.supplier_id = p.supplier_id
+WHERE p.po_id = @PoId
+GROUP BY p.po_id, m.item_name, m.item_code_as_per_tender, t.tender_no, f.year, s.name,
+         p.po_no, p.po_date, p.soissueDT, p.outward_no, pi.basicrate, pi.percentage";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@PoId", poId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound(new { message = "PO not found." });
+
+                return Ok(new PoAmendmentHeaderDto
+                {
+                    PoId = poId,
+                    ItemName = reader["item_name"]?.ToString() ?? string.Empty,
+                    ItemCode = reader["itemcode"]?.ToString() ?? string.Empty,
+                    SchemeName = reader["SchemeName"]?.ToString() ?? string.Empty,
+                    AccYear = reader["AccYear"]?.ToString() ?? string.Empty,
+                    PoNo = reader["po_no"]?.ToString() ?? string.Empty,
+                    PoDate = reader["PoDate"]?.ToString() ?? string.Empty,
+                    SoIssueDt = reader["soissueDT"]?.ToString() ?? string.Empty,
+                    OutwardNo = reader["outward_no"]?.ToString() ?? string.Empty,
+                    SupplierName = reader["SupplierName"]?.ToString() ?? string.Empty,
+                    TotalPoQty = reader["poqty"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["poqty"]),
+                    PoValue = reader["poValue"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["poValue"]),
+                    BasicRate = reader["basicrate"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["basicrate"]),
+                    GstPercent = reader["percentvalue"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["percentvalue"]),
+                    FinalRate = reader["finalrate"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["finalrate"]),
+                });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading PO amendment header.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>EMSPOAmmendment.aspx fillamendment — amendment types.</summary>
+        [HttpGet("po-amendment/types")]
+        public async Task<IActionResult> GetPoAmendmentTypes()
+        {
+            const string sql = @"SELECT amendid, AmenmentType FROM masamendment";
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                var list = new List<PoAmendmentTypeDto>();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new PoAmendmentTypeDto
+                    {
+                        AmendId = reader["amendid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["amendid"]),
+                        AmenmentType = reader["AmenmentType"]?.ToString() ?? string.Empty,
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading amendment types.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>EMSPOAmmendment.aspx fillgrid — amendment history.</summary>
+        [HttpGet("po-amendment/history")]
+        public async Task<IActionResult> GetPoAmendmentHistory([FromQuery] int poId)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+
+            const string sql = @"
+SELECT po.po_no, CONVERT(VARCHAR, poi.amenddate, 103) AS amenddate, poi.Nasti_LetterNo,
+       poi.remarks, poi.FileName, poi.po_ammdid, '.pdf' AS ext
+FROM PODTAmendment poi
+INNER JOIN purchase_order po ON po.po_id = poi.po_id
+WHERE poi.filename IS NOT NULL AND po.po_id = @PoId
+ORDER BY poi.entryDT DESC";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@PoId", poId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                var list = new List<PoAmendmentHistoryRowDto>();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new PoAmendmentHistoryRowDto
+                    {
+                        PoAmmdId = reader["po_ammdid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_ammdid"]),
+                        PoNo = reader["po_no"]?.ToString() ?? string.Empty,
+                        AmendDate = reader["amenddate"]?.ToString() ?? string.Empty,
+                        NastiLetterNo = reader["Nasti_LetterNo"]?.ToString() ?? string.Empty,
+                        Remark = reader["remarks"]?.ToString() ?? string.Empty,
+                        FileName = reader["FileName"]?.ToString() ?? string.Empty,
+                        Ext = reader["ext"]?.ToString() ?? string.Empty,
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading amendment history.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>EMSPOAmmendment.aspx lbtnUpdateHeaderInfo_Click — save amendment + upload PDF.</summary>
+        [HttpPost("po-amendment")]
+        public async Task<IActionResult> SavePoAmendment(
+            [FromForm] int poId,
+            [FromForm] string dispatchNo,
+            [FromForm] string amendDate,
+            [FromForm] string prevSoIssueDt,
+            [FromForm] string prevSoIssueNo,
+            [FromForm] string remarks,
+            [FromForm] int amendTypeId,
+            [FromForm] string isReprintReq,
+            [FromForm] IFormFile? file)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+            if (amendTypeId <= 0)
+                return BadRequest(new { message = "Select Amendment Type." });
+            if (string.IsNullOrWhiteSpace(amendDate))
+                return BadRequest(new { message = "Amendment date is required." });
+            if (string.IsNullOrWhiteSpace(remarks))
+                return BadRequest(new { message = "Remark should not be empty." });
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Upload PDF File of Nasti/Letter (Merge together if more than 1 File)." });
+            if (!string.Equals(Path.GetExtension(file.FileName), ".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Please upload pdf file only." });
+
+            if (!DateTime.TryParse(amendDate, out DateTime amendDt))
+                return BadRequest(new { message = "Invalid amendment date." });
+            if (amendDt > DateTime.Now)
+                return BadRequest(new { message = "You cannot select greater than today's date." });
+
+            DateTime poDate;
+            try
+            {
+                poDate = GetSoIssueDateAsync(poId, prevSoIssueDt);
+            }
+            catch (Exception)
+            {
+                poDate = amendDt;
+            }
+            if (amendDt < poDate)
+                return BadRequest(new { message = "You cannot select less than PO Date." });
+
+            try
+            {
+                byte[] fileBytes;
+                await using (var ms = new MemoryStream())
+                {
+                    await file.CopyToAsync(ms);
+                    fileBytes = ms.ToArray();
+                }
+
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                string isReprint = string.IsNullOrWhiteSpace(isReprintReq) ? "N" : (isReprintReq.ToUpperInvariant() == "Y" ? "Y" : "N");
+                string sanitizedRemarks = remarks.Trim().Replace("'", "''");
+                string sanitizedDispatch = dispatchNo.Trim().Replace("'", "''");
+                string prevNo = string.IsNullOrWhiteSpace(prevSoIssueNo) ? "0" : prevSoIssueNo.Trim().Replace("'", "''");
+                string prevDtSql = string.IsNullOrWhiteSpace(prevSoIssueDt)
+                    ? "NULL"
+                    : "'" + prevSoIssueDt.Replace("'", "''") + "'";
+
+                string insertSql = $@"
+INSERT INTO PODTAmendment(po_id, Nasti_LetterNo, amenddate, entryDT, Prev_SoissueDT, Prev_SoissueNo,
+                          Remarks, amendid, IsReprintReq)
+VALUES({poId}, '{sanitizedDispatch}', '{amendDt:yyyy-MM-dd HH:mm:ss}', GETDATE(), {prevDtSql},
+       {prevNo}, '{sanitizedRemarks}', {amendTypeId}, '{isReprint}')";
+                await using (var cmd = new SqlCommand(insertSql, conn))
+                {
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                int poAmmdId = 0;
+                const string getIdSql = @"SELECT MAX(po_ammdid) FROM PODTAmendment WHERE po_id = @PoId AND FileName IS NULL";
+                await using (var getIdCmd = new SqlCommand(getIdSql, conn))
+                {
+                    getIdCmd.Parameters.AddWithValue("@PoId", poId);
+                    var result = await getIdCmd.ExecuteScalarAsync();
+                    poAmmdId = result == null || result == DBNull.Value ? 0 : Convert.ToInt32(result);
+                }
+
+                if (poAmmdId <= 0)
+                    return StatusCode(500, new { message = "Could not determine amendment id." });
+
+                if (isReprint == "Y")
+                {
+                    const string updatePo = @"
+UPDATE purchase_order SET po_ammid = @PoAmmdId, status = 'Waiting For Approval',
+       soissueDT = NULL, outward_no = NULL WHERE po_id = @PoId";
+                    await using (var cmd = new SqlCommand(updatePo, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@PoAmmdId", poAmmdId);
+                        cmd.Parameters.AddWithValue("@PoId", poId);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+
+                // Store PDF in Mongo (POAmendment collection keyed by po_ammdid)
+                string filenameIns = $"POAmend{poId}{poAmmdId}";
+                await _mongoService.UpsertPoAmendmentFile(poAmmdId, fileBytes, ".pdf", filenameIns);
+
+                const string updateFileName = @"UPDATE PODTAmendment SET FileName = @FileName WHERE po_ammdid = @PoAmmdId";
+                await using (var cmd = new SqlCommand(updateFileName, conn))
+                {
+                    cmd.Parameters.AddWithValue("@FileName", filenameIns);
+                    cmd.Parameters.AddWithValue("@PoAmmdId", poAmmdId);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                const string updateSoIssue = @"UPDATE purchase_order SET soissueDT = @AmendDt WHERE po_id = @PoId";
+                await using (var cmd = new SqlCommand(updateSoIssue, conn))
+                {
+                    cmd.Parameters.AddWithValue("@AmendDt", amendDt);
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new { message = "Saved Successfully" });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error saving amendment.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>DisplayPOAmendFile.ashx — download amendment PDF from Mongo.</summary>
+        [HttpGet("po-amendment/file/{poAmmdId:int}")]
+        public async Task<IActionResult> DownloadPoAmendmentFile(int poAmmdId)
+        {
+            try
+            {
+                var mongoFile = await _mongoService.GetPoAmendmentFile(poAmmdId);
+                if (mongoFile == null || mongoFile.FilePath == null || mongoFile.FilePath.Length == 0)
+                    return NotFound(new { message = "File not found." });
+
+                string ext = string.IsNullOrWhiteSpace(mongoFile.Ext) ? ".pdf" : mongoFile.Ext;
+                string contentType = ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase) ? "application/pdf" : "application/octet-stream";
+                return File(mongoFile.FilePath, contentType, $"POAmendment_{poAmmdId}{ext}");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error downloading file.", detail = ex.Message });
+            }
+        }
+
+        private DateTime GetSoIssueDateAsync(int poId, string prevSoIssueDt)
+        {
+            // Legacy: uses soissueDT if present else po_date for the "PO date" comparison.
+            if (DateTime.TryParse(prevSoIssueDt, out DateTime parsed))
+                return parsed;
+            return DateTime.MinValue;
+        }
+
+        private static MasFileNoRowDto ReadMasFileNoRow(SqlDataReader reader)
+        {
+            return new MasFileNoRowDto
+            {
+                PoId = reader["ponoid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["ponoid"]),
+                PoNo = reader["pono"]?.ToString() ?? string.Empty,
+                PoDate = reader["PODT"]?.ToString() ?? string.Empty,
+                SchemeCode = reader["schemecode"]?.ToString() ?? string.Empty,
+                ItemCode = reader["itemcode"]?.ToString() ?? string.Empty,
+                SupplierName = reader["suppliername"]?.ToString() ?? string.Empty,
+                SupplierId = reader["supplierid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["supplierid"]),
+                FileNo = reader["fileNo"]?.ToString() ?? string.Empty,
+                FileDt = reader["fileDT"]?.ToString() ?? string.Empty,
+            };
         }
     }
 }

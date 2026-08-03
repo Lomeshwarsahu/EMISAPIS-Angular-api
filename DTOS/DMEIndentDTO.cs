@@ -124,6 +124,33 @@ namespace EMISAPIS.DTOS
         public string? Email { get; set; }
     }
 
+    public class ChangePasswordContactDto
+    {
+        public int UserId { get; set; }
+        public string UserName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string Mobile { get; set; } = string.Empty;
+        public string Reason { get; set; } = string.Empty;
+    }
+
+    public class ChangePasswordSendOtpRequest
+    {
+        public int UserId { get; set; }
+        public string? Mobile { get; set; }
+        public string? Email { get; set; }
+    }
+
+    public class ChangePasswordRequest
+    {
+        public int UserId { get; set; }
+        public string OTP { get; set; } = string.Empty;
+        public string NewPassword { get; set; } = string.Empty;
+        public string ConfirmPassword { get; set; } = string.Empty;
+        public string Mobile { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string Reason { get; set; } = string.Empty;
+    }
+
     public class FacilityIndentReportDto
     {
         public FacilityIndentHeaderDto Header { get; set; } = new();

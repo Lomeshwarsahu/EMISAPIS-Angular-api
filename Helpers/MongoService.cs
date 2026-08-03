@@ -7,6 +7,8 @@ namespace EMISAPIS.Helpers
         private readonly IMongoCollection<ReceiptItemFiles> _collection;
         private readonly IMongoCollection<DescrepencyFiles> _descrepencyCollection;
         private readonly IMongoCollection<EelSubmissionFiles> _eelSubmissionCollection;
+        private readonly IMongoCollection<PoReallocationFile> _reallocationCollection;
+        private readonly IMongoCollection<PoAmendmentFile> _amendmentCollection;
 
         public MongoService()
         {
@@ -15,6 +17,8 @@ namespace EMISAPIS.Helpers
             _collection = database.GetCollection<ReceiptItemFiles>("ReceiptItemFiles");
             _descrepencyCollection = database.GetCollection<DescrepencyFiles>("DescrepencyFiles");
             _eelSubmissionCollection = database.GetCollection<EelSubmissionFiles>("masEELSubmission");
+            _reallocationCollection = database.GetCollection<PoReallocationFile>("PORealloaction");
+            _amendmentCollection = database.GetCollection<PoAmendmentFile>("POAmendment");
         }
 
         public async Task<ReceiptItemFiles?> GetFile(int itemId)
@@ -107,6 +111,49 @@ namespace EMISAPIS.Helpers
         {
             return await _eelSubmissionCollection
                 .Find(x => x.EELID == eelId)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task UpsertReallocationFile(int extensionId, byte[] fileBytes, string ext = ".pdf")
+        {
+            PoReallocationFile existing = await GetReallocationFile(extensionId) ?? new PoReallocationFile
+            {
+                ExtensionId = extensionId,
+                Ext = ext,
+            };
+            existing.ExtFile = fileBytes;
+            await _reallocationCollection.ReplaceOneAsync(
+                x => x.ExtensionId == extensionId,
+                existing,
+                new ReplaceOptions { IsUpsert = true });
+        }
+
+        public async Task<PoReallocationFile?> GetReallocationFile(int extensionId)
+        {
+            return await _reallocationCollection
+                .Find(x => x.ExtensionId == extensionId)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task UpsertPoAmendmentFile(int poAmmdId, byte[] fileBytes, string ext = ".pdf", string fileName = "")
+        {
+            PoAmendmentFile existing = await GetPoAmendmentFile(poAmmdId) ?? new PoAmendmentFile
+            {
+                PoAmmdId = poAmmdId,
+                Ext = ext,
+            };
+            existing.FilePath = fileBytes;
+            existing.FileName = fileName;
+            await _amendmentCollection.ReplaceOneAsync(
+                x => x.PoAmmdId == poAmmdId,
+                existing,
+                new ReplaceOptions { IsUpsert = true });
+        }
+
+        public async Task<PoAmendmentFile?> GetPoAmendmentFile(int poAmmdId)
+        {
+            return await _amendmentCollection
+                .Find(x => x.PoAmmdId == poAmmdId)
                 .FirstOrDefaultAsync();
         }
     }
