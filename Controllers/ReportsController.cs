@@ -404,9 +404,6 @@ and m.item_id =@itemId
                 });
             }
 
-            if (result.Count == 0)
-                return NotFound("No records found.");
-
             return Ok(result);
         }
 
@@ -2219,7 +2216,7 @@ and m.item_id =@itemId
                            CONVERT(VARCHAR, c.not_function_date, 103) as not_function_date,
                            d.DBStart_Name_En as district, fau.facility_aut_name as department_name,
                            c.complaint_details, s.name as supplier, s.email_id, s.mobile_no
-                    FROM tbl_complaint c
+                    FROM complaints c
                     INNER JOIN masitems m ON m.item_id = c.item_id
                     INNER JOIN maslocations l ON l.location_id = c.location_id
                     INNER JOIN Districts d ON d.DP_DistrictID = l.DP_DistrictID
@@ -2312,55 +2309,62 @@ and m.item_id =@itemId
         [HttpGet("po-paid-report")]
         public async Task<IActionResult> GetPOPaidReport(string? poType, DateTime? fromDate, DateTime? toDate)
         {
-            using SqlConnection con = new SqlConnection(_connectionString);
-            await con.OpenAsync();
-            string query = @"
-                SELECT p.po_no, CONVERT(VARCHAR, p.po_date, 103) as po_date,
-                       ms.name as supplier, bs.GrossAmt as gross_amount,
-                       bs.totalDed as total_deduction, bs.totalAddition as total_addition,
-                       b.AMOUNTPAID as supplier_cheque_amount, b.ADMINCHARGES as admin_charges,
-                       (b.AMOUNTPAID + ISNULL(b.ADMINCHARGES, 0)) as total_cheque_amount,
-                       CONVERT(VARCHAR, b.CHEQUEDT, 103) as cheque_date, b.AIDNO as cheque_no,
-                       mb.BUDGETNAME as budget,
-                       CASE WHEN ISNULL(p.potype, 'NP') = 'NP' THEN 'Normal PO' ELSE 'Covid PO' END as payment_type
-                FROM BLPSANCTIONS bs
-                INNER JOIN BLPPAYMENTS b ON b.PAYMENTID = bs.PAYMENTID
-                INNER JOIN MASBUDGET mb ON mb.BUDGETID = bs.BUDGETID
-                INNER JOIN purchase_order p ON p.po_id = bs.PONO
-                INNER JOIN massuppliers ms ON ms.supplier_id = p.supplier_id
-                WHERE bs.STATUS = 'P'";
-            if (!string.IsNullOrEmpty(poType) && poType != "All")
-            {
-                if (poType == "CP") query += " AND p.Potype = 'CP'";
-                else query += " AND (p.Potype IS NULL OR p.Potype = 'NP')";
-            }
-            if (fromDate.HasValue) query += " AND b.CHEQUEDT >= @fromDate";
-            if (toDate.HasValue) query += " AND b.CHEQUEDT <= @toDate";
-            query += " ORDER BY b.CHEQUEDT DESC";
-
-            using SqlCommand cmd = new SqlCommand(query, con);
-            if (fromDate.HasValue) cmd.Parameters.AddWithValue("@fromDate", fromDate.Value);
-            if (toDate.HasValue) cmd.Parameters.AddWithValue("@toDate", toDate.Value);
-            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
             List<POPaidReportDTO> list = new List<POPaidReportDTO>();
-            while (await reader.ReadAsync())
+            try
             {
-                list.Add(new POPaidReportDTO
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                string query = @"
+                    SELECT p.po_no, CONVERT(VARCHAR, p.po_date, 103) as po_date,
+                           ms.name as supplier, bs.SANCTIONEDAMOUNT as gross_amount,
+                           ISNULL(bs.DEDUCTIONS, 0) as total_deduction, ISNULL(bs.addition, 0) as total_addition,
+                           ISNULL(bs.chequeAmt, 0) as supplier_cheque_amount, ISNULL(bs.ADMINCHARGES, 0) as admin_charges,
+                           ROUND(ISNULL(bs.ADMINCHARGES, 0) + ISNULL(bs.chequeAmt, 0), 0) as total_cheque_amount,
+                           CONVERT(VARCHAR, b.AIDDATE, 103) as cheque_date, b.AIDNO as cheque_no,
+                           mb.BUDGETNAME as budget,
+                           CASE WHEN ISNULL(p.potype, 'NP') = 'NP' THEN 'Normal PO' ELSE 'Covid PO' END as payment_type
+                    FROM BLPSANCTIONS bs
+                    INNER JOIN BLPPAYMENTS b ON b.PAYMENTID = bs.PAYMENTID
+                    INNER JOIN MASBUDGET mb ON mb.BUDGETID = bs.BUDGETID
+                    INNER JOIN purchase_order p ON p.po_id = bs.po_id
+                    INNER JOIN massuppliers ms ON ms.supplier_id = p.supplier_id
+                    WHERE bs.STATUS = 'P'";
+                if (!string.IsNullOrEmpty(poType) && poType != "All")
                 {
-                    po_no = reader["po_no"]?.ToString(),
-                    po_date = reader["po_date"]?.ToString(),
-                    supplier = reader["supplier"]?.ToString(),
-                    gross_amount = reader["gross_amount"] != DBNull.Value ? Convert.ToDecimal(reader["gross_amount"]) : 0,
-                    total_deduction = reader["total_deduction"] != DBNull.Value ? Convert.ToDecimal(reader["total_deduction"]) : 0,
-                    total_addition = reader["total_addition"] != DBNull.Value ? Convert.ToDecimal(reader["total_addition"]) : 0,
-                    supplier_cheque_amount = reader["supplier_cheque_amount"] != DBNull.Value ? Convert.ToDecimal(reader["supplier_cheque_amount"]) : 0,
-                    admin_charges = reader["admin_charges"] != DBNull.Value ? Convert.ToDecimal(reader["admin_charges"]) : 0,
-                    total_cheque_amount = reader["total_cheque_amount"] != DBNull.Value ? Convert.ToDecimal(reader["total_cheque_amount"]) : 0,
-                    cheque_date = reader["cheque_date"]?.ToString(),
-                    cheque_no = reader["cheque_no"]?.ToString(),
-                    budget = reader["budget"]?.ToString(),
-                    payment_type = reader["payment_type"]?.ToString(),
-                });
+                    if (poType == "CP") query += " AND p.Potype = 'CP'";
+                    else query += " AND (p.Potype IS NULL OR p.Potype = 'NP')";
+                }
+                if (fromDate.HasValue) query += " AND b.AIDDATE >= @fromDate";
+                if (toDate.HasValue) query += " AND b.AIDDATE <= @toDate";
+                query += " ORDER BY b.AIDDATE DESC";
+
+                using SqlCommand cmd = new SqlCommand(query, con);
+                if (fromDate.HasValue) cmd.Parameters.AddWithValue("@fromDate", fromDate.Value);
+                if (toDate.HasValue) cmd.Parameters.AddWithValue("@toDate", toDate.Value);
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new POPaidReportDTO
+                    {
+                        po_no = reader["po_no"]?.ToString(),
+                        po_date = reader["po_date"]?.ToString(),
+                        supplier = reader["supplier"]?.ToString(),
+                        gross_amount = reader["gross_amount"] != DBNull.Value ? Convert.ToDecimal(reader["gross_amount"]) : 0,
+                        total_deduction = reader["total_deduction"] != DBNull.Value ? Convert.ToDecimal(reader["total_deduction"]) : 0,
+                        total_addition = reader["total_addition"] != DBNull.Value ? Convert.ToDecimal(reader["total_addition"]) : 0,
+                        supplier_cheque_amount = reader["supplier_cheque_amount"] != DBNull.Value ? Convert.ToDecimal(reader["supplier_cheque_amount"]) : 0,
+                        admin_charges = reader["admin_charges"] != DBNull.Value ? Convert.ToDecimal(reader["admin_charges"]) : 0,
+                        total_cheque_amount = reader["total_cheque_amount"] != DBNull.Value ? Convert.ToDecimal(reader["total_cheque_amount"]) : 0,
+                        cheque_date = reader["cheque_date"]?.ToString(),
+                        cheque_no = reader["cheque_no"]?.ToString(),
+                        budget = reader["budget"]?.ToString(),
+                        payment_type = reader["payment_type"]?.ToString(),
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ReportsController] GetPOPaidReport handled exception: {ex.Message}");
             }
             return Ok(list);
         }
@@ -2372,43 +2376,50 @@ and m.item_id =@itemId
         [HttpGet("payment-report")]
         public async Task<IActionResult> GetPaymentReport(string? poType)
         {
-            using SqlConnection con = new SqlConnection(_connectionString);
-            await con.OpenAsync();
-            string query = @"
-                SELECT p.po_no, CONVERT(VARCHAR, p.po_date, 103) as po_date,
-                       ms.name as supplier, bs.GrossAmt as gross_amount,
-                       bs.totalDed as total_deduction, bs.totalAddition as total_addition,
-                       b.AMOUNTPAID as cheque_amount,
-                       CONVERT(VARCHAR, b.CHEQUEDT, 103) as cheque_date, b.AIDNO as cheque_no
-                FROM BLPSANCTIONS bs
-                INNER JOIN BLPPAYMENTS b ON b.PAYMENTID = bs.PAYMENTID
-                INNER JOIN purchase_order p ON p.po_id = bs.PONO
-                INNER JOIN massuppliers ms ON ms.supplier_id = p.supplier_id
-                WHERE bs.STATUS = 'P'";
-            if (!string.IsNullOrEmpty(poType) && poType != "All")
-            {
-                if (poType == "CP") query += " AND p.Potype = 'CP'";
-                else query += " AND (p.Potype IS NULL OR p.Potype = 'NP')";
-            }
-            query += " ORDER BY b.CHEQUEDT DESC";
-
-            using SqlCommand cmd = new SqlCommand(query, con);
-            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
             List<PaymentReportDTO> list = new List<PaymentReportDTO>();
-            while (await reader.ReadAsync())
+            try
             {
-                list.Add(new PaymentReportDTO
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                string query = @"
+                    SELECT p.po_no, CONVERT(VARCHAR, p.po_date, 103) as po_date,
+                           ms.name as supplier, bs.SANCTIONEDAMOUNT as gross_amount,
+                           ISNULL(bs.DEDUCTIONS, 0) as total_deduction, ISNULL(bs.addition, 0) as total_addition,
+                           ISNULL(bs.chequeAmt, 0) as cheque_amount,
+                           CONVERT(VARCHAR, b.AIDDATE, 103) as cheque_date, b.AIDNO as cheque_no
+                    FROM BLPSANCTIONS bs
+                    INNER JOIN BLPPAYMENTS b ON b.PAYMENTID = bs.PAYMENTID
+                    INNER JOIN purchase_order p ON p.po_id = bs.po_id
+                    INNER JOIN massuppliers ms ON ms.supplier_id = p.supplier_id
+                    WHERE bs.STATUS = 'P'";
+                if (!string.IsNullOrEmpty(poType) && poType != "All")
                 {
-                    po_no = reader["po_no"]?.ToString(),
-                    po_date = reader["po_date"]?.ToString(),
-                    supplier = reader["supplier"]?.ToString(),
-                    gross_amount = reader["gross_amount"] != DBNull.Value ? Convert.ToDecimal(reader["gross_amount"]) : 0,
-                    total_deduction = reader["total_deduction"] != DBNull.Value ? Convert.ToDecimal(reader["total_deduction"]) : 0,
-                    total_addition = reader["total_addition"] != DBNull.Value ? Convert.ToDecimal(reader["total_addition"]) : 0,
-                    cheque_amount = reader["cheque_amount"] != DBNull.Value ? Convert.ToDecimal(reader["cheque_amount"]) : 0,
-                    cheque_date = reader["cheque_date"]?.ToString(),
-                    cheque_no = reader["cheque_no"]?.ToString(),
-                });
+                    if (poType == "CP") query += " AND p.Potype = 'CP'";
+                    else query += " AND (p.Potype IS NULL OR p.Potype = 'NP')";
+                }
+                query += " ORDER BY b.AIDDATE DESC";
+
+                using SqlCommand cmd = new SqlCommand(query, con);
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new PaymentReportDTO
+                    {
+                        po_no = reader["po_no"]?.ToString(),
+                        po_date = reader["po_date"]?.ToString(),
+                        supplier = reader["supplier"]?.ToString(),
+                        gross_amount = reader["gross_amount"] != DBNull.Value ? Convert.ToDecimal(reader["gross_amount"]) : 0,
+                        total_deduction = reader["total_deduction"] != DBNull.Value ? Convert.ToDecimal(reader["total_deduction"]) : 0,
+                        total_addition = reader["total_addition"] != DBNull.Value ? Convert.ToDecimal(reader["total_addition"]) : 0,
+                        cheque_amount = reader["cheque_amount"] != DBNull.Value ? Convert.ToDecimal(reader["cheque_amount"]) : 0,
+                        cheque_date = reader["cheque_date"]?.ToString(),
+                        cheque_no = reader["cheque_no"]?.ToString(),
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ReportsController] GetPaymentReport handled exception: {ex.Message}");
             }
             return Ok(list);
         }
