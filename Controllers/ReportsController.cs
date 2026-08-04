@@ -1,4 +1,4 @@
-﻿using EMISAPIS.DTOS;
+using EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -2209,49 +2209,57 @@ and m.item_id =@itemId
         [HttpGet("complain-report")]
         public async Task<IActionResult> GetComplainReport(string? status)
         {
-            using SqlConnection con = new SqlConnection(_connectionString);
-            await con.OpenAsync();
-            string query = @"
-                SELECT c.complaint_no, m.item_code_as_per_tender, m.item_name,
-                       c.serial_no, CONVERT(VARCHAR, c.complaint_date, 103) as complaint_date,
-                       CONVERT(VARCHAR, c.not_function_date, 103) as not_function_date,
-                       d.DBStart_Name_En as district, fau.facility_aut_name as department_name,
-                       c.complaint_details, s.name as supplier, s.email_id, s.mobile_no
-                FROM tbl_complaint c
-                INNER JOIN masitems m ON m.item_id = c.item_id
-                INNER JOIN maslocations l ON l.location_id = c.location_id
-                INNER JOIN Districts d ON d.DP_DistrictID = l.DP_DistrictID
-                INNER JOIN facility_aut fau ON fau.facility_aut_id = l.authority
-                INNER JOIN massuppliers s ON s.supplier_id = c.supplier_id
-                WHERE 1=1";
-            if (!string.IsNullOrEmpty(status))
-                query += " AND c.status = @status";
-            query += " ORDER BY c.complaint_date DESC";
-
-            using SqlCommand cmd = new SqlCommand(query, con);
-            if (!string.IsNullOrEmpty(status))
-                cmd.Parameters.AddWithValue("@status", status);
-            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
-            List<ComplainReportDTO> list = new List<ComplainReportDTO>();
-            while (await reader.ReadAsync())
+            try
             {
-                list.Add(new ComplainReportDTO
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+                string query = @"
+                    SELECT c.complaint_no, m.item_code_as_per_tender, m.item_name,
+                           c.serial_no, CONVERT(VARCHAR, c.complaint_date, 103) as complaint_date,
+                           CONVERT(VARCHAR, c.not_function_date, 103) as not_function_date,
+                           d.DBStart_Name_En as district, fau.facility_aut_name as department_name,
+                           c.complaint_details, s.name as supplier, s.email_id, s.mobile_no
+                    FROM tbl_complaint c
+                    INNER JOIN masitems m ON m.item_id = c.item_id
+                    INNER JOIN maslocations l ON l.location_id = c.location_id
+                    INNER JOIN Districts d ON d.DP_DistrictID = l.DP_DistrictID
+                    INNER JOIN facility_aut fau ON fau.facility_aut_id = l.authority
+                    INNER JOIN massuppliers s ON s.supplier_id = c.supplier_id
+                    WHERE 1=1";
+                if (!string.IsNullOrEmpty(status))
+                    query += " AND c.status = @status";
+                query += " ORDER BY c.complaint_date DESC";
+
+                using SqlCommand cmd = new SqlCommand(query, con);
+                if (!string.IsNullOrEmpty(status))
+                    cmd.Parameters.AddWithValue("@status", status);
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                List<ComplainReportDTO> list = new List<ComplainReportDTO>();
+                while (await reader.ReadAsync())
                 {
-                    complaint_no = reader["complaint_no"]?.ToString(),
-                    item_code_as_per_tender = reader["item_code_as_per_tender"]?.ToString(),
-                    item_name = reader["item_name"]?.ToString(),
-                    serial_no = reader["serial_no"]?.ToString(),
-                    complaint_date = reader["complaint_date"]?.ToString(),
-                    not_function_date = reader["not_function_date"]?.ToString(),
-                    district = reader["district"]?.ToString(),
-                    department_name = reader["department_name"]?.ToString(),
-                    complaint_details = reader["complaint_details"]?.ToString(),
-                    supplier = reader["supplier"]?.ToString(),
-                    email_id = reader["email_id"]?.ToString(),
-                    mobile_no = reader["mobile_no"]?.ToString(),
-                });
+                    list.Add(new ComplainReportDTO
+                    {
+                        complaint_no = reader["complaint_no"]?.ToString(),
+                        item_code_as_per_tender = reader["item_code_as_per_tender"]?.ToString(),
+                        item_name = reader["item_name"]?.ToString(),
+                        serial_no = reader["serial_no"]?.ToString(),
+                        complaint_date = reader["complaint_date"]?.ToString(),
+                        not_function_date = reader["not_function_date"]?.ToString(),
+                        district = reader["district"]?.ToString(),
+                        department_name = reader["department_name"]?.ToString(),
+                        complaint_details = reader["complaint_details"]?.ToString(),
+                        supplier = reader["supplier"]?.ToString(),
+                        email_id = reader["email_id"]?.ToString(),
+                        mobile_no = reader["mobile_no"]?.ToString(),
+                    });
+                }
+                return Ok(list);
             }
-            return Ok(list);
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ReportsController] GetComplainReport handled exception: {ex.Message}");
+                return Ok(new List<ComplainReportDTO>());
+            }
         }
 
         // ============================================================

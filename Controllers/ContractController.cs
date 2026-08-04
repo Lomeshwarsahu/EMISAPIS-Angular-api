@@ -1,4 +1,4 @@
-﻿using EMISAPIS.DTOS;
+using EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Text.Json.Serialization;
@@ -1689,33 +1689,42 @@ left outer join mascoverstatus s on s.csid=a.csid and  A.TENDER_NO LIKE @search"
                 SqlDataReader dr = cmd.ExecuteReader();
                 while (dr.Read())
                 {
+                    Func<string, string> safeString = col => {
+                        try { int ord = dr.GetOrdinal(col); return dr.IsDBNull(ord) ? "" : Convert.ToString(dr[ord]) ?? ""; }
+                        catch { return ""; }
+                    };
+                    Func<string, int> safeInt = col => {
+                        try { int ord = dr.GetOrdinal(col); return dr.IsDBNull(ord) ? 0 : Convert.ToInt32(dr[ord]); }
+                        catch { return 0; }
+                    };
+
                     list.Add(new TenderDto
                     {
-                        TenderId = dr["TENDER_ID"] != DBNull.Value ? Convert.ToInt32(dr["TENDER_ID"]) : 0,
-                        TenderNo = Convert.ToString(dr["TENDER_NO"]),
-                        TenderDate = Convert.ToString(dr["TENDER_DATE"]),
-                        TenderDescription = Convert.ToString(dr["TENDER_DESCRIPTION"]),
+                        TenderId = safeInt("TENDER_ID"),
+                        TenderNo = safeString("TENDER_NO"),
+                        TenderDate = safeString("TENDER_DATE"),
+                        TenderDescription = safeString("TENDER_DESCRIPTION"),
 
-                        Flag = Convert.ToString(dr["FLAG"]),
-                        FinancialYearId = dr["financial_year_id"] != DBNull.Value ? Convert.ToInt32(dr["financial_year_id"]) : 0,
-                        WarrantyYear = dr["warranty_year"] != DBNull.Value ? Convert.ToInt32(dr["warranty_year"]) : 0,
-                        ImportDays = dr["import_days"] != DBNull.Value ? Convert.ToInt32(dr["import_days"]) : 0,
-                        DomesticDays = dr["domestic_days"] != DBNull.Value ? Convert.ToInt32(dr["domestic_days"]) : 0,
+                        Flag = safeString("FLAG"),
+                        FinancialYearId = safeInt("financial_year_id"),
+                        WarrantyYear = safeInt("warranty_year"),
+                        ImportDays = safeInt("import_days"),
+                        DomesticDays = safeInt("domestic_days"),
 
-                        CoverA = Convert.ToString(dr["cover_a"]),
-                        CoverB = Convert.ToString(dr["cover_b"]),
-                        CoverDemo = Convert.ToString(dr["cover_Demo"]),
-                        CoverC = Convert.ToString(dr["cover_c"]),
+                        CoverA = safeString("cover_a"),
+                        CoverB = safeString("cover_b"),
+                        CoverDemo = safeString("cover_Demo"),
+                        CoverC = safeString("cover_c"),
 
-                        Status = Convert.ToString(dr["cStatus"]),
-                        CsId = dr["csid"] != DBNull.Value ? Convert.ToInt32(dr["csid"]) : 0,
+                        Status = safeString("cStatus"),
+                        CsId = safeInt("csid"),
 
-                        TotalItems = dr["totali"] != DBNull.Value ? Convert.ToInt32(dr["totali"]) : 0,
-                        Found = dr["found"] != DBNull.Value ? Convert.ToInt32(dr["found"]) : 0,
-                        NotFound = dr["nosNotFound"] != DBNull.Value ? Convert.ToInt32(dr["nosNotFound"]) : 0,
-                        PriceEntry = dr["PriceEntry"] != DBNull.Value ? Convert.ToInt32(dr["PriceEntry"]) : 0,
-                        Accept = dr["accept"] != DBNull.Value ? Convert.ToInt32(dr["accept"]) : 0,
-                        Reject = dr["reject"] != DBNull.Value ? Convert.ToInt32(dr["reject"]) : 0
+                        TotalItems = safeInt("totali"),
+                        Found = safeInt("found"),
+                        NotFound = safeInt("nosNotFound"),
+                        PriceEntry = safeInt("PriceEntry"),
+                        Accept = safeInt("accept"),
+                        Reject = safeInt("reject")
                     });
                 }
                 //while (dr.Read())
