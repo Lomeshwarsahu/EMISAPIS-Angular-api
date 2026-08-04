@@ -1,4 +1,4 @@
-﻿using EMISAPIS.DTOS;
+using EMISAPIS.DTOS;
 using EMISAPIS.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -288,7 +288,15 @@ WHERE user_name = @Username
         public async Task<IActionResult> Login1([FromBody] UserLoginDTO1 loginUser)
         {
             using SqlConnection con = new SqlConnection(_connectionString);
-            await con.OpenAsync();
+            try
+            {
+                await con.OpenAsync();
+            }
+            catch (SqlException ex) when (ex.Message.Contains("pre-login") || ex.Number == 10022 || ex.Number == 35)
+            {
+                await Task.Delay(150);
+                await con.OpenAsync();
+            }
 
             string query = @"SELECT user_name, user_id, password, passcommon, user_type, roleid, e_mail_id, ISNULL(flagPwdChange, 'N') AS flagPwdChange 
                      FROM dbo.Users WHERE ";

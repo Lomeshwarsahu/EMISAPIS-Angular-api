@@ -258,7 +258,7 @@ namespace EMISAPIS.Controllers
                     FROM PO_SDDetails ps
                     INNER JOIN purchase_order p ON p.po_id = ps.po_id
                     INNER JOIN massuppliers ms ON ms.supplier_id = p.supplier_id
-                    LEFT JOIN MasSDVarchar msd ON (msd.sd_mode_str = ps.SDMode OR msd.SDNAME = ps.SDMode)
+                    LEFT JOIN MasSDVarchar msd ON (msd.sd_mode_str = CAST(ps.SDMode AS varchar(50)) OR msd.SDNAME = CAST(ps.SDMode AS varchar(50)))
                     LEFT JOIN tenders t ON t.tender_id = p.tender_id
                     {where}
                     ORDER BY ps.entryDT DESC";

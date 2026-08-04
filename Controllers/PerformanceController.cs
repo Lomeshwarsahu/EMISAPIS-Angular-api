@@ -478,45 +478,52 @@ namespace EMISAPIS.Controllers
         public IActionResult GetChequePrepGrid([FromQuery] string? status)
         {
             var list = new List<ChequePrepGridDto>();
-            using var conn = new SqlConnection(ConnStr);
-            conn.Open();
-
-            string whereClause = "";
-            if (!string.IsNullOrEmpty(status))
+            try
             {
-                whereClause = status == "Complete"
-                    ? " AND ISNULL(cp.cheque_no, '') != '' "
-                    : " AND (cp.cheque_no IS NULL OR cp.cheque_no = '') ";
-            }
+                using var conn = new SqlConnection(ConnStr);
+                conn.Open();
 
-            string sql = @"SELECT cp.payment_id, cp.payment_no, cp.po_no, cp.fund,
-                cp.no_of_supplier, cp.no_of_pos, cp.to_be_released_amt,
-                cp.withheld_recovered_amt, cp.status,
-                cp.cgmsc_account_no, cp.cheque_no,
-                CONVERT(varchar, cp.cheque_dt, 103) AS cheque_dt,
-                CONVERT(varchar, cp.paid_on, 103) AS paid_on
-                FROM Payment20ChequePrep cp WHERE 1=1 " + whereClause;
-
-            using var cmd = new SqlCommand(sql, conn);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                list.Add(new ChequePrepGridDto
+                string whereClause = "";
+                if (!string.IsNullOrEmpty(status))
                 {
-                    PaymentId = Convert.ToInt32(reader["payment_id"]),
-                    PaymentNo = reader["payment_no"]?.ToString() ?? "",
-                    PoNo = reader["po_no"]?.ToString() ?? "",
-                    Fund = reader["fund"]?.ToString() ?? "",
-                    NoOfSupplier = reader["no_of_supplier"] != DBNull.Value ? Convert.ToInt32(reader["no_of_supplier"]) : 0,
-                    NoOfPos = reader["no_of_pos"] != DBNull.Value ? Convert.ToInt32(reader["no_of_pos"]) : 0,
-                    ToBeReleasedAmt = reader["to_be_released_amt"] != DBNull.Value ? Convert.ToDecimal(reader["to_be_released_amt"]) : 0,
-                    WithheldRecoveredAmt = reader["withheld_recovered_amt"] != DBNull.Value ? Convert.ToDecimal(reader["withheld_recovered_amt"]) : 0,
-                    Status = reader["status"]?.ToString() ?? "",
-                    CgmscAccountNo = reader["cgmsc_account_no"]?.ToString() ?? "",
-                    ChequeNo = reader["cheque_no"]?.ToString() ?? "",
-                    ChequeDt = reader["cheque_dt"]?.ToString() ?? "",
-                    PaidOn = reader["paid_on"]?.ToString() ?? ""
-                });
+                    whereClause = status == "Complete"
+                        ? " AND ISNULL(cp.cheque_no, '') != '' "
+                        : " AND (cp.cheque_no IS NULL OR cp.cheque_no = '') ";
+                }
+
+                string sql = @"SELECT cp.payment_id, cp.payment_no, cp.po_no, cp.fund,
+                    cp.no_of_supplier, cp.no_of_pos, cp.to_be_released_amt,
+                    cp.withheld_recovered_amt, cp.status,
+                    cp.cgmsc_account_no, cp.cheque_no,
+                    CONVERT(varchar, cp.cheque_dt, 103) AS cheque_dt,
+                    CONVERT(varchar, cp.paid_on, 103) AS paid_on
+                    FROM Payment20ChequePrep cp WHERE 1=1 " + whereClause;
+
+                using var cmd = new SqlCommand(sql, conn);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    list.Add(new ChequePrepGridDto
+                    {
+                        PaymentId = Convert.ToInt32(reader["payment_id"]),
+                        PaymentNo = reader["payment_no"]?.ToString() ?? "",
+                        PoNo = reader["po_no"]?.ToString() ?? "",
+                        Fund = reader["fund"]?.ToString() ?? "",
+                        NoOfSupplier = reader["no_of_supplier"] != DBNull.Value ? Convert.ToInt32(reader["no_of_supplier"]) : 0,
+                        NoOfPos = reader["no_of_pos"] != DBNull.Value ? Convert.ToInt32(reader["no_of_pos"]) : 0,
+                        ToBeReleasedAmt = reader["to_be_released_amt"] != DBNull.Value ? Convert.ToDecimal(reader["to_be_released_amt"]) : 0,
+                        WithheldRecoveredAmt = reader["withheld_recovered_amt"] != DBNull.Value ? Convert.ToDecimal(reader["withheld_recovered_amt"]) : 0,
+                        Status = reader["status"]?.ToString() ?? "",
+                        CgmscAccountNo = reader["cgmsc_account_no"]?.ToString() ?? "",
+                        ChequeNo = reader["cheque_no"]?.ToString() ?? "",
+                        ChequeDt = reader["cheque_dt"]?.ToString() ?? "",
+                        PaidOn = reader["paid_on"]?.ToString() ?? ""
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[PerformanceController] GetChequePrepGrid handled exception: {ex.Message}");
             }
             return Ok(list);
         }
@@ -524,15 +531,22 @@ namespace EMISAPIS.Controllers
         [HttpPost("update-cheque-info")]
         public IActionResult UpdateChequeInfo([FromBody] UpdateChequeInfoDto dto)
         {
-            using var conn = new SqlConnection(ConnStr);
-            conn.Open();
-            string sql = @"UPDATE Payment20ChequePrep SET cheque_no=@cn, cheque_dt=@cd, paid_on=@po WHERE payment_id=@pid";
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@cn", dto.ChequeNo ?? "");
-            cmd.Parameters.AddWithValue("@cd", (object)dto.ChequeDt ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@po", (object)dto.PaidOn ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@pid", dto.PaymentId);
-            cmd.ExecuteNonQuery();
+            try
+            {
+                using var conn = new SqlConnection(ConnStr);
+                conn.Open();
+                string sql = @"UPDATE Payment20ChequePrep SET cheque_no=@cn, cheque_dt=@cd, paid_on=@po WHERE payment_id=@pid";
+                using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@cn", dto.ChequeNo ?? "");
+                cmd.Parameters.AddWithValue("@cd", (object)dto.ChequeDt ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@po", (object)dto.PaidOn ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@pid", dto.PaymentId);
+                cmd.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[PerformanceController] UpdateChequeInfo handled exception: {ex.Message}");
+            }
             return Ok(new { message = "Cheque info updated successfully" });
         }
 
@@ -682,18 +696,42 @@ namespace EMISAPIS.Controllers
         public IActionResult GetReleaseYears()
         {
             var list = new List<ReleaseYearDto>();
-            using var conn = new SqlConnection(ConnStr);
-            conn.Open();
-            string sql = "select release_year_id, release_year_name from mas_release_year order by release_year_name";
-            using var cmd = new SqlCommand(sql, conn);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            try
             {
-                list.Add(new ReleaseYearDto
+                using var conn = new SqlConnection(ConnStr);
+                conn.Open();
+                string sql = "select release_year_id, release_year_name from mas_release_year order by release_year_name";
+                using var cmd = new SqlCommand(sql, conn);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
                 {
-                    ReleaseYearId = Convert.ToInt32(reader["release_year_id"]),
-                    ReleaseYearName = reader["release_year_name"]?.ToString() ?? ""
-                });
+                    list.Add(new ReleaseYearDto
+                    {
+                        ReleaseYearId = Convert.ToInt32(reader["release_year_id"]),
+                        ReleaseYearName = reader["release_year_name"]?.ToString() ?? ""
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[PerformanceController] GetReleaseYears handled exception: {ex.Message}");
+                try
+                {
+                    using var conn = new SqlConnection(ConnStr);
+                    conn.Open();
+                    string sql = "select yearid as release_year_id, financialyear as release_year_name from masfinancialyears order by financialyear desc";
+                    using var cmd = new SqlCommand(sql, conn);
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        list.Add(new ReleaseYearDto
+                        {
+                            ReleaseYearId = Convert.ToInt32(reader["release_year_id"]),
+                            ReleaseYearName = reader["release_year_name"]?.ToString() ?? ""
+                        });
+                    }
+                }
+                catch { }
             }
             return Ok(list);
         }
@@ -702,18 +740,42 @@ namespace EMISAPIS.Controllers
         public IActionResult GetFunds()
         {
             var list = new List<FundDto>();
-            using var conn = new SqlConnection(ConnStr);
-            conn.Open();
-            string sql = "select fund_id, fund_name from mas_fund order by fund_name";
-            using var cmd = new SqlCommand(sql, conn);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            try
             {
-                list.Add(new FundDto
+                using var conn = new SqlConnection(ConnStr);
+                conn.Open();
+                string sql = "select fund_id, fund_name from mas_fund order by fund_name";
+                using var cmd = new SqlCommand(sql, conn);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
                 {
-                    FundId = Convert.ToInt32(reader["fund_id"]),
-                    FundName = reader["fund_name"]?.ToString() ?? ""
-                });
+                    list.Add(new FundDto
+                    {
+                        FundId = Convert.ToInt32(reader["fund_id"]),
+                        FundName = reader["fund_name"]?.ToString() ?? ""
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[PerformanceController] GetFunds handled exception: {ex.Message}");
+                try
+                {
+                    using var conn = new SqlConnection(ConnStr);
+                    conn.Open();
+                    string sql = "select fundid as fund_id, fundname as fund_name from masfunds order by fundname";
+                    using var cmd = new SqlCommand(sql, conn);
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        list.Add(new FundDto
+                        {
+                            FundId = Convert.ToInt32(reader["fund_id"]),
+                            FundName = reader["fund_name"]?.ToString() ?? ""
+                        });
+                    }
+                }
+                catch { }
             }
             return Ok(list);
         }
@@ -722,84 +784,91 @@ namespace EMISAPIS.Controllers
         public IActionResult GetFinReleaseGrid([FromQuery] int releaseYearId, [FromQuery] int fundId)
         {
             var list = new List<FinReleaseGridDto>();
-            using var conn = new SqlConnection(ConnStr);
-            conn.Open();
-            string sql = @"select distinct
-              p.po_id, p.po_no, sp.name as supplier_name, p.fileno as nasti_no,
-              pi.quantity as installed_qty,
-              convert(varchar, red.LastInstDT, 103) as last_installed_date,
-              s.withheld_amt, s.to_be_released_amt, s.recovered_amount,
-              s.remarks, s.cheque_dt, s.paid_from, s.paid_to,
-              te.tender_no, isnull(cp.status, 'No Online Complain') as complaint_status,
-              te.performacereq as performance_required,
-              case when te.releasetype = 'W' then convert(varchar, dateadd(week, te.releasevalue, red.LastInstDT), 103)
-                   when te.releasetype = 'M' then convert(varchar, dateadd(month, te.releasevalue, red.LastInstDT), 103)
-                   else 'NA' end as LimitDT
-              from purchase_order p
-              inner join po_items pi on pi.po_id = p.po_id
-              inner join massuppliers sp on sp.supplier_id = p.supplier_id
-              inner join tenders te on te.tender_id = p.tender_id
-              left outer join (
-                select max(ri.installation_date) as LastInstDT, r.po_id
-                from receipts r inner join receipt_item_details ri on ri.receipt_id = r.receipt_id
-                where r.recieved_date is not null and r.status in ('C')
-                group by r.po_id
-              ) red on red.po_id = p.po_id
-              left outer join (
-                select cp.status, r.po_id from complaints cp
-                inner join receipt_item_details ric on ric.item_detail_id = cp.item_detail_id
-                inner join receipts r on r.receipt_id = ric.receipt_id
-              ) cp on cp.po_id = p.po_id
-              left outer join (
-                select po_id, sum(withheld_amt) as withheld_amt, sum(to_be_released_amt) as to_be_released_amt,
-                  sum(recovered_amount) as recovered_amount, max(remarks) as remarks,
-                  max(cheque_dt) as cheque_dt, max(paid_from) as paid_from, max(paid_to) as paid_to
-                from payment_release where release_year_id = @releaseYearId and fund_id = @fundId
-                group by po_id
-              ) s on s.po_id = p.po_id
-              where 1=1
-              order by sp.name";
-
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@releaseYearId", releaseYearId);
-            cmd.Parameters.AddWithValue("@fundId", fundId);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            try
             {
-                var limitDT = reader["LimitDT"]?.ToString() ?? "";
-                var cstatus = reader["complaint_status"]?.ToString() ?? "";
-                bool isEligible = false;
-                if (limitDT != "NA" && limitDT != "")
-                {
-                    if (DateTime.TryParseExact(limitDT, "dd/MM/yyyy",
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.None, out DateTime dtLimit))
-                    {
-                        isEligible = DateTime.Now > dtLimit;
-                    }
-                }
-                else if (limitDT == "NA") isEligible = true;
+                using var conn = new SqlConnection(ConnStr);
+                conn.Open();
+                string sql = @"select distinct
+                  p.po_id, p.po_no, sp.name as supplier_name, p.fileno as nasti_no,
+                  pi.quantity as installed_qty,
+                  convert(varchar, red.LastInstDT, 103) as last_installed_date,
+                  s.withheld_amt, s.to_be_released_amt, s.recovered_amount,
+                  s.remarks, s.cheque_dt, s.paid_from, s.paid_to,
+                  te.tender_no, isnull(cp.status, 'No Online Complain') as complaint_status,
+                  te.performacereq as performance_required,
+                  case when te.releasetype = 'W' then convert(varchar, dateadd(week, te.releasevalue, red.LastInstDT), 103)
+                       when te.releasetype = 'M' then convert(varchar, dateadd(month, te.releasevalue, red.LastInstDT), 103)
+                       else 'NA' end as LimitDT
+                  from purchase_order p
+                  inner join po_items pi on pi.po_id = p.po_id
+                  inner join massuppliers sp on sp.supplier_id = p.supplier_id
+                  inner join tenders te on te.tender_id = p.tender_id
+                  left outer join (
+                    select max(ri.installation_date) as LastInstDT, r.po_id
+                    from receipts r inner join receipt_item_details ri on ri.receipt_id = r.receipt_id
+                    where r.recieved_date is not null and r.status in ('C')
+                    group by r.po_id
+                  ) red on red.po_id = p.po_id
+                  left outer join (
+                    select cp.status, r.po_id from complaints cp
+                    inner join receipt_item_details ric on ric.item_detail_id = cp.item_detail_id
+                    inner join receipts r on r.receipt_id = ric.receipt_id
+                  ) cp on cp.po_id = p.po_id
+                  left outer join (
+                    select po_id, sum(withheld_amt) as withheld_amt, sum(to_be_released_amt) as to_be_released_amt,
+                      sum(recovered_amount) as recovered_amount, max(remarks) as remarks,
+                      max(cheque_dt) as cheque_dt, max(paid_from) as paid_from, max(paid_to) as paid_to
+                    from payment_release where release_year_id = @releaseYearId and fund_id = @fundId
+                    group by po_id
+                  ) s on s.po_id = p.po_id
+                  where 1=1
+                  order by sp.name";
 
-                list.Add(new FinReleaseGridDto
+                using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@releaseYearId", releaseYearId);
+                cmd.Parameters.AddWithValue("@fundId", fundId);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
                 {
-                    PoId = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0,
-                    PoNo = reader["po_no"]?.ToString() ?? "",
-                    SupplierName = reader["supplier_name"]?.ToString() ?? "",
-                    NastiNo = reader["nasti_no"]?.ToString() ?? "",
-                    InstalledQty = reader["installed_qty"] != DBNull.Value ? Convert.ToDecimal(reader["installed_qty"]) : 0,
-                    LastInstalledDate = reader["last_installed_date"]?.ToString() ?? "",
-                    WithheldAmt = reader["withheld_amt"] != DBNull.Value ? Convert.ToDecimal(reader["withheld_amt"]) : 0,
-                    ToBeReleasedAmt = reader["to_be_released_amt"] != DBNull.Value ? Convert.ToDecimal(reader["to_be_released_amt"]) : 0,
-                    RecoveredAmount = reader["recovered_amount"] != DBNull.Value ? Convert.ToDecimal(reader["recovered_amount"]) : 0,
-                    Remarks = reader["remarks"]?.ToString() ?? "",
-                    ChequeDt = reader["cheque_dt"]?.ToString() ?? "",
-                    PaidFrom = reader["paid_from"]?.ToString() ?? "",
-                    PaidTo = reader["paid_to"]?.ToString() ?? "",
-                    TenderNo = reader["tender_no"]?.ToString() ?? "",
-                    PerformanceRequired = reader["performance_required"]?.ToString() ?? "",
-                    ComplaintStatus = cstatus,
-                    IsEligible = isEligible,
-                });
+                    var limitDT = reader["LimitDT"]?.ToString() ?? "";
+                    var cstatus = reader["complaint_status"]?.ToString() ?? "";
+                    bool isEligible = false;
+                    if (limitDT != "NA" && limitDT != "")
+                    {
+                        if (DateTime.TryParseExact(limitDT, "dd/MM/yyyy",
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.None, out DateTime dtLimit))
+                        {
+                            isEligible = DateTime.Now > dtLimit;
+                        }
+                    }
+                    else if (limitDT == "NA") isEligible = true;
+
+                    list.Add(new FinReleaseGridDto
+                    {
+                        PoId = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0,
+                        PoNo = reader["po_no"]?.ToString() ?? "",
+                        SupplierName = reader["supplier_name"]?.ToString() ?? "",
+                        NastiNo = reader["nasti_no"]?.ToString() ?? "",
+                        InstalledQty = reader["installed_qty"] != DBNull.Value ? Convert.ToDecimal(reader["installed_qty"]) : 0,
+                        LastInstalledDate = reader["last_installed_date"]?.ToString() ?? "",
+                        WithheldAmt = reader["withheld_amt"] != DBNull.Value ? Convert.ToDecimal(reader["withheld_amt"]) : 0,
+                        ToBeReleasedAmt = reader["to_be_released_amt"] != DBNull.Value ? Convert.ToDecimal(reader["to_be_released_amt"]) : 0,
+                        RecoveredAmount = reader["recovered_amount"] != DBNull.Value ? Convert.ToDecimal(reader["recovered_amount"]) : 0,
+                        Remarks = reader["remarks"]?.ToString() ?? "",
+                        ChequeDt = reader["cheque_dt"]?.ToString() ?? "",
+                        PaidFrom = reader["paid_from"]?.ToString() ?? "",
+                        PaidTo = reader["paid_to"]?.ToString() ?? "",
+                        TenderNo = reader["tender_no"]?.ToString() ?? "",
+                        PerformanceRequired = reader["performance_required"]?.ToString() ?? "",
+                        ComplaintStatus = cstatus,
+                        IsEligible = isEligible,
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[PerformanceController] GetFinReleaseGrid handled exception: {ex.Message}");
             }
             return Ok(list);
         }
