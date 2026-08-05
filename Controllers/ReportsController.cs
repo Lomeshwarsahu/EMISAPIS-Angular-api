@@ -466,17 +466,27 @@ and m.item_id =@itemId
         //distrinc wise details 
         [HttpGet("GetDistrictWiseDetails")]
         public IActionResult GetDistrictWiseDetails(
-                   int districtId,
-                   int directorateId,
-                   int financialYearId,
-                   string fromDate,
-                   string toDate)
+                   int? districtId,
+                   int? directorateId,
+                   int? financialYearId,
+                   string? fromDate,
+                   string? toDate)
         {
             List<DistrictWiseDetailDTO> list = new List<DistrictWiseDetailDTO>();
 
             using (SqlConnection con = new SqlConnection(_connectionString))
             {
                 con.Open();
+
+                string whereClause = "";
+                if (financialYearId.HasValue && financialYearId.Value > 0)
+                    whereClause += " and p.financial_year_id = @financialYearId ";
+                if (districtId.HasValue && districtId.Value > 0)
+                    whereClause += " and dis.DP_DistrictID = @districtId ";
+                if (directorateId.HasValue && directorateId.Value > 0)
+                    whereClause += " and p.directorate_id = @directorateId ";
+                if (!string.IsNullOrWhiteSpace(fromDate) && !string.IsNullOrWhiteSpace(toDate))
+                    whereClause += " and p.po_date between CAST(@fromDate AS date) and CAST(@toDate AS date) ";
 
                 string query = @"
                     select distinct 
@@ -527,20 +537,16 @@ and m.item_id =@itemId
                         where r.recieved_date is not null and r.status='C'
                         group by r.po_id, r.location_id
                     ) ins on ins.po_id=pi.po_id and ins.location_id=pi.consignee_id
-                    where p.po_date between CONVERT(date,@fromDate,103) and CONVERT(date,@toDate,103)
-                    and p.status='Order Placed'
-                    and dis.DP_DistrictID=@districtId
-                    and p.directorate_id=@directorateId
-                    and p.financial_year_id=@financialYearId
+                    where 1=1 and p.status = 'Order Placed' " + whereClause + @"
                 ";
 
                 using (SqlCommand cmd = new SqlCommand(query, con))
                 {
-                    cmd.Parameters.AddWithValue("@fromDate", fromDate);
-                    cmd.Parameters.AddWithValue("@toDate", toDate);
-                    cmd.Parameters.AddWithValue("@districtId", districtId);
-                    cmd.Parameters.AddWithValue("@directorateId", directorateId);
-                    cmd.Parameters.AddWithValue("@financialYearId", financialYearId);
+                    cmd.Parameters.AddWithValue("@fromDate", fromDate ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@toDate", toDate ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@districtId", districtId ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@directorateId", directorateId ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@financialYearId", financialYearId ?? (object)DBNull.Value);
 
                     using (SqlDataReader reader = cmd.ExecuteReader())
                     {
