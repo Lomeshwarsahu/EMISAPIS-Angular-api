@@ -1,13 +1,18 @@
-using EMISAPIS.DTOS;
+﻿using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
 using EMISAPIS.Models;
+using EMISAPIS.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
-using System.IdentityModel.Tokens.Jwt;
-using EMISAPIS.Helpers;
+using Microsoft.Data.SqlClient;
 using Microsoft.IdentityModel.Tokens;
 using System;
 using System.ComponentModel;
 using System.Data;
+using System.IdentityModel.Tokens.Jwt;
+using System.IdentityModel.Tokens.Jwt;
 using System.Runtime.Intrinsics.X86;
 using System.Security.Claims;
 using System.Text;
@@ -16,6 +21,7 @@ using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace EMISAPIS.Controllers
 {
+    [AllowAnonymous]
     [Route("api/[controller]")]
     [ApiController]
     public class AuthController : ControllerBase

@@ -1,5 +1,12 @@
 using EMISAPIS.Helpers;
 
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Authorization;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System.Text;
+
 // 1) Load `.env` into process environment
 EnvFileLoader.Load();
 
@@ -19,16 +26,60 @@ builder.Services.AddHttpClient(nameof(OtpSmsService), client =>
 });
 builder.Services.AddSingleton<OtpSmsService>();
 
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-    {
-        // PascalCase for legacy clients; Angular maps both casings on consignee screen
-        options.JsonSerializerOptions.PropertyNamingPolicy = null;
-        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-    });
+//builder.Services.AddControllers()
+//    .AddJsonOptions(options =>
+//    {
+//        // PascalCase for legacy clients; Angular maps both casings on consignee screen
+//        options.JsonSerializerOptions.PropertyNamingPolicy = null;
+//        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+//    });
+
+builder.Services.AddControllers(options =>
+{
+    // 🔒 यह पॉलिसी पूरी एप्लीकेशन के लिए ग्लोबल ऑथेंटिकेशन अनिवार्य कर देगी
+    var policy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+
+    options.Filters.Add(new AuthorizeFilter(policy));
+})
+.AddJsonOptions(options =>
+{
+    options.JsonSerializerOptions.PropertyNamingPolicy = null;
+    options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+});
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+//builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            new string[] {}
+        }
+    });
+});
+
+
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngular",
@@ -41,6 +92,26 @@ builder.Services.AddCors(options =>
                   .AllowAnyMethod();
         });
 });
+// --- 1. JWT Authentication Config ---
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+        ValidAudience = builder.Configuration["Jwt:Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]))
+    };
+});
+
 
 
 var app = builder.Build();
@@ -57,7 +128,18 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 
+//app.UseCors("AllowAngular");
+////app.UseAuthorization();
+//app.UseAuthentication();
+//app.UseAuthorization();
+//app.MapControllers();
+
+//app.Run();
 app.UseCors("AllowAngular");
+
+// 💡 यह लाइन आपके कोड में छूट गई थी, इसे यहाँ जोड़ें:
+app.UseAuthentication();
+
 app.UseAuthorization();
 
 app.MapControllers();
