@@ -9,7 +9,7 @@ using System.Diagnostics.Eventing.Reader;
 using System.Globalization;
 using System.Net.NetworkInformation;
 using System.Text.Json.Serialization;
-using static System.Runtime.InteropServices.JavaScript.JSType;
+
 namespace EMISAPIS.Controllers
 {
     //[Authorize]

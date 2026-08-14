@@ -17,7 +17,6 @@ using System.Runtime.Intrinsics.X86;
 using System.Security.Claims;
 using System.Text;
 using static Azure.Core.HttpHeader;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace EMISAPIS.Controllers
 {
@@ -36,38 +35,161 @@ namespace EMISAPIS.Controllers
             _connectionString = configuration.GetConnectionString("DefaultConnection");
         }
 
-        //  GET ALL
-        [HttpGet]
-        public async Task<IActionResult> GetStudents()
+        [HttpGet("stu")]
+        public IActionResult GetTestStudents1()
         {
-            var users = new List<UserDTO>();
-
-            using SqlConnection con = new SqlConnection(_connectionString);
-            await con.OpenAsync();
-
-            using SqlCommand cmd = new SqlCommand("SELECT * FROM Users", con);
-            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
+            var dummyUsers = new List<UserDTO>
+        {
+            new UserDTO
             {
+                user_id = 1,
+                user_name = "Test User One",
+                e_mail_id = "test1@cgmsc.gov.in",
+                password = "password123",
+                user_type = "Admin",
+                designation = "Manager",
+                address = "Raipur, Chhattisgarh",
+                location_id = 101
+            },
+            new UserDTO
+            {
+                user_id = 2,
+                user_name = "Test User Two",
+                e_mail_id = "test2@cgmsc.gov.in",
+                password = "password123",
+                user_type = "User",
+                designation = "Officer",
+                address = "Bhilai, Chhattisgarh",
+                location_id = 102
+            }
+        };
 
-                users.Add(new UserDTO
+            return Ok(dummyUsers);
+        }
+        [HttpGet("test-students")]
+        public IActionResult GetTestStudents([FromServices] ILogger<AuthController> logger)
+        {
+            try
+            {
+                var dummyUsers = new List<UserDTO>
+        {
+            new UserDTO
+            {
+                user_id = 1,
+                user_name = "Test User One",
+                e_mail_id = "test1@cgmsc.gov.in",
+                password = "password123",
+                user_type = "Admin",
+                designation = "Manager",
+                address = "Raipur, Chhattisgarh",
+                location_id = 101
+            },
+            new UserDTO
+            {
+                user_id = 2,
+                user_name = "Test User Two",
+                e_mail_id = "test2@cgmsc.gov.in",
+                password = "password123",
+                user_type = "User",
+                designation = "Officer",
+                address = "Bhilai, Chhattisgarh",
+                location_id = 102
+            }
+        };
+
+                return Ok(dummyUsers);
+            }
+            catch (Exception ex)
+            {
+                // Server logs ke liye error print karega
+                logger.LogError(ex, "GetTestStudents method me error aa gaya: {Message}", ex.Message);
+
+                // Live server / Postman par exact error details dikhane ke liye
+                return StatusCode(500, new
                 {
-                    user_id = reader["user_id"] != DBNull.Value ? Convert.ToInt32(reader["user_id"]) : 0,
-                    user_name = reader["user_name"].ToString(),
-                    e_mail_id = reader["e_mail_id"].ToString(),
-                    password = reader["password"].ToString(),
-                    user_type = reader["user_type"].ToString(),
-                    designation = reader["designation"].ToString(),
-                    address = reader["address"].ToString(),
-                    location_id = reader["location_id"] != DBNull.Value
-                ? Convert.ToInt32(reader["location_id"]) : 0,
-
+                    message = "Internal Server Error",
+                    error = ex.Message,
+                    stackTrace = ex.StackTrace
                 });
             }
-
-            return Ok(users);
         }
+        [HttpGet]
+        public async Task<IActionResult> GetStudents([FromServices] ILogger<AuthController> logger)
+        {
+            try
+            {
+                var users = new List<UserDTO>();
+
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
+
+                using SqlCommand cmd = new SqlCommand("SELECT * FROM Users", con);
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
+                {
+                    users.Add(new UserDTO
+                    {
+                        user_id = reader["user_id"] != DBNull.Value ? Convert.ToInt32(reader["user_id"]) : 0,
+                        user_name = reader["user_name"].ToString(),
+                        e_mail_id = reader["e_mail_id"].ToString(),
+                        password = reader["password"].ToString(),
+                        user_type = reader["user_type"].ToString(),
+                        designation = reader["designation"].ToString(),
+                        address = reader["address"].ToString(),
+                        location_id = reader["location_id"] != DBNull.Value
+                    ? Convert.ToInt32(reader["location_id"]) : 0,
+                    });
+                }
+
+                return Ok(users);
+            }
+            catch (Exception ex)
+            {
+                // Console / Server logs ke liye error print karega
+                logger.LogError(ex, "GetStudents method me error aa gaya: {Message}", ex.Message);
+
+                // Live server / Postman par exact error details dikhane ke liye
+                return StatusCode(500, new
+                {
+                    message = "Internal Server Error",
+                    error = ex.Message,
+                    stackTrace = ex.StackTrace
+                });
+            }
+        }
+        //  GET ALL
+        //[HttpGet]
+        //public async Task<IActionResult> GetStudents()
+        //{
+        //    var users = new List<UserDTO>();
+
+        //    using SqlConnection con = new SqlConnection(_connectionString);
+        //    await con.OpenAsync();
+
+        //    using SqlCommand cmd = new SqlCommand("SELECT * FROM Users", con);
+        //    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+
+        //    while (await reader.ReadAsync())
+        //    {
+
+        //        users.Add(new UserDTO
+        //        {
+        //            user_id = reader["user_id"] != DBNull.Value ? Convert.ToInt32(reader["user_id"]) : 0,
+        //            user_name = reader["user_name"].ToString(),
+        //            e_mail_id = reader["e_mail_id"].ToString(),
+        //            password = reader["password"].ToString(),
+        //            user_type = reader["user_type"].ToString(),
+        //            designation = reader["designation"].ToString(),
+        //            address = reader["address"].ToString(),
+        //            location_id = reader["location_id"] != DBNull.Value
+        //        ? Convert.ToInt32(reader["location_id"]) : 0,
+
+        //        });
+        //    }
+
+        //    return Ok(users);
+        //}
         [HttpGet("{id:int}")]
         public async Task<IActionResult> GetUserbyid(int id)
         {
