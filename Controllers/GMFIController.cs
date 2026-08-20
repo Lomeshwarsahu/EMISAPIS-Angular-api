@@ -2869,10 +2869,12 @@ where 1=1 order by b.BUDGETNAME";
         //file gridview 
         [HttpGet("GetDashboardGrid")]
         public async Task<IActionResult> GetDashboardGrid(
-    [FromQuery] string poType = "All",
-    [FromQuery] string fitUnfit = "All",
-    [FromQuery] string eqType = "0",
-    [FromQuery] int authorityId = 0)
+            [FromQuery] string poType = "All",
+            [FromQuery] string fitUnfit = "All",
+            [FromQuery] string eqType = "0",
+            [FromQuery] int authorityId = 0,
+            [FromQuery] bool myDesk = false,
+            [FromQuery] int userId = 0)
         {
             string connectionString = _config.GetConnectionString("DefaultConnection");
             var resultList = new List<DashboardGridResponseDto>();
@@ -2882,7 +2884,20 @@ where 1=1 order by b.BUDGETNAME";
             string whereclauseDir = "";
             string ftunft = "";
             string eqtypeStr = "";
-            string whFileMyDesk = " and isnull(pres.user_id,0) in (5,29)";
+            string whFileMyDesk = "";
+
+            if (myDesk && userId > 0)
+            {
+                whFileMyDesk = $" and isnull(pres.user_id, 383) = {userId}";
+            }
+            else if (myDesk)
+            {
+                whFileMyDesk = " and isnull(pres.user_id, 0) in (5, 29, 383)";
+            }
+            else
+            {
+                whFileMyDesk = "";
+            }
 
             // 1. PO Type Logic
             if (poType == "NP") whereclause += " and isnull(p.potype,'NP')='NP' ";
