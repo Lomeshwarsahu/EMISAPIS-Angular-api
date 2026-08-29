@@ -526,6 +526,7 @@ namespace EMISAPIS.Controllers
         }
 
         // GET: api/IT/sidebar-tree/5
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpGet("sidebar-tree/{roleId}")]
         public async Task<IActionResult> GetSidebarTree(int roleId)
         {
