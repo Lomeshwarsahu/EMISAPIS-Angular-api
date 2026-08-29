@@ -3060,27 +3060,51 @@ order by POdate";
         }
 
         // GET: api/Reports/equipment-tag-report
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpGet("equipment-tag-report")]
-        public async Task<IActionResult> GetEquipmentTagReport([FromQuery] string poType, [FromQuery] string? fromDate, [FromQuery] string? toDate)
+        public async Task<IActionResult> GetEquipmentTagReport([FromQuery] string? poType, [FromQuery] string? fromDate, [FromQuery] string? toDate)
         {
             List<EquipmentTagReportDto> list = new List<EquipmentTagReportDto>();
-            string poFilter = poType == "NP" ? " and isnull(po.potype, 'NP') = 'NP' " :
-                              poType == "CP" ? " and isnull(po.potype, 'NP') = 'CP' " : "";
-            string fromFilter = !string.IsNullOrEmpty(fromDate) ? " and e.installation_date >= convert(date, @FromDate, 103) " : "";
-            string toFilter = !string.IsNullOrEmpty(toDate) ? " and e.installation_date <= convert(date, @ToDate, 103) " : "";
+            string whereFromTo = "";
+            string whereFromTo1 = "";
+            if (!string.IsNullOrEmpty(fromDate) && !string.IsNullOrEmpty(toDate))
+            {
+                whereFromTo = " and r.entryDT between convert(date, @FromDate, 103) and convert(date, @ToDate, 103) ";
+                whereFromTo1 = " and A.entryDt between convert(date, @FromDate, 103) and convert(date, @ToDate, 103) ";
+            }
 
             string query = $@"
-select d.DBStart_Name_En as district, l.location_name as location, m.item_name as itemName, m.item_code_as_per_tender as itemCode,
-       e.make, e.model as modelNo, convert(varchar, e.receipt_date, 103) as receiptDate,
-       convert(varchar, e.installation_date, 103) as installationDate,
-       convert(varchar, e.warranty_upto, 103) as warrantyUpto, e.serial_no as serialNo
-from existing_item e
-inner join masitems m on m.item_id = e.item_id
-inner join maslocations l on l.location_id = e.location_id
-left outer join Districts d on d.DP_DistrictID = l.DP_DistrictID
-inner join purchase_order po on po.po_id = e.po_id
-where 1=1 {poFilter} {fromFilter} {toFilter}
-order by e.installation_date desc";
+select d.DBStart_Name_En as district, ltrim(rtrim(l.location_name)) as location,
+       ltrim(rtrim(m.item_name)) as itemName, m.item_code_as_per_tender as itemCode,
+       ri.make as make, ri.model_no as modelNo,
+       convert(varchar, r.recieved_date, 103) as receiptDate,
+       convert(varchar, ri.installation_date, 103) as installationDate,
+       convert(varchar, ri.warenty_to, 103) as warrantyUpto,
+       ri.make_no as serialNo
+from receipt_item_details ri
+inner join receipts r on r.receipt_id = ri.receipt_id
+inner join maslocations l on l.location_id = r.location_id
+inner join Districts d on d.DP_DistrictID = l.DP_DistrictID
+inner join po_items pi on pi.po_id = r.po_id and r.location_id = pi.consignee_id
+inner join masitems m on m.item_id = pi.item_id
+where 1=1 and m.item_id not in (2668, 2666) {whereFromTo}
+
+union all
+
+select d.DBStart_Name_En as district, ltrim(rtrim(l.location_name)) as location,
+       ltrim(rtrim(ms.item_name)) as itemName, ms.item_code_as_per_tender as itemCode,
+       A.make as make, A.model as modelNo,
+       convert(varchar, A.Receipt_Date, 103) as receiptDate,
+       convert(varchar, A.installation_date, 103) as installationDate,
+       convert(varchar, A.warranty_upto, 103) as warrantyUpto,
+       A.make_no as serialNo
+from existing_item A
+inner join maslocations l on l.location_id = A.location_id
+inner join Districts d on d.DP_DistrictID = l.DP_DistrictID
+inner join masitems ms on ms.Item_Id = A.item_id
+left outer join SupplyMaster sm on sm.SupID = A.SupID
+where 1=1 and A.SUPID is not null and ms.item_id not in (2668, 2666) {whereFromTo1}
+order by district";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
