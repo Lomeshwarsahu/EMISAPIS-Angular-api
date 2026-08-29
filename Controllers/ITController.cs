@@ -525,6 +525,91 @@ namespace EMISAPIS.Controllers
             return Ok(subMenus);
         }
 
+        // GET: api/IT/sidebar-tree/5
+        [HttpGet("sidebar-tree/{roleId}")]
+        public async Task<IActionResult> GetSidebarTree(int roleId)
+        {
+            var sidebar = new List<SidebarItemDto>();
+            using var conn = new SqlConnection(ConnStr());
+            await conn.OpenAsync();
+
+            // 1. Fetch active menus mapped to this role
+            var menus = new List<MenuDto>();
+            using (var cmd = new SqlCommand(@"
+                SELECT DISTINCT m.menuid, m.menuname, m.menulink, m.menuorder
+                FROM masmenu m
+                INNER JOIN masMenuRole mr ON mr.MenuID = m.menuid
+                WHERE mr.RoleID = @RoleId AND m.isactive = 1
+                ORDER BY m.menuorder", conn))
+            {
+                cmd.Parameters.AddWithValue("@RoleId", roleId);
+                using var dr = await cmd.ExecuteReaderAsync();
+                while (await dr.ReadAsync())
+                {
+                    menus.Add(new MenuDto
+                    {
+                        MenuId = Convert.ToInt32(dr["menuid"]),
+                        MenuName = dr["menuname"]?.ToString() ?? string.Empty,
+                        MenuLink = dr["menulink"]?.ToString() ?? string.Empty,
+                        MenuOrder = Convert.ToInt32(dr["menuorder"])
+                    });
+                }
+            }
+
+            // 2. Fetch active submenus mapped to this role
+            var submenus = new List<SubMenuDto>();
+            using (var cmd = new SqlCommand(@"
+                SELECT s.submenuid, s.submenuname, s.submenulink, s.menuid, s.submenuorder
+                FROM masSubMenu s
+                INNER JOIN masSubMenuRole sr ON sr.SubMenuID = s.submenuid
+                WHERE sr.RoleID = @RoleId AND s.isactive = 1
+                ORDER BY s.menuid, s.submenuorder", conn))
+            {
+                cmd.Parameters.AddWithValue("@RoleId", roleId);
+                using var dr = await cmd.ExecuteReaderAsync();
+                while (await dr.ReadAsync())
+                {
+                    submenus.Add(new SubMenuDto
+                    {
+                        SubMenuId = Convert.ToInt32(dr["submenuid"]),
+                        SubMenuName = dr["submenuname"]?.ToString() ?? string.Empty,
+                        SubMenuLink = dr["submenulink"]?.ToString() ?? string.Empty,
+                        MenuId = Convert.ToInt32(dr["menuid"]),
+                        SubMenuOrder = Convert.ToInt32(dr["submenuorder"])
+                    });
+                }
+            }
+
+            // 3. Assemble hierarchy
+            foreach (var menu in menus)
+            {
+                var item = new SidebarItemDto
+                {
+                    Label = menu.MenuName,
+                    Route = menu.MenuLink
+                };
+
+                var matchingSubmenus = submenus
+                    .Where(s => s.MenuId == menu.MenuId)
+                    .OrderBy(s => s.SubMenuOrder)
+                    .Select(s => new SidebarSubItemDto
+                    {
+                        Label = s.SubMenuName,
+                        Route = s.SubMenuLink
+                    })
+                    .ToList();
+
+                if (matchingSubmenus.Count > 0)
+                {
+                    item.Submenu = matchingSubmenus;
+                }
+
+                sidebar.Add(item);
+            }
+
+            return Ok(sidebar);
+        }
+
         #endregion
     }
 }
