@@ -3214,7 +3214,8 @@ group by po.outward_no, po.po_no, s.SANCTIONEDAMOUNT, Pamount, WAmout, s.ADMINCH
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
             using SqlCommand cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@SanctionId", sactionId);
+            int.TryParse(sactionId, out int parsedSanctionId);
+            cmd.Parameters.AddWithValue("@SanctionId", parsedSanctionId);
 
             string html = "<html><head><style>body { font-family: sans-serif; margin: 40px; } table { width: 100%; border-collapse: collapse; margin-top: 20px; } th, td { border: 1px solid #ccc; padding: 10px; text-align: left; } th { background-color: #f4f4f4; }</style></head><body>";
             html += "<h2>CGMSC EMIS — Sanction Notesheet Report</h2>";
