@@ -331,7 +331,7 @@ namespace EMISAPIS.DTOS
         public int? nos { get; set; }
     }
 
-    public class OpeningStockDetailDto
+    public class OpeningStockDrilldownDto
     {
         public int? existing_item_id { get; set; }
         public string? item_name { get; set; }
@@ -498,7 +498,7 @@ namespace EMISAPIS.DTOS
         public string? item_code_as_per_tender { get; set; }
     }
 
-    public class TenderStatusDto
+    public class TenderStatusReportDto
     {
         public int? tender_id { get; set; }
         public string? tender_no { get; set; }
@@ -587,5 +587,147 @@ namespace EMISAPIS.DTOS
     {
         public int tender_id { get; set; }
         public string? tender_no { get; set; }
+    }
+
+    public class ComplainReportDto
+    {
+        public int? complaint_id { get; set; }
+        public string? complaint_no { get; set; }
+        public string? complaint_date { get; set; }
+        public int? item_id { get; set; }
+        public string? complaint_details { get; set; }
+        public int? location_id { get; set; }
+        public int? supplier_id { get; set; }
+        public int? complaints_trouble_id { get; set; }
+        public string? not_function_date { get; set; }
+        public string? item_name { get; set; }
+        public string? location_name { get; set; }
+        public string? item_code_as_per_tender { get; set; }
+        public int? user_id { get; set; }
+        public string? serial_no { get; set; }
+        public string? supplier { get; set; }
+        public string? email_id { get; set; }
+        public string? mobile_no { get; set; }
+    }
+
+    public class PopaidReportIgmDto
+    {
+        public string? poNo { get; set; }
+        public string? poDate { get; set; }
+        public string? outwardNo { get; set; }
+        public string? supplierName { get; set; }
+        public string? sanctionDate { get; set; }
+        public decimal? grossAmount { get; set; }
+        public decimal? totalDeduction { get; set; }
+        public decimal? totalAddition { get; set; }
+        public decimal? chequeAmount { get; set; }
+        public string? aidNo { get; set; }
+        public string? chequeDate { get; set; }
+        public string? budgetName { get; set; }
+        public string? poType { get; set; }
+    }
+
+    public class PoPaidReportDto
+    {
+        public string? poNo { get; set; }
+        public string? poDate { get; set; }
+        public string? outwardNo { get; set; }
+        public string? supplierName { get; set; }
+        public string? sanctionDate { get; set; }
+        public decimal? grossAmount { get; set; }
+        public decimal? totalDeduction { get; set; }
+        public decimal? totalAddition { get; set; }
+        public decimal? chequeAmount { get; set; }
+        public string? aidNo { get; set; }
+        public string? chequeDate { get; set; }
+        public string? budgetName { get; set; }
+        public string? poType { get; set; }
+    }
+
+    public class EmdDepositeReportDto
+    {
+        public int? id { get; set; }
+        public int? SupId { get; set; }
+        public string? name { get; set; }
+        public string? TenderNo { get; set; }
+        public decimal? EMDAmt { get; set; }
+        public string? EMDType { get; set; }
+        public string? EMDDocumentNo { get; set; }
+        public string? EMDDocument { get; set; }
+        public string? EMDDepositeDt { get; set; }
+        public string? EntryDate { get; set; }
+    }
+
+    public class POSummaryPOWiseDetailDto
+    {
+        public int? facility_aut_id { get; set; }
+        public string? facility_aut_name { get; set; }
+        public string? PONO { get; set; }
+        public string? POtype { get; set; }
+        public string? CODE { get; set; }
+        public string? ITEM_NAME { get; set; }
+        public string? po_date { get; set; }
+        public string? SUPPLIER_NAME { get; set; }
+        public string? TENDER_NO { get; set; }
+        public decimal? quantity { get; set; }
+        public decimal? PValue { get; set; }
+        public string? PDate { get; set; }
+        public decimal? percentage { get; set; }
+        public decimal? basic_rate { get; set; }
+    }
+
+    public class SupplierPaymentSummaryReportDto
+    {
+        public string? name { get; set; }
+        public int? supplier_id { get; set; }
+        public int? countNOs { get; set; }
+        public decimal? ChequeAmt { get; set; }
+        public decimal? adminc { get; set; }
+        public string? AIDNO { get; set; }
+        public string? chequeDT { get; set; }
+        public string? PAIDON { get; set; }
+        public int? PAYMENTID { get; set; }
+        public string? BUDGETNAME { get; set; }
+        public int? BUDGETID { get; set; }
+        public decimal? TotalCheque { get; set; }
+        public string? mobile_no { get; set; }
+        public string? email_id { get; set; }
+    }
+
+    public class TenderWisePoDetailDto
+    {
+        public string? facility_aut_name { get; set; }
+        public string? supplier_name { get; set; }
+        public int? tender_id { get; set; }
+        public string? tender_no { get; set; }
+        public string? tender_date { get; set; }
+        public int? po_id { get; set; }
+        public string? pono { get; set; }
+        public string? POdate { get; set; }
+        public string? contract_date { get; set; }
+        public string? contract_end_date { get; set; }
+        public decimal? poqty { get; set; }
+        public decimal? Supplyqty { get; set; }
+        public decimal? receiptQTY { get; set; }
+        public decimal? insqty { get; set; }
+        public decimal? basic_rate { get; set; }
+        public decimal? percentage { get; set; }
+        public decimal? single_unit_price { get; set; }
+        public string? item_code_as_per_tender { get; set; }
+        public string? item_name { get; set; }
+    }
+
+    public class EquipmentTagReportDto
+    {
+        public string? district { get; set; }
+        public string? location { get; set; }
+        public string? itemName { get; set; }
+        public string? itemCode { get; set; }
+        public string? make { get; set; }
+        public string? modelNo { get; set; }
+        public string? receiptDate { get; set; }
+        public string? installationDate { get; set; }
+        public string? warrantyUpto { get; set; }
+        public string? serialNo { get; set; }
     }
 }
