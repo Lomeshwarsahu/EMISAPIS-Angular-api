@@ -106,4 +106,29 @@ namespace EMISAPIS.DTOS
         public string WorkingStatus { get; set; } = string.Empty;
         public string Remarks { get; set; } = string.Empty;
     }
+
+    public class NodalInformationDto
+    {
+        public int LocationId { get; set; }
+        public string LocationName { get; set; } = string.Empty;
+        public string FacilityTypeName { get; set; } = string.Empty;
+        public string DistrictName { get; set; } = string.Empty;
+        public int DistrictId { get; set; }
+        public int FacilityTypeId { get; set; }
+        public int UserId { get; set; }
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Designation { get; set; } = string.Empty;
+        public string MobileNo { get; set; } = string.Empty;
+        public string EmailId { get; set; } = string.Empty;
+    }
+
+    public class NodalInformationSaveDto
+    {
+        public int UserId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Designation { get; set; } = string.Empty;
+        public string EmailId { get; set; } = string.Empty;
+        public string MobileNo { get; set; } = string.Empty;
+    }
 }

@@ -521,5 +521,147 @@ VALUES
                 return dt.Date;
             return DBNull.Value;
         }
+
+        /// <summary>NodleInformation.ascx / NodleInformationNew.aspx — Nodal Officer entry list.</summary>
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+        [HttpGet("nodal-information")]
+        public async Task<IActionResult> GetNodalInformation([FromQuery] int userId)
+        {
+            var list = new List<NodalInformationDto>();
+            string sql = @"
+SELECT m.location_id,
+       m.location_name,
+       ft.facility_type_name,
+       d.DBStart_Name_En as district_name,
+       m.DP_DistrictID as district_id,
+       ft.facility_type_id,
+       u.USER_ID as user_id,
+       isnull(nd.id, 0) as id,
+       isnull(nd.name, '') as name,
+       isnull(nd.designation, '') as designation,
+       isnull(nd.Mobileno, '') as mobile_no,
+       isnull(nd.emailid, '') as email_id
+FROM maslocations m
+INNER JOIN facility_type ft on ft.facility_type_id = m.facility_type_id
+INNER JOIN Districts d on d.DP_DistrictID = m.DP_DistrictID
+INNER JOIN users u on u.location_id = m.location_id
+LEFT OUTER JOIN (
+    SELECT id, USER_ID, name, designation, Mobileno, emailid
+    FROM NodleMaster
+    WHERE Isactive = 'Y'
+) nd on nd.user_id = u.user_id
+WHERE m.authority = 5 AND ft.facility_type_id NOT IN (13)
+  AND (
+      @UserId <= 0
+      OR m.DP_DistrictID IN (
+          SELECT l.DP_DistrictID
+          FROM users u2
+          INNER JOIN maslocations l on l.location_id = u2.location_id
+          WHERE u2.user_id = @UserId
+      )
+  )
+ORDER BY m.DP_DistrictID, ft.facility_type_id";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new NodalInformationDto
+                    {
+                        LocationId = reader["location_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["location_id"]),
+                        LocationName = reader["location_name"]?.ToString() ?? string.Empty,
+                        FacilityTypeName = reader["facility_type_name"]?.ToString() ?? string.Empty,
+                        DistrictName = reader["district_name"]?.ToString() ?? string.Empty,
+                        DistrictId = reader["district_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["district_id"]),
+                        FacilityTypeId = reader["facility_type_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["facility_type_id"]),
+                        UserId = reader["user_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["user_id"]),
+                        Id = reader["id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["id"]),
+                        Name = reader["name"]?.ToString() ?? string.Empty,
+                        Designation = reader["designation"]?.ToString() ?? string.Empty,
+                        MobileNo = reader["mobile_no"]?.ToString() ?? string.Empty,
+                        EmailId = reader["email_id"]?.ToString() ?? string.Empty,
+                    });
+                }
+
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading nodal information.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>NodleInformation.ascx — Save new nodal officer entry.</summary>
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+        [HttpPost("nodal-information")]
+        public async Task<IActionResult> SaveNodalInformation([FromBody] NodalInformationSaveDto dto)
+        {
+            if (dto.UserId <= 0)
+                return BadRequest(new { message = "UserId is required." });
+
+            if (string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Designation) ||
+                string.IsNullOrWhiteSpace(dto.EmailId) || string.IsNullOrWhiteSpace(dto.MobileNo))
+            {
+                return BadRequest(new { message = "Fill Name, Designation, Email, and Mobile No." });
+            }
+
+            string sql = @"
+INSERT INTO NodleMaster(user_id, Name, Designation, Emailid, MobileNO, EntryDate, Isactive)
+VALUES(@UserId, @Name, @Designation, @EmailId, @MobileNo, GETDATE(), 'Y')";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@UserId", dto.UserId);
+                cmd.Parameters.AddWithValue("@Name", dto.Name.Trim());
+                cmd.Parameters.AddWithValue("@Designation", dto.Designation.Trim());
+                cmd.Parameters.AddWithValue("@EmailId", dto.EmailId.Trim());
+                cmd.Parameters.AddWithValue("@MobileNo", dto.MobileNo.Trim());
+
+                await cmd.ExecuteNonQueryAsync();
+                return Ok(new { message = "Saved Successfully" });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error saving nodal officer.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>NodleInformation.ascx — Deactivate/delete nodal officer entry.</summary>
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+        [HttpDelete("nodal-information/{id:int}")]
+        public async Task<IActionResult> DeleteNodalInformation(int id)
+        {
+            if (id <= 0)
+                return BadRequest(new { message = "Invalid ID." });
+
+            string sql = "UPDATE NodleMaster SET Isactive = 'N' WHERE id = @Id";
+
+            try
+            {
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@Id", id);
+
+                int rowsAffected = await cmd.ExecuteNonQueryAsync();
+                if (rowsAffected > 0)
+                    return Ok(new { message = "Deleted Successfully" });
+
+                return NotFound(new { message = "Record not found." });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error deleting nodal officer.", detail = ex.Message });
+            }
+        }
     }
 }
