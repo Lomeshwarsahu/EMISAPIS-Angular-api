@@ -1582,11 +1582,24 @@ order by sp.name";
         }
 
 
-        // GET: api/Reports/balance-status-cmho?balanceType=I&districtId=20
+
+        // GET: api/Reports/balance-status-cmho?balanceType=I&userId=20
         [HttpGet("balance-status-cmho")]
-        public async Task<IActionResult> GetBalanceStatusCMHO([FromQuery] string balanceType = "I", [FromQuery] int districtId = 0)
+        public async Task<IActionResult> GetBalanceStatusCMHO([FromQuery] string balanceType = "I", [FromQuery] int userId = 0)
         {
             List<BalanceStatusDTO> list = new List<BalanceStatusDTO>();
+
+            int districtId = 0;
+            using (SqlConnection conDist = new SqlConnection(_connectionString))
+            {
+                await conDist.OpenAsync();
+                string distSql = "Select top 1 d.DP_DistrictID from users u inner join maslocations l on l.location_id=u.location_id inner join Districts d on d.DP_DistrictID = l.DP_DistrictID where u.user_id=@UserId";
+                using(SqlCommand cmdDist = new SqlCommand(distSql, conDist)) {
+                    cmdDist.Parameters.AddWithValue("@UserId", userId);
+                    var res = await cmdDist.ExecuteScalarAsync();
+                    if(res != null && res != DBNull.Value) districtId = Convert.ToInt32(res);
+                }
+            }
 
             string whereCause = "";
             string normType = string.IsNullOrWhiteSpace(balanceType) ? "I" : balanceType.Trim().ToUpperInvariant();
@@ -1647,7 +1660,7 @@ where p.status in ('Order Placed','Completed','Partially Received')
   and m.categoryId != 2 {whereCause}
 group by pi.po_id, pi.item_id, l.location_name, l.location_id, d.DP_DistrictID, d.DBStart_Name_En, 
          re.receiptQTY, re.insqty, sup.Supplyqty, m.item_code_as_per_tender, m.item_name, sp.name, 
-         p.soissueDT, p.po_date, p.po_no
+         p.soissueDT, p.po_date, p.po_no, p.outward_no
 having sum(pi.quantity) > isnull(re.insqty,0) 
 order by l.location_name";
 
