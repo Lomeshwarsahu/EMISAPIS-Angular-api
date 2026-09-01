@@ -90,6 +90,9 @@ namespace EMISAPIS.DTOS
         public decimal? install_qty { get; set; }
         public string? po_type { get; set; }
         public decimal? balance_qty { get; set; }
+        public string? district { get; set; }
+        public string? location { get; set; }
+        public string? remarks { get; set; }
     }
 
     public class PendingInstallDrillDownDHSRowDto

@@ -1581,6 +1581,105 @@ order by sp.name";
             return await GetBalanceStatus(balanceType, 0);
         }
 
+
+        // GET: api/Reports/balance-status-cmho?balanceType=I&districtId=20
+        [HttpGet("balance-status-cmho")]
+        public async Task<IActionResult> GetBalanceStatusCMHO([FromQuery] string balanceType = "I", [FromQuery] int districtId = 0)
+        {
+            List<BalanceStatusDTO> list = new List<BalanceStatusDTO>();
+
+            string whereCause = "";
+            string normType = string.IsNullOrWhiteSpace(balanceType) ? "I" : balanceType.Trim().ToUpperInvariant();
+
+            if (normType == "I")
+            {
+                whereCause = " and isnull(re.receiptQTY,0) > isnull(re.insqty,0) ";
+            }
+            else if (normType == "R")
+            {
+                whereCause = " and isnull(sup.Supplyqty,0) > isnull(re.receiptQTY,0) ";
+            }
+            else if (normType == "D")
+            {
+                whereCause = " and pi.quantity > isnull(sup.Supplyqty,0) ";
+            }
+
+            string query = $@"
+select d.DBStart_Name_En as district, l.location_name as location, m.item_code_as_per_tender as item_code, 
+       m.item_name, sp.name as supplier, p.outward_no + '/' + p.po_no as po_no,
+       (case when p.soissueDT is null then convert(varchar,p.po_date,103) else convert(varchar,p.soissueDT,103) end) as po_date,
+       sum(pi.quantity) as po_qty, isnull(sup.Supplyqty,0) as supply_qty, isnull(re.receiptQTY,0) as receipt_qty, 
+       isnull(re.insqty,0) as install_qty, pi.po_id, pi.item_id, l.location_id, d.DP_DistrictID,
+       case when (isnull(re.receiptQTY,0) > isnull(re.insqty,0)) then 'To be installed' else 'To be received' end as remarks
+from po_items pi 
+inner join purchase_order p on p.po_id = pi.po_id
+inner join masitems m on m.item_id = pi.item_id
+inner join massuppliers sp on sp.supplier_id = p.supplier_id
+inner join maslocations l on l.location_id = pi.consignee_id
+left outer join Districts d on d.DP_DistrictID = l.DP_DistrictID
+left outer join 
+(  
+  select po_id, isnull(sum(Supplyqty),0) as Supplyqty, d.location_id
+  from SupplierDispatch d
+  inner join Issue_item_details i on d.Issue_id = i.Issue_id
+  where d.status = 'C'  
+  group by po_id, d.location_id 
+) as sup on sup.po_id = pi.po_id and sup.location_id = pi.consignee_id
+left outer join 
+(
+  select sum(receiptQTY) as receiptQTY, sum(insqty) as insqty, po_id, location_id 
+  from (
+    select isnull(r.receipt_qty,0) as receiptQTY, isnull(insqty,0) as insqty, r.po_id, r.location_id, r.receipt_id 
+    from receipts r
+    left outer join (
+      select sum(ri.received_qty) as insqty, r.po_id, r.location_id, r.receipt_id 
+      from receipts r
+      left outer join receipt_item_details ri on ri.receipt_id = r.receipt_id
+      where r.recieved_date is not null and r.status in ('C') 
+      group by r.po_id, r.location_id, r.receipt_id
+    ) as ins on ins.po_id = r.po_id and ins.location_id = r.location_id and ins.receipt_id = r.receipt_id
+    where r.recieved_date is not null and r.status in ('C','Received') 
+  ) a group by po_id, location_id 
+) as re on re.po_id = pi.po_id and re.location_id = l.location_id
+where p.status in ('Order Placed','Completed','Partially Received') 
+  and d.DP_DistrictID = @DistrictId 
+  and p.directorate_id = 5
+  and m.categoryId != 2 {whereCause}
+group by pi.po_id, pi.item_id, l.location_name, l.location_id, d.DP_DistrictID, d.DBStart_Name_En, 
+         re.receiptQTY, re.insqty, sup.Supplyqty, m.item_code_as_per_tender, m.item_name, sp.name, 
+         p.soissueDT, p.po_date, p.po_no
+having sum(pi.quantity) > isnull(re.insqty,0) 
+order by l.location_name";
+
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+            using SqlCommand cmd = new SqlCommand(query, con);
+            cmd.Parameters.AddWithValue("@DistrictId", districtId);
+
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new BalanceStatusDTO
+                {
+                    district = reader["district"]?.ToString(),
+                    location = reader["location"]?.ToString(),
+                    item_code = reader["item_code"]?.ToString(),
+                    item_name = reader["item_name"]?.ToString(),
+                    supplier = reader["supplier"]?.ToString(),
+                    po_no = reader["po_no"]?.ToString(),
+                    po_date = reader["po_date"]?.ToString(),
+                    po_qty = reader["po_qty"] != DBNull.Value ? Convert.ToDecimal(reader["po_qty"]) : 0,
+                    supply_qty = reader["supply_qty"] != DBNull.Value ? Convert.ToDecimal(reader["supply_qty"]) : 0,
+                    receipt_qty = reader["receipt_qty"] != DBNull.Value ? Convert.ToDecimal(reader["receipt_qty"]) : 0,
+                    install_qty = reader["install_qty"] != DBNull.Value ? Convert.ToDecimal(reader["install_qty"]) : 0,
+                    remarks = reader["remarks"]?.ToString(),
+                    po_id = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0
+                });
+            }
+
+            return Ok(list);
+        }
+
         // GET: api/Reports/payment-report?poType=NP
         [HttpGet("payment-report")]
         public async Task<IActionResult> GetPaymentReport([FromQuery] string? poType)
@@ -1734,7 +1833,7 @@ from (
     select R.ITEM_CODE_AS_PER_TENDER as CODE, R.item_name as ITEM_NAME, pi.quantity,
            ISNULL(c.basic_rate, ISNULL(pi.basicrate, 0)) as basic_rate,
            ISNULL(c.percentage, ISNULL(pi.percentage, 0)) as percentage,
-           ISNULL(c.single_unit_price, ISNULL(pi.unit_rate, ISNULL(pi.basicrate, 0))) as single_unit_price,
+           ISNULL(c.single_unit_price, ISNULL(pi.basicrate, 0)) as single_unit_price,
            ISNULL(c.single_unit_price * pi.quantity, ISNULL(pi.totalprice, ISNULL(pi.basicrate * pi.quantity, 0))) as totalPOvalue
     from po_items pi
     left outer join MASITEMS R on R.ITEM_ID = pi.item_id
@@ -1798,7 +1897,7 @@ select m.location_id, m.location_name, m.DP_DistrictID, m.user_id, u.user_name, 
        convert(varchar, p.po_date, 103) as po_date, pi.quantity,
        ISNULL(c.basic_rate, ISNULL(pi.basicrate, 0)) as basic_rate,
        ISNULL(c.percentage, ISNULL(pi.percentage, 0)) as percentage,
-       ISNULL(c.single_unit_price, ISNULL(pi.unit_rate, ISNULL(pi.basicrate, 0))) as single_unit_price,
+       ISNULL(c.single_unit_price, ISNULL(pi.basicrate, 0)) as single_unit_price,
        ISNULL(c.single_unit_price * pi.quantity, ISNULL(pi.totalprice, ISNULL(pi.basicrate * pi.quantity, 0))) as totalPOvalue,
        b.NAME as SUPPLIER_NAME, b.mobile_no, c.TENDER_NO, convert(varchar, c.TENDER_DATE, 103) as TENDER_DATE,
        p.STATUS, p.REMARKS, pi.item_id, p.FINANCIAL_YEAR_ID, E.YEAR, p.TENDER_ID, p.PO_NO,
