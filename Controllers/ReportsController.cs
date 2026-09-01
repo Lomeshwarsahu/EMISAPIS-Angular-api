@@ -1703,15 +1703,15 @@ select CODE, ITEM_NAME, sum(quantity) as quantity, basic_rate, percentage, singl
        sum(totalPOvalue) as totalPOvalue
 from (
     select R.ITEM_CODE_AS_PER_TENDER as CODE, R.item_name as ITEM_NAME, pi.quantity,
-           c.basic_rate, c.percentage, c.single_unit_price,
-           c.single_unit_price * pi.quantity as totalPOvalue
+           ISNULL(c.basic_rate, 0) as basic_rate, ISNULL(c.percentage, 0) as percentage, ISNULL(c.single_unit_price, 0) as single_unit_price,
+           ISNULL(c.single_unit_price, 0) * pi.quantity as totalPOvalue
     from po_items pi
-    inner join MASITEMS R on R.ITEM_ID = pi.item_id
-    inner join maslocations m on m.location_id = pi.consignee_id
+    left outer join MASITEMS R on R.ITEM_ID = pi.item_id
+    left outer join maslocations m on m.location_id = pi.consignee_id
     inner join purchase_order p on pi.po_id = p.po_id
-    inner join MASSUPPLIERS b on p.supplier_id = b.SUPPLIER_ID
-    inner join MAS_FINANCIAL_YEAR E on E.FINANCIAL_YEAR_ID = p.FINANCIAL_YEAR_ID
-    inner join facility_aut aut on aut.facility_aut_id = p.directorate_id
+    left outer join MASSUPPLIERS b on p.supplier_id = b.SUPPLIER_ID
+    left outer join MAS_FINANCIAL_YEAR E on E.FINANCIAL_YEAR_ID = p.FINANCIAL_YEAR_ID
+    left outer join facility_aut aut on aut.facility_aut_id = p.directorate_id
     left outer join (
         select a.supplier_id, a.tender_id, ci.item_id, ci.basic_rate, ci.percentage,
                ci.single_unit_price, t.tender_no, t.tender_date
@@ -1720,8 +1720,8 @@ from (
         inner join tenders t on t.tender_id = a.tender_id
     ) c on c.item_id = pi.item_id and c.tender_id = p.tender_id and c.supplier_id = p.supplier_id
     where (p.financial_year_id = @FinancialYearId or @FinancialYearId = 0)
-      and (p.directorate_id = @DirectorateId or @DirectorateId = 0)
-      and p.status not in ('Incomplete', 'Waiting For Approval', 'Cancelled')
+      and (p.directorate_id = @DirectorateId or @DirectorateId = 0 or p.directorate_id is null)
+      and (p.status is null or p.status not in ('Incomplete', 'Waiting For Approval', 'Cancelled'))
 ) a
 group by CODE, ITEM_NAME, basic_rate, percentage, single_unit_price
 order by ITEM_NAME";
@@ -3065,52 +3065,80 @@ order by POdate";
         public async Task<IActionResult> GetEquipmentTagReport([FromQuery] string? poType, [FromQuery] string? fromDate, [FromQuery] string? toDate)
         {
             List<EquipmentTagReportDto> list = new List<EquipmentTagReportDto>();
+
+            string poTypeWhere = "";
+            if (!string.IsNullOrWhiteSpace(poType) && !poType.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                if (poType.Equals("NP", StringComparison.OrdinalIgnoreCase))
+                    poTypeWhere = " and isnull(p.potype, 'NP') = 'NP' ";
+                else if (poType.Equals("CP", StringComparison.OrdinalIgnoreCase))
+                    poTypeWhere = " and isnull(p.potype, 'NP') = 'CP' ";
+            }
+
             string whereFromTo = "";
             string whereFromTo1 = "";
-            if (!string.IsNullOrEmpty(fromDate) && !string.IsNullOrEmpty(toDate))
+            DateTime fromDt = DateTime.MinValue;
+            DateTime toDt = DateTime.MaxValue;
+            bool hasDateFilter = false;
+
+            if (!string.IsNullOrWhiteSpace(fromDate) && !string.IsNullOrWhiteSpace(toDate))
             {
-                whereFromTo = " and r.entryDT between convert(date, @FromDate, 103) and convert(date, @ToDate, 103) ";
-                whereFromTo1 = " and A.entryDt between convert(date, @FromDate, 103) and convert(date, @ToDate, 103) ";
+                if ((DateTime.TryParse(fromDate, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out fromDt) ||
+                     DateTime.TryParseExact(fromDate, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "d/M/yyyy" }, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out fromDt)) &&
+                    (DateTime.TryParse(toDate, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out toDt) ||
+                     DateTime.TryParseExact(toDate, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "d/M/yyyy" }, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out toDt)))
+                {
+                    hasDateFilter = true;
+                    toDt = toDt.Date.AddDays(1).AddTicks(-1);
+                    whereFromTo = " and r.entryDT between @FromDateVal and @ToDateVal ";
+                    whereFromTo1 = " and A.entryDt between @FromDateVal and @ToDateVal ";
+                }
             }
 
             string query = $@"
-select d.DBStart_Name_En as district, ltrim(rtrim(l.location_name)) as location,
-       ltrim(rtrim(m.item_name)) as itemName, m.item_code_as_per_tender as itemCode,
+select ISNULL(d.DBStart_Name_En, l.location_name) as district, ltrim(rtrim(l.location_name)) as location,
+       ltrim(rtrim(ISNULL(m.item_name, 'Unknown Equipment'))) as itemName, ISNULL(m.item_code_as_per_tender, '') as itemCode,
        ri.make as make, ri.model_no as modelNo,
        convert(varchar, r.recieved_date, 103) as receiptDate,
        convert(varchar, ri.installation_date, 103) as installationDate,
        convert(varchar, ri.warenty_to, 103) as warrantyUpto,
-       ri.make_no as serialNo
+       ri.make_no as serialNo,
+       case when ri.istagged in ('Y', 'Tagged') then 'Tagged' when ri.istagged in ('N', 'Not Tagged') then 'Not Tagged' else 'Pending' end as isTagged
 from receipt_item_details ri
 inner join receipts r on r.receipt_id = ri.receipt_id
-inner join maslocations l on l.location_id = r.location_id
-inner join Districts d on d.DP_DistrictID = l.DP_DistrictID
-inner join po_items pi on pi.po_id = r.po_id and r.location_id = pi.consignee_id
-inner join masitems m on m.item_id = pi.item_id
-where 1=1 and m.item_id not in (2668, 2666) {whereFromTo}
+left outer join maslocations l on l.location_id = r.location_id
+left outer join Districts d on d.DP_DistrictID = l.DP_DistrictID
+left outer join po_items pi on pi.po_id = r.po_id and (r.location_id = pi.consignee_id or pi.consignee_id is null)
+left outer join purchase_order p on p.po_id = r.po_id
+left outer join masitems m on m.item_id = ISNULL(pi.item_id, ri.item_id)
+where 1=1 and (m.item_id is null or m.item_id not in (2668, 2666)) {poTypeWhere} {whereFromTo}
 
 union all
 
-select d.DBStart_Name_En as district, ltrim(rtrim(l.location_name)) as location,
+select ISNULL(d.DBStart_Name_En, l.location_name) as district, ltrim(rtrim(l.location_name)) as location,
        ltrim(rtrim(ms.item_name)) as itemName, ms.item_code_as_per_tender as itemCode,
        A.make as make, A.model as modelNo,
        convert(varchar, A.Receipt_Date, 103) as receiptDate,
        convert(varchar, A.installation_date, 103) as installationDate,
        convert(varchar, A.warranty_upto, 103) as warrantyUpto,
-       A.make_no as serialNo
+       A.make_no as serialNo,
+       case when A.ISTagged in ('Y') then 'Tagged' else 'Not Tagged' end as isTagged
 from existing_item A
-inner join maslocations l on l.location_id = A.location_id
-inner join Districts d on d.DP_DistrictID = l.DP_DistrictID
-inner join masitems ms on ms.Item_Id = A.item_id
+left outer join maslocations l on l.location_id = A.location_id
+left outer join Districts d on d.DP_DistrictID = l.DP_DistrictID
+left outer join masitems ms on ms.Item_Id = A.item_id
 left outer join SupplyMaster sm on sm.SupID = A.SupID
-where 1=1 and A.SUPID is not null and ms.item_id not in (2668, 2666) {whereFromTo1}
+where 1=1 and A.SUPID is not null and (ms.item_id is null or ms.item_id not in (2668, 2666)) {whereFromTo1}
 order by district";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
             using SqlCommand cmd = new SqlCommand(query, con);
-            if (!string.IsNullOrEmpty(fromDate)) cmd.Parameters.AddWithValue("@FromDate", fromDate);
-            if (!string.IsNullOrEmpty(toDate)) cmd.Parameters.AddWithValue("@ToDate", toDate);
+            if (hasDateFilter)
+            {
+                cmd.Parameters.AddWithValue("@FromDateVal", fromDt.Date);
+                cmd.Parameters.AddWithValue("@ToDateVal", toDt);
+            }
 
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -3126,7 +3154,8 @@ order by district";
                     receiptDate = reader["receiptDate"]?.ToString(),
                     installationDate = reader["installationDate"]?.ToString(),
                     warrantyUpto = reader["warrantyUpto"]?.ToString(),
-                    serialNo = reader["serialNo"]?.ToString()
+                    serialNo = reader["serialNo"]?.ToString(),
+                    isTagged = reader["isTagged"]?.ToString() ?? "Pending"
                 });
             }
 

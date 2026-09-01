@@ -729,5 +729,6 @@ namespace EMISAPIS.DTOS
         public string? installationDate { get; set; }
         public string? warrantyUpto { get; set; }
         public string? serialNo { get; set; }
+        public string? isTagged { get; set; }
     }
 }
