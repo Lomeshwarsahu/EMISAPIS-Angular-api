@@ -121,32 +121,40 @@ SELECT A.PO_ID,
        b.NAME AS SUPPLIER_NAME,
        c.TENDER_NO,
        CONVERT(VARCHAR, c.TENDER_DATE, 103) AS TENDER_DATE,
-       R.item_name AS ITEM_NAME,
+       ISNULL(R.item_name, a.item_id) AS ITEM_NAME,
        R.ITEM_CODE_AS_PER_TENDER AS CODE,
        E.YEAR AS POYear,
        iy.year AS indentYear,
        CONVERT(VARCHAR, id.consolidated_date, 103) AS IndentDT,
-       im.indent_quantity,
-       pi.quantity AS POQTY,
+       ISNULL(im.indent_quantity, 0) AS indent_quantity,
+       ISNULL(pi.quantity, 0) AS POQTY,
        ltp.filePathAccessories,
        ltp.filePathReagent,
        ltp.tender_item_id
 FROM dbo.PURCHASE_ORDER a
-INNER JOIN dbo.po_items pi ON pi.po_id = a.po_id
-INNER JOIN dbo.indent_consolidation id ON id.indent_consolidation_id = pi.INDENT_CONSOLIDATION_ID
-INNER JOIN dbo.indent i ON i.indent_id = pi.indent_id
-INNER JOIN dbo.indent_items im ON im.indent_item_id = pi.indent_item_id AND im.indent_id = pi.indent_id
-INNER JOIN dbo.indent_cons_items ci ON ci.indent_cons_items_id = i.indent_cons_items_id AND ci.indent_consolidated_id = id.indent_consolidation_id
-INNER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
-INNER JOIN dbo.MASSUPPLIERS b ON a.SUPPLIER_ID = b.SUPPLIER_ID
-INNER JOIN dbo.MASITEMS R ON R.ITEM_ID = a.ITEM_ID
-INNER JOIN dbo.TENDERS c ON c.TENDER_ID = a.TENDER_ID
-INNER JOIN dbo.tender_items ti ON ti.tender_id = c.tender_id AND ti.item_id = pi.item_id
-INNER JOIN dbo.live_tender_price ltp ON ltp.supplier_id = a.supplier_id AND ltp.tender_item_id = ti.tender_item_id
-INNER JOIN dbo.MAS_FINANCIAL_YEAR E ON E.FINANCIAL_YEAR_ID = a.FINANCIAL_YEAR_ID
-INNER JOIN dbo.mas_financial_year iy ON iy.financial_year_id = id.financial_year_id
+LEFT OUTER JOIN dbo.po_items pi ON pi.po_id = a.po_id
+LEFT OUTER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
+LEFT OUTER JOIN dbo.MASSUPPLIERS b ON a.SUPPLIER_ID = b.SUPPLIER_ID
+LEFT OUTER JOIN dbo.MASITEMS R ON R.ITEM_ID = ISNULL(pi.item_id, a.ITEM_ID)
+LEFT OUTER JOIN dbo.TENDERS c ON c.TENDER_ID = a.TENDER_ID
+LEFT OUTER JOIN dbo.indent_consolidation id ON id.indent_consolidation_id = pi.INDENT_CONSOLIDATION_ID
+LEFT OUTER JOIN dbo.indent i ON i.indent_id = pi.indent_id
+LEFT OUTER JOIN dbo.indent_items im ON im.indent_item_id = pi.indent_item_id AND im.indent_id = pi.indent_id
+LEFT OUTER JOIN dbo.indent_cons_items ci ON ci.indent_cons_items_id = i.indent_cons_items_id AND ci.indent_consolidated_id = id.indent_consolidation_id
+LEFT OUTER JOIN dbo.tender_items ti ON ti.tender_id = c.tender_id AND ti.item_id = ISNULL(pi.item_id, a.ITEM_ID)
+LEFT OUTER JOIN dbo.live_tender_price ltp ON ltp.supplier_id = a.supplier_id AND ltp.tender_item_id = ti.tender_item_id
+LEFT OUTER JOIN dbo.MAS_FINANCIAL_YEAR E ON E.FINANCIAL_YEAR_ID = a.FINANCIAL_YEAR_ID
+LEFT OUTER JOIN dbo.mas_financial_year iy ON iy.financial_year_id = id.financial_year_id
 WHERE a.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled')
-  AND l.user_id = @UserId
+  AND (
+       @UserId = 0
+       OR l.user_id = @UserId 
+       OR l.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) 
+       OR l.location_id = @UserId
+       OR l.district_id IN (SELECT district_id FROM dbo.users WHERE user_id = @UserId AND district_id IS NOT NULL AND district_id > 0)
+       OR pi.consignee_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId)
+       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.Role IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
+      )
   AND (@FinancialYearId = 0 OR a.FINANCIAL_YEAR_ID = @FinancialYearId)
   AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode)
 ORDER BY a.po_date DESC";
@@ -216,7 +224,7 @@ INNER JOIN dbo.po_items pi ON pi.po_id = a.po_id
 INNER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
 INNER JOIN dbo.tender_items ti ON ti.tender_id = a.tender_id AND ti.item_id = pi.item_id
 INNER JOIN dbo.live_tender_price ltp ON ltp.supplier_id = a.supplier_id AND ltp.tender_item_id = ti.tender_item_id
-WHERE a.po_id = @PoId AND l.user_id = @UserId";
+WHERE a.po_id = @PoId AND (l.user_id = @UserId OR l.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) OR l.location_id = @UserId)";
 
             try
             {
@@ -339,12 +347,12 @@ ORDER BY A.item_name";
             var sql = @"
 SELECT a.po_item_id, a.po_id, a.quantity, a.consignee_id,
        c1.location_name, CONVERT(VARCHAR, b.po_date, 103) AS po_date, b.PO_NO,
-       c.item_name, c.item_code_as_per_tender AS item_code, s.name AS supplier_name,
-       x.single_unit_price * a.quantity AS Total_Price
+       ISNULL(c.item_name, a.item_id) AS item_name, c.item_code_as_per_tender AS item_code, s.name AS supplier_name,
+       ISNULL(x.single_unit_price * a.quantity, 0) AS Total_Price
 FROM dbo.po_items a
-INNER JOIN dbo.MASITEMS R ON R.ITEM_ID = a.item_id
-INNER JOIN dbo.purchase_order b ON a.po_id = b.po_id
-INNER JOIN dbo.MASSUPPLIERS s ON s.SUPPLIER_ID = b.supplier_id
+LEFT OUTER JOIN dbo.MASITEMS R ON R.ITEM_ID = a.item_id
+LEFT OUTER JOIN dbo.purchase_order b ON a.po_id = b.po_id
+LEFT OUTER JOIN dbo.MASSUPPLIERS s ON s.SUPPLIER_ID = b.supplier_id
 LEFT OUTER JOIN (
     SELECT F.SUPPLIER_ID, F.TENDER_ID, D.ITEM_ID, D.single_unit_price
     FROM dbo.AWARD_OF_CONTRACT F
@@ -352,12 +360,20 @@ LEFT OUTER JOIN (
 ) x ON x.TENDER_ID = b.TENDER_ID AND b.SUPPLIER_ID = x.SUPPLIER_ID AND a.ITEM_ID = x.ITEM_ID
 LEFT OUTER JOIN dbo.maslocations c1 ON c1.location_id = a.consignee_id
 LEFT OUTER JOIN dbo.masitems c ON a.item_id = c.item_id
-WHERE c1.user_id = @UserId
-  AND b.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled')
+WHERE (b.status IS NULL OR b.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled'))
+  AND (
+       @UserId = 0
+       OR c1.user_id = @UserId 
+       OR c1.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) 
+       OR c1.location_id = @UserId
+       OR c1.district_id IN (SELECT district_id FROM dbo.users WHERE user_id = @UserId AND district_id IS NOT NULL AND district_id > 0)
+       OR a.consignee_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId)
+       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.Role IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
+      )
   AND (@AuthorityId IS NULL OR @AuthorityId = '' OR c1.authority = @AuthorityId)
   AND (@FinancialYearId = 0 OR b.financial_year_id = @FinancialYearId)
   AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode)
-ORDER BY b.po_date";
+ORDER BY b.po_date DESC, a.po_id DESC";
 
             try
             {
@@ -2539,7 +2555,7 @@ WHERE item_detail_id = @ItemDetailId AND receipt_id = @ReceiptId";
             const string sql = @"
 SELECT 1
 FROM dbo.maslocations
-WHERE location_id = @LocId AND user_id = @UserId";
+WHERE location_id = @LocId AND (user_id = @UserId OR location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) OR location_id = @UserId)";
             await using var cmd = new SqlCommand(sql, con);
             cmd.Parameters.AddWithValue("@LocId", locId);
             cmd.Parameters.AddWithValue("@UserId", userId);
@@ -2554,7 +2570,7 @@ WHERE location_id = @LocId AND user_id = @UserId";
 SELECT 1
 FROM dbo.receipts r
 INNER JOIN dbo.maslocations ml ON ml.location_id = r.location_id
-WHERE r.receipt_id = @ReceiptId AND ml.user_id = @UserId";
+WHERE r.receipt_id = @ReceiptId AND (ml.user_id = @UserId OR ml.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) OR ml.location_id = @UserId)";
             await using var cmd = new SqlCommand(sql, con);
             cmd.Parameters.AddWithValue("@ReceiptId", receiptId);
             cmd.Parameters.AddWithValue("@UserId", userId);
@@ -2569,7 +2585,7 @@ WHERE r.receipt_id = @ReceiptId AND ml.user_id = @UserId";
 SELECT TOP 1 1
 FROM dbo.po_items pi
 INNER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
-WHERE pi.po_id = @PoId AND l.user_id = @UserId";
+WHERE pi.po_id = @PoId AND (l.user_id = @UserId OR l.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) OR l.location_id = @UserId)";
             await using var cmd = new SqlCommand(sql, con);
             cmd.Parameters.AddWithValue("@PoId", poId);
             cmd.Parameters.AddWithValue("@UserId", userId);
@@ -2643,7 +2659,7 @@ LEFT OUTER JOIN (
     GROUP BY sd.issue_id
 ) sup ON sup.issue_id = d.issue_id
 WHERE d.po_id = @PoId AND d.location_id = @LocId AND d.issue_id = @IssueId
-  AND ml.user_id = @UserId";
+  AND (ml.user_id = @UserId OR ml.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) OR ml.location_id = @UserId)";
 
             DmeReceiptEntryPageDto? page = null;
             await using (var cmd = new SqlCommand(headerSql, con))

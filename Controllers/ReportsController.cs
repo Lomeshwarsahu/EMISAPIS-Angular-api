@@ -365,20 +365,45 @@ and m.item_id =@item_id
 
         //distrinc wise details 
         [HttpGet("GetDistrictWiseDetails")]
-        public IActionResult GetDistrictWiseDetails(
-                   int districtId,
-                   int directorateId,
-                   int financialYearId,
-                   string fromDate,
-                   string toDate)
+        public async Task<IActionResult> GetDistrictWiseDetails(
+            [FromQuery] int districtId = 0,
+            [FromQuery] int directorateId = 0,
+            [FromQuery] int financialYearId = 0,
+            [FromQuery] string? fromDate = null,
+            [FromQuery] string? toDate = null)
         {
             List<DistrictWiseDetailDTO> list = new List<DistrictWiseDetailDTO>();
 
+            string whereClause = "";
+            if (financialYearId > 0)
+                whereClause += " and p.financial_year_id = @financialYearId ";
+            if (directorateId > 0)
+                whereClause += " and p.directorate_id = @directorateId ";
+            if (districtId > 0)
+                whereClause += " and dis.DP_DistrictID = @districtId ";
+
+            DateTime fromDt = DateTime.MinValue;
+            DateTime toDt = DateTime.MaxValue;
+            bool hasDateFilter = false;
+
+            if (!string.IsNullOrWhiteSpace(fromDate) && !string.IsNullOrWhiteSpace(toDate))
+            {
+                if ((DateTime.TryParse(fromDate, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out fromDt) ||
+                     DateTime.TryParseExact(fromDate, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "d/M/yyyy" }, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out fromDt)) &&
+                    (DateTime.TryParse(toDate, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out toDt) ||
+                     DateTime.TryParseExact(toDate, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "d/M/yyyy" }, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out toDt)))
+                {
+                    hasDateFilter = true;
+                    toDt = toDt.Date.AddDays(1).AddTicks(-1);
+                    whereClause += " and p.po_date between @FromDateVal and @ToDateVal ";
+                }
+            }
+
             using (SqlConnection con = new SqlConnection(_connectionString))
             {
-                con.Open();
+                await con.OpenAsync();
 
-                string query = @"
+                string query = $@"
                     select distinct 
                         case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype,
                         t.tender_no,
@@ -387,13 +412,13 @@ and m.item_id =@item_id
                         ms.name as supplier_name,
                         m.item_code_as_per_tender,
                         m.item_name,
-                        dis.DBStart_Name_En,
+                        isnull(dis.DBStart_Name_En, ml.location_name) as DBStart_Name_En,
                         pi.consignee_id,
                         ml.location_name,
                         pi.quantity as po_qty,
-                        pi.basicrate,
-                        pi.percentage,
-                        pi.totalprice,
+                        isnull(pi.basicrate, 0) as basicrate,
+                        isnull(pi.percentage, 0) as percentage,
+                        isnull(pi.totalprice, 0) as totalprice,
                         case when m.categoryId = 2 then 'Reagent' else 'Equipment' end as Eqptype,
                         p.po_id,
                         isnull(sdd.supply_qty,0) as supply_qty,
@@ -401,12 +426,12 @@ and m.item_id =@item_id
                         isnull(ins.insqty,0) as insqty
                     from purchase_order p
                     inner join po_items pi on pi.po_id = p.po_id
-                    inner join masitems m on m.item_id = pi.item_id
-                    inner join maslocations ml on ml.location_id = pi.consignee_id
-                    inner join Districts dis on dis.DP_DistrictID = ml.DP_DistrictID
-                    inner join massuppliers ms on ms.supplier_id = p.supplier_id
-                    inner join tenders t on t.tender_id = p.tender_id
-                    inner join facility_aut fau on fau.facility_aut_id = p.directorate_id
+                    left outer join masitems m on m.item_id = pi.item_id
+                    left outer join maslocations ml on ml.location_id = pi.consignee_id
+                    left outer join Districts dis on dis.DP_DistrictID = ml.DP_DistrictID
+                    left outer join massuppliers ms on ms.supplier_id = p.supplier_id
+                    left outer join tenders t on t.tender_id = p.tender_id
+                    left outer join facility_aut fau on fau.facility_aut_id = p.directorate_id
                     left join (
                         select sd.po_id, sum(id.supplyqty) as supply_qty, sd.location_id 
                         from SupplierDispatch sd 
@@ -427,46 +452,50 @@ and m.item_id =@item_id
                         where r.recieved_date is not null and r.status='C'
                         group by r.po_id, r.location_id
                     ) ins on ins.po_id=pi.po_id and ins.location_id=pi.consignee_id
-                    where p.po_date between CONVERT(date,@fromDate,103) and CONVERT(date,@toDate,103)
-                    and p.status='Order Placed'
-                    and dis.DP_DistrictID=@districtId
-                    and p.directorate_id=@directorateId
-                    and p.financial_year_id=@financialYearId
+                    where (p.status is null or p.status not in ('Incomplete', 'Waiting For Approval', 'Cancelled'))
+                    {whereClause}
+                    order by p.po_date desc
                 ";
 
                 using (SqlCommand cmd = new SqlCommand(query, con))
                 {
-                    cmd.Parameters.AddWithValue("@fromDate", fromDate);
-                    cmd.Parameters.AddWithValue("@toDate", toDate);
-                    cmd.Parameters.AddWithValue("@districtId", districtId);
-                    cmd.Parameters.AddWithValue("@directorateId", directorateId);
-                    cmd.Parameters.AddWithValue("@financialYearId", financialYearId);
-
-                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    if (financialYearId > 0)
+                        cmd.Parameters.AddWithValue("@financialYearId", financialYearId);
+                    if (directorateId > 0)
+                        cmd.Parameters.AddWithValue("@directorateId", directorateId);
+                    if (districtId > 0)
+                        cmd.Parameters.AddWithValue("@districtId", districtId);
+                    if (hasDateFilter)
                     {
-                        while (reader.Read())
+                        cmd.Parameters.AddWithValue("@FromDateVal", fromDt);
+                        cmd.Parameters.AddWithValue("@ToDateVal", toDt);
+                    }
+
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
                         {
                             list.Add(new DistrictWiseDetailDTO
                             {
-                                potype = reader["potype"].ToString(),
-                                tender_no = reader["tender_no"].ToString(),
-                                po_no = reader["po_no"].ToString(),
-                                po_date = reader["po_date"].ToString(),
-                                supplier_name = reader["supplier_name"].ToString(),
-                                item_code_as_per_tender = reader["item_code_as_per_tender"].ToString(),
-                                item_name = reader["item_name"].ToString(),
-                                DBStart_Name_En = reader["DBStart_Name_En"].ToString(),
-                                consignee_id = Convert.ToInt32(reader["consignee_id"]),
-                                location_name = reader["location_name"].ToString(),
-                                po_qty = Convert.ToDecimal(reader["po_qty"]),
-                                basicrate = Convert.ToDecimal(reader["basicrate"]),
-                                percentage = Convert.ToDecimal(reader["percentage"]),
-                                totalprice = Convert.ToDecimal(reader["totalprice"]),
-                                Eqptype = reader["Eqptype"].ToString(),
-                                po_id = Convert.ToInt32(reader["po_id"]),
-                                supply_qty = Convert.ToDecimal(reader["supply_qty"]),
-                                receiptQTY = Convert.ToDecimal(reader["receiptQTY"]),
-                                insqty = Convert.ToDecimal(reader["insqty"])
+                                potype = reader["potype"]?.ToString() ?? "",
+                                tender_no = reader["tender_no"]?.ToString() ?? "",
+                                po_no = reader["po_no"]?.ToString() ?? "",
+                                po_date = reader["po_date"]?.ToString() ?? "",
+                                supplier_name = reader["supplier_name"]?.ToString() ?? "",
+                                item_code_as_per_tender = reader["item_code_as_per_tender"]?.ToString() ?? "",
+                                item_name = reader["item_name"]?.ToString() ?? "",
+                                DBStart_Name_En = reader["DBStart_Name_En"]?.ToString() ?? "",
+                                consignee_id = reader["consignee_id"] != DBNull.Value ? Convert.ToInt32(reader["consignee_id"]) : 0,
+                                location_name = reader["location_name"]?.ToString() ?? "",
+                                po_qty = reader["po_qty"] != DBNull.Value ? Convert.ToDecimal(reader["po_qty"]) : 0,
+                                basicrate = reader["basicrate"] != DBNull.Value ? Convert.ToDecimal(reader["basicrate"]) : 0,
+                                percentage = reader["percentage"] != DBNull.Value ? Convert.ToDecimal(reader["percentage"]) : 0,
+                                totalprice = reader["totalprice"] != DBNull.Value ? Convert.ToDecimal(reader["totalprice"]) : 0,
+                                Eqptype = reader["Eqptype"]?.ToString() ?? "",
+                                po_id = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0,
+                                supply_qty = reader["supply_qty"] != DBNull.Value ? Convert.ToDecimal(reader["supply_qty"]) : 0,
+                                receiptQTY = reader["receiptQTY"] != DBNull.Value ? Convert.ToDecimal(reader["receiptQTY"]) : 0,
+                                insqty = reader["insqty"] != DBNull.Value ? Convert.ToDecimal(reader["insqty"]) : 0
                             });
                         }
                     }
@@ -1552,6 +1581,118 @@ order by sp.name";
             return await GetBalanceStatus(balanceType, 0);
         }
 
+
+
+        // GET: api/Reports/balance-status-cmho?balanceType=I&userId=20
+        [HttpGet("balance-status-cmho")]
+        public async Task<IActionResult> GetBalanceStatusCMHO([FromQuery] string balanceType = "I", [FromQuery] int userId = 0)
+        {
+            List<BalanceStatusDTO> list = new List<BalanceStatusDTO>();
+
+            int districtId = 0;
+            using (SqlConnection conDist = new SqlConnection(_connectionString))
+            {
+                await conDist.OpenAsync();
+                string distSql = "Select top 1 d.DP_DistrictID from users u inner join maslocations l on l.location_id=u.location_id inner join Districts d on d.DP_DistrictID = l.DP_DistrictID where u.user_id=@UserId";
+                using(SqlCommand cmdDist = new SqlCommand(distSql, conDist)) {
+                    cmdDist.Parameters.AddWithValue("@UserId", userId);
+                    var res = await cmdDist.ExecuteScalarAsync();
+                    if(res != null && res != DBNull.Value) districtId = Convert.ToInt32(res);
+                }
+            }
+
+            string whereCause = "";
+            string normType = string.IsNullOrWhiteSpace(balanceType) ? "I" : balanceType.Trim().ToUpperInvariant();
+
+            if (normType == "I")
+            {
+                whereCause = " and isnull(re.receiptQTY,0) > isnull(re.insqty,0) ";
+            }
+            else if (normType == "R")
+            {
+                whereCause = " and isnull(sup.Supplyqty,0) > isnull(re.receiptQTY,0) ";
+            }
+            else if (normType == "D")
+            {
+                whereCause = " and pi.quantity > isnull(sup.Supplyqty,0) ";
+            }
+
+            string query = $@"
+select d.DBStart_Name_En as district, l.location_name as location, m.item_code_as_per_tender as item_code, 
+       m.item_name, sp.name as supplier, p.outward_no + '/' + p.po_no as po_no,
+       (case when p.soissueDT is null then convert(varchar,p.po_date,103) else convert(varchar,p.soissueDT,103) end) as po_date,
+       sum(pi.quantity) as po_qty, isnull(sup.Supplyqty,0) as supply_qty, isnull(re.receiptQTY,0) as receipt_qty, 
+       isnull(re.insqty,0) as install_qty, pi.po_id, pi.item_id, l.location_id, d.DP_DistrictID,
+       case when (isnull(re.receiptQTY,0) > isnull(re.insqty,0)) then 'To be installed' else 'To be received' end as remarks
+from po_items pi 
+inner join purchase_order p on p.po_id = pi.po_id
+inner join masitems m on m.item_id = pi.item_id
+inner join massuppliers sp on sp.supplier_id = p.supplier_id
+inner join maslocations l on l.location_id = pi.consignee_id
+left outer join Districts d on d.DP_DistrictID = l.DP_DistrictID
+left outer join 
+(  
+  select po_id, isnull(sum(Supplyqty),0) as Supplyqty, d.location_id
+  from SupplierDispatch d
+  inner join Issue_item_details i on d.Issue_id = i.Issue_id
+  where d.status = 'C'  
+  group by po_id, d.location_id 
+) as sup on sup.po_id = pi.po_id and sup.location_id = pi.consignee_id
+left outer join 
+(
+  select sum(receiptQTY) as receiptQTY, sum(insqty) as insqty, po_id, location_id 
+  from (
+    select isnull(r.receipt_qty,0) as receiptQTY, isnull(insqty,0) as insqty, r.po_id, r.location_id, r.receipt_id 
+    from receipts r
+    left outer join (
+      select sum(ri.received_qty) as insqty, r.po_id, r.location_id, r.receipt_id 
+      from receipts r
+      left outer join receipt_item_details ri on ri.receipt_id = r.receipt_id
+      where r.recieved_date is not null and r.status in ('C') 
+      group by r.po_id, r.location_id, r.receipt_id
+    ) as ins on ins.po_id = r.po_id and ins.location_id = r.location_id and ins.receipt_id = r.receipt_id
+    where r.recieved_date is not null and r.status in ('C','Received') 
+  ) a group by po_id, location_id 
+) as re on re.po_id = pi.po_id and re.location_id = l.location_id
+where p.status in ('Order Placed','Completed','Partially Received') 
+  and d.DP_DistrictID = @DistrictId 
+  and p.directorate_id = 5
+  and m.categoryId != 2 {whereCause}
+group by pi.po_id, pi.item_id, l.location_name, l.location_id, d.DP_DistrictID, d.DBStart_Name_En, 
+         re.receiptQTY, re.insqty, sup.Supplyqty, m.item_code_as_per_tender, m.item_name, sp.name, 
+         p.soissueDT, p.po_date, p.po_no, p.outward_no
+having sum(pi.quantity) > isnull(re.insqty,0) 
+order by l.location_name";
+
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+            using SqlCommand cmd = new SqlCommand(query, con);
+            cmd.Parameters.AddWithValue("@DistrictId", districtId);
+
+            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new BalanceStatusDTO
+                {
+                    district = reader["district"]?.ToString(),
+                    location = reader["location"]?.ToString(),
+                    item_code = reader["item_code"]?.ToString(),
+                    item_name = reader["item_name"]?.ToString(),
+                    supplier = reader["supplier"]?.ToString(),
+                    po_no = reader["po_no"]?.ToString(),
+                    po_date = reader["po_date"]?.ToString(),
+                    po_qty = reader["po_qty"] != DBNull.Value ? Convert.ToDecimal(reader["po_qty"]) : 0,
+                    supply_qty = reader["supply_qty"] != DBNull.Value ? Convert.ToDecimal(reader["supply_qty"]) : 0,
+                    receipt_qty = reader["receipt_qty"] != DBNull.Value ? Convert.ToDecimal(reader["receipt_qty"]) : 0,
+                    install_qty = reader["install_qty"] != DBNull.Value ? Convert.ToDecimal(reader["install_qty"]) : 0,
+                    remarks = reader["remarks"]?.ToString(),
+                    po_id = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0
+                });
+            }
+
+            return Ok(list);
+        }
+
         // GET: api/Reports/payment-report?poType=NP
         [HttpGet("payment-report")]
         public async Task<IActionResult> GetPaymentReport([FromQuery] string? poType)
@@ -1703,15 +1844,17 @@ select CODE, ITEM_NAME, sum(quantity) as quantity, basic_rate, percentage, singl
        sum(totalPOvalue) as totalPOvalue
 from (
     select R.ITEM_CODE_AS_PER_TENDER as CODE, R.item_name as ITEM_NAME, pi.quantity,
-           c.basic_rate, c.percentage, c.single_unit_price,
-           c.single_unit_price * pi.quantity as totalPOvalue
+           ISNULL(c.basic_rate, ISNULL(pi.basicrate, 0)) as basic_rate,
+           ISNULL(c.percentage, ISNULL(pi.percentage, 0)) as percentage,
+           ISNULL(c.single_unit_price, ISNULL(pi.basicrate, 0)) as single_unit_price,
+           ISNULL(c.single_unit_price * pi.quantity, ISNULL(pi.totalprice, ISNULL(pi.basicrate * pi.quantity, 0))) as totalPOvalue
     from po_items pi
-    inner join MASITEMS R on R.ITEM_ID = pi.item_id
-    inner join maslocations m on m.location_id = pi.consignee_id
+    left outer join MASITEMS R on R.ITEM_ID = pi.item_id
+    left outer join maslocations m on m.location_id = pi.consignee_id
     inner join purchase_order p on pi.po_id = p.po_id
-    inner join MASSUPPLIERS b on p.supplier_id = b.SUPPLIER_ID
-    inner join MAS_FINANCIAL_YEAR E on E.FINANCIAL_YEAR_ID = p.FINANCIAL_YEAR_ID
-    inner join facility_aut aut on aut.facility_aut_id = p.directorate_id
+    left outer join MASSUPPLIERS b on p.supplier_id = b.SUPPLIER_ID
+    left outer join MAS_FINANCIAL_YEAR E on E.FINANCIAL_YEAR_ID = p.FINANCIAL_YEAR_ID
+    left outer join facility_aut aut on aut.facility_aut_id = p.directorate_id
     left outer join (
         select a.supplier_id, a.tender_id, ci.item_id, ci.basic_rate, ci.percentage,
                ci.single_unit_price, t.tender_no, t.tender_date
@@ -1720,8 +1863,8 @@ from (
         inner join tenders t on t.tender_id = a.tender_id
     ) c on c.item_id = pi.item_id and c.tender_id = p.tender_id and c.supplier_id = p.supplier_id
     where (p.financial_year_id = @FinancialYearId or @FinancialYearId = 0)
-      and (p.directorate_id = @DirectorateId or @DirectorateId = 0)
-      and p.status not in ('Incomplete', 'Waiting For Approval', 'Cancelled')
+      and (p.directorate_id = @DirectorateId or @DirectorateId = 0 or p.directorate_id is null)
+      and (p.status is null or p.status not in ('Incomplete', 'Waiting For Approval', 'Cancelled'))
 ) a
 group by CODE, ITEM_NAME, basic_rate, percentage, single_unit_price
 order by ITEM_NAME";
@@ -1764,17 +1907,20 @@ order by ITEM_NAME";
             string query = $@"
 select m.location_id, m.location_name, m.DP_DistrictID, m.user_id, u.user_name, u.user_type, u.designation,
        R.ITEM_CODE_AS_PER_TENDER as CODE, R.item_name as ITEM_NAME, p.OUTWARD_NO,
-       convert(varchar, p.po_date, 103) as po_date, pi.quantity, c.basic_rate, c.percentage,
-       c.single_unit_price, c.single_unit_price * pi.quantity as totalPOvalue,
+       convert(varchar, p.po_date, 103) as po_date, pi.quantity,
+       ISNULL(c.basic_rate, ISNULL(pi.basicrate, 0)) as basic_rate,
+       ISNULL(c.percentage, ISNULL(pi.percentage, 0)) as percentage,
+       ISNULL(c.single_unit_price, ISNULL(pi.basicrate, 0)) as single_unit_price,
+       ISNULL(c.single_unit_price * pi.quantity, ISNULL(pi.totalprice, ISNULL(pi.basicrate * pi.quantity, 0))) as totalPOvalue,
        b.NAME as SUPPLIER_NAME, b.mobile_no, c.TENDER_NO, convert(varchar, c.TENDER_DATE, 103) as TENDER_DATE,
        p.STATUS, p.REMARKS, pi.item_id, p.FINANCIAL_YEAR_ID, E.YEAR, p.TENDER_ID, p.PO_NO,
        p.SUPPLIER_ID, p.directorate_id, p.indent_fund_id, p.PO_ID, d.DBStart_Name_En
 from po_items pi
-inner join MASITEMS R on R.ITEM_ID = pi.item_id
-inner join maslocations m on m.location_id = pi.consignee_id
+left outer join MASITEMS R on R.ITEM_ID = pi.item_id
+left outer join maslocations m on m.location_id = pi.consignee_id
 inner join purchase_order p on pi.po_id = p.po_id
-inner join MASSUPPLIERS b on p.supplier_id = b.SUPPLIER_ID
-inner join MAS_FINANCIAL_YEAR E on E.FINANCIAL_YEAR_ID = p.FINANCIAL_YEAR_ID
+left outer join MASSUPPLIERS b on p.supplier_id = b.SUPPLIER_ID
+left outer join MAS_FINANCIAL_YEAR E on E.FINANCIAL_YEAR_ID = p.FINANCIAL_YEAR_ID
 left outer join (
     select a.supplier_id, a.tender_id, ci.item_id, ci.basic_rate, ci.percentage,
            ci.single_unit_price, t.tender_no, t.tender_date
@@ -1785,8 +1931,8 @@ left outer join (
 left outer join users u on u.user_id = m.user_id
 left outer join Districts d on d.DP_DistrictID = m.DP_DistrictID
 where (p.financial_year_id = @FinYrId or @FinYrId = 0)
-  and (p.directorate_id = @DirectorateId or @DirectorateId = 0)
-  and p.status not in ('Incomplete', 'Waiting For Approval', 'Cancelled')
+  and (p.directorate_id = @DirectorateId or @DirectorateId = 0 or p.directorate_id is null)
+  and (p.status is null or p.status not in ('Incomplete', 'Waiting For Approval', 'Cancelled'))
   {itemFilter}
 order by m.location_name";
 
@@ -3065,52 +3211,80 @@ order by POdate";
         public async Task<IActionResult> GetEquipmentTagReport([FromQuery] string? poType, [FromQuery] string? fromDate, [FromQuery] string? toDate)
         {
             List<EquipmentTagReportDto> list = new List<EquipmentTagReportDto>();
+
+            string poTypeWhere = "";
+            if (!string.IsNullOrWhiteSpace(poType) && !poType.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                if (poType.Equals("NP", StringComparison.OrdinalIgnoreCase))
+                    poTypeWhere = " and isnull(p.potype, 'NP') = 'NP' ";
+                else if (poType.Equals("CP", StringComparison.OrdinalIgnoreCase))
+                    poTypeWhere = " and isnull(p.potype, 'NP') = 'CP' ";
+            }
+
             string whereFromTo = "";
             string whereFromTo1 = "";
-            if (!string.IsNullOrEmpty(fromDate) && !string.IsNullOrEmpty(toDate))
+            DateTime fromDt = DateTime.MinValue;
+            DateTime toDt = DateTime.MaxValue;
+            bool hasDateFilter = false;
+
+            if (!string.IsNullOrWhiteSpace(fromDate) && !string.IsNullOrWhiteSpace(toDate))
             {
-                whereFromTo = " and r.entryDT between convert(date, @FromDate, 103) and convert(date, @ToDate, 103) ";
-                whereFromTo1 = " and A.entryDt between convert(date, @FromDate, 103) and convert(date, @ToDate, 103) ";
+                if ((DateTime.TryParse(fromDate, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out fromDt) ||
+                     DateTime.TryParseExact(fromDate, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "d/M/yyyy" }, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out fromDt)) &&
+                    (DateTime.TryParse(toDate, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out toDt) ||
+                     DateTime.TryParseExact(toDate, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "d/M/yyyy" }, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out toDt)))
+                {
+                    hasDateFilter = true;
+                    toDt = toDt.Date.AddDays(1).AddTicks(-1);
+                    whereFromTo = " and r.entryDT between @FromDateVal and @ToDateVal ";
+                    whereFromTo1 = " and A.entryDt between @FromDateVal and @ToDateVal ";
+                }
             }
 
             string query = $@"
-select d.DBStart_Name_En as district, ltrim(rtrim(l.location_name)) as location,
-       ltrim(rtrim(m.item_name)) as itemName, m.item_code_as_per_tender as itemCode,
+select ISNULL(d.DBStart_Name_En, l.location_name) as district, ltrim(rtrim(l.location_name)) as location,
+       ltrim(rtrim(ISNULL(m.item_name, 'Unknown Equipment'))) as itemName, ISNULL(m.item_code_as_per_tender, '') as itemCode,
        ri.make as make, ri.model_no as modelNo,
        convert(varchar, r.recieved_date, 103) as receiptDate,
        convert(varchar, ri.installation_date, 103) as installationDate,
        convert(varchar, ri.warenty_to, 103) as warrantyUpto,
-       ri.make_no as serialNo
+       ri.make_no as serialNo,
+       case when ri.istagged in ('Y', 'Tagged') then 'Tagged' when ri.istagged in ('N', 'Not Tagged') then 'Not Tagged' else 'Pending' end as isTagged
 from receipt_item_details ri
 inner join receipts r on r.receipt_id = ri.receipt_id
-inner join maslocations l on l.location_id = r.location_id
-inner join Districts d on d.DP_DistrictID = l.DP_DistrictID
-inner join po_items pi on pi.po_id = r.po_id and r.location_id = pi.consignee_id
-inner join masitems m on m.item_id = pi.item_id
-where 1=1 and m.item_id not in (2668, 2666) {whereFromTo}
+left outer join maslocations l on l.location_id = r.location_id
+left outer join Districts d on d.DP_DistrictID = l.DP_DistrictID
+left outer join po_items pi on pi.po_id = r.po_id and (r.location_id = pi.consignee_id or pi.consignee_id is null)
+left outer join purchase_order p on p.po_id = r.po_id
+left outer join masitems m on m.item_id = ISNULL(pi.item_id, ri.item_id)
+where 1=1 and (m.item_id is null or m.item_id not in (2668, 2666)) {poTypeWhere} {whereFromTo}
 
 union all
 
-select d.DBStart_Name_En as district, ltrim(rtrim(l.location_name)) as location,
+select ISNULL(d.DBStart_Name_En, l.location_name) as district, ltrim(rtrim(l.location_name)) as location,
        ltrim(rtrim(ms.item_name)) as itemName, ms.item_code_as_per_tender as itemCode,
        A.make as make, A.model as modelNo,
        convert(varchar, A.Receipt_Date, 103) as receiptDate,
        convert(varchar, A.installation_date, 103) as installationDate,
        convert(varchar, A.warranty_upto, 103) as warrantyUpto,
-       A.make_no as serialNo
+       A.make_no as serialNo,
+       case when A.ISTagged in ('Y') then 'Tagged' else 'Not Tagged' end as isTagged
 from existing_item A
-inner join maslocations l on l.location_id = A.location_id
-inner join Districts d on d.DP_DistrictID = l.DP_DistrictID
-inner join masitems ms on ms.Item_Id = A.item_id
+left outer join maslocations l on l.location_id = A.location_id
+left outer join Districts d on d.DP_DistrictID = l.DP_DistrictID
+left outer join masitems ms on ms.Item_Id = A.item_id
 left outer join SupplyMaster sm on sm.SupID = A.SupID
-where 1=1 and A.SUPID is not null and ms.item_id not in (2668, 2666) {whereFromTo1}
+where 1=1 and A.SUPID is not null and (ms.item_id is null or ms.item_id not in (2668, 2666)) {whereFromTo1}
 order by district";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
             using SqlCommand cmd = new SqlCommand(query, con);
-            if (!string.IsNullOrEmpty(fromDate)) cmd.Parameters.AddWithValue("@FromDate", fromDate);
-            if (!string.IsNullOrEmpty(toDate)) cmd.Parameters.AddWithValue("@ToDate", toDate);
+            if (hasDateFilter)
+            {
+                cmd.Parameters.AddWithValue("@FromDateVal", fromDt.Date);
+                cmd.Parameters.AddWithValue("@ToDateVal", toDt);
+            }
 
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -3126,7 +3300,8 @@ order by district";
                     receiptDate = reader["receiptDate"]?.ToString(),
                     installationDate = reader["installationDate"]?.ToString(),
                     warrantyUpto = reader["warrantyUpto"]?.ToString(),
-                    serialNo = reader["serialNo"]?.ToString()
+                    serialNo = reader["serialNo"]?.ToString(),
+                    isTagged = reader["isTagged"]?.ToString() ?? "Pending"
                 });
             }
 

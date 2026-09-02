@@ -1,4 +1,4 @@
-﻿using EMISAPIS.DTOS;
+using EMISAPIS.DTOS;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Text.Json.Serialization;
@@ -18,20 +18,42 @@ namespace EMISAPIS.Controllers
         }
 
         [HttpGet("GetConTenterlist")]
-        public async Task<IActionResult> GetConTenterlist()
+        public async Task<IActionResult> GetConTenterlist(
+            [FromQuery] string? rcType = null,
+            [FromQuery] int categoryId = 0)
         {
             List<ConTenterlistDTO> list = new List<ConTenterlistDTO>
             {
                 new() { tender_id = 0, tender_no = "--All--" },
             };
 
-            string query = @"select distinct t.tender_no,t.tender_id
-from  contract_items c
-inner join  masitems m on m.item_id= c.item_id
-inner join award_of_contract ac on ac.award_of_contract_id=c.award_of_contract_id
-inner join massuppliers s on s.supplier_id=ac.supplier_id
-inner join tenders t on t.tender_id=ac.tender_id
-where GETDATE() between ac.contract_date and ac.contract_end_date";
+            string whereClause = "";
+            if (string.Equals(rcType, "R", StringComparison.OrdinalIgnoreCase))
+            {
+                whereClause += " AND GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date";
+            }
+            else if (string.Equals(rcType, "D", StringComparison.OrdinalIgnoreCase))
+            {
+                whereClause += " AND GETDATE() > ac.contract_end_date";
+            }
+
+            if (categoryId == 2)
+            {
+                whereClause += " AND m.categoryid = 2";
+            }
+            else if (categoryId == 1)
+            {
+                whereClause += " AND (m.categoryid = 1 OR m.categoryid IS NULL)";
+            }
+
+            string query = @"select distinct t.tender_no, t.tender_id
+from contract_items c
+inner join masitems m on m.item_id = c.item_id
+inner join award_of_contract ac on ac.award_of_contract_id = c.award_of_contract_id
+inner join massuppliers s on s.supplier_id = ac.supplier_id
+inner join tenders t on t.tender_id = ac.tender_id
+where 1=1 " + whereClause + @"
+order by t.tender_no";
 
             using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
             {
@@ -56,10 +78,6 @@ where GETDATE() between ac.contract_date and ac.contract_end_date";
             return Ok(list);
         }
 
-
-
-
-
         [HttpGet("GetRcDetailReport")]
         public async Task<IActionResult> GetRcDetailReport(
             [FromQuery] RcDetailReportRequestDTO req)
@@ -68,21 +86,25 @@ where GETDATE() between ac.contract_date and ac.contract_end_date";
 
             try
             {
-                string whereTender = req.TenderId.HasValue
+                string whereTender = req.TenderId.HasValue && req.TenderId.Value > 0
                     ? " AND t.tender_id = @TenderId"
                     : "";
 
-                string whereCategory = req.CategoryId == 2
-                    ? " AND m.categoryid = 2"
-                    : " AND (m.categoryid = 1 OR m.categoryid IS NULL)";
+                string whereCategory = "";
+                if (req.CategoryId == 2)
+                    whereCategory = " AND m.categoryid = 2";
+                else if (req.CategoryId == 1)
+                    whereCategory = " AND (m.categoryid = 1 OR m.categoryid IS NULL)";
 
-                string whereRcType = req.RcType == "R"
-                    ? " AND GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date"
-                    : " AND GETDATE() > ac.contract_end_date";
+                string whereRcType = "";
+                if (string.Equals(req.RcType, "R", StringComparison.OrdinalIgnoreCase))
+                    whereRcType = " AND GETDATE() BETWEEN ac.contract_date AND ac.contract_end_date";
+                else if (string.Equals(req.RcType, "D", StringComparison.OrdinalIgnoreCase))
+                    whereRcType = " AND GETDATE() > ac.contract_end_date";
 
-                string orderBy = req.RcType == "R"
-                    ? "ORDER BY ac.contract_date DESC"
-                    : "ORDER BY ac.contract_end_date DESC";
+                string orderBy = string.Equals(req.RcType, "D", StringComparison.OrdinalIgnoreCase)
+                    ? "ORDER BY ac.contract_end_date DESC, ac.contract_date DESC, c.contract_item_id DESC"
+                    : "ORDER BY ac.contract_date DESC, c.contract_item_id DESC";
 
                 string query = @"SELECT  
     c.contract_item_id,
@@ -94,12 +116,11 @@ where GETDATE() between ac.contract_date and ac.contract_end_date";
     s.name AS SupplierName,
     t.tender_no,
     CONVERT(VARCHAR, ac.contract_date, 103) AS contract_date,
-    CONVERT(VARCHAR, 
-        CASE 
-            WHEN c.contract_new_end_date IS NOT NULL 
-            THEN c.contract_new_end_date 
-            ELSE ac.contract_end_date 
-        END, 103) AS contract_end_date,
+    CASE 
+        WHEN c.contract_new_end_date IS NOT NULL 
+        THEN CONVERT(VARCHAR, c.contract_new_end_date, 103)
+        ELSE CONVERT(VARCHAR, ac.contract_end_date, 103)
+    END AS contract_end_date,
     c.basic_rate,
     c.percentage AS GST,
     c.single_unit_price,
@@ -126,7 +147,7 @@ LEFT JOIN (
 ON tt.tender_id = t.tender_id 
 AND tt.supplier_id = s.supplier_id 
 AND tt.item_id = c.item_id
-WHERE c.isfreezed IS NULL
+WHERE (c.isfreezed IS NULL OR c.isfreezed <> 'Y')
 " + whereTender + whereCategory + whereRcType + @"
 " + orderBy;
 
@@ -137,8 +158,8 @@ WHERE c.isfreezed IS NULL
                     {
                         cmd.CommandType = System.Data.CommandType.Text;
 
-                        if (req.TenderId.HasValue)
-                            cmd.Parameters.AddWithValue("@TenderId", req.TenderId);
+                        if (req.TenderId.HasValue && req.TenderId.Value > 0)
+                            cmd.Parameters.AddWithValue("@TenderId", req.TenderId.Value);
 
                         await conn.OpenAsync();
 
