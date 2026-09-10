@@ -151,9 +151,9 @@ WHERE a.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled')
        OR l.user_id = @UserId 
        OR l.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) 
        OR l.location_id = @UserId
-       OR l.district_id IN (SELECT district_id FROM dbo.users WHERE user_id = @UserId AND district_id IS NOT NULL AND district_id > 0)
+       OR l.DP_DistrictID IN (SELECT ml.DP_DistrictID FROM dbo.users u INNER JOIN dbo.maslocations ml ON ml.location_id = u.location_id WHERE u.user_id = @UserId AND ml.DP_DistrictID IS NOT NULL AND ml.DP_DistrictID > 0)
        OR pi.consignee_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId)
-       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.Role IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
+       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.user_type IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
       )
   AND (@FinancialYearId = 0 OR a.FINANCIAL_YEAR_ID = @FinancialYearId)
   AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode)
@@ -175,7 +175,7 @@ ORDER BY a.po_date DESC";
                 {
                     list.Add(new PoDashboardRowDto
                     {
-                        PoId = Convert.ToInt32(reader["PO_ID"]),
+                        PoId = reader["PO_ID"] != DBNull.Value ? Convert.ToInt32(reader["PO_ID"]) : 0,
                         ItemName = reader["ITEM_NAME"]?.ToString() ?? string.Empty,
                         Code = reader["CODE"]?.ToString() ?? string.Empty,
                         IndentDt = reader["IndentDT"]?.ToString() ?? string.Empty,
@@ -195,9 +195,9 @@ ORDER BY a.po_date DESC";
 
                 return Ok(list);
             }
-            catch (SqlException ex)
+            catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error loading purchase orders.", detail = ex.Message });
+                return StatusCode(500, new { userError = "Error loading purchase orders.", developerError = ex.Message, message = "Error loading purchase orders.", detail = ex.Message });
             }
         }
 
@@ -366,9 +366,9 @@ WHERE (b.status IS NULL OR b.status NOT IN ('Incomplete', 'Waiting For Approval'
        OR c1.user_id = @UserId 
        OR c1.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) 
        OR c1.location_id = @UserId
-       OR c1.district_id IN (SELECT district_id FROM dbo.users WHERE user_id = @UserId AND district_id IS NOT NULL AND district_id > 0)
+       OR c1.DP_DistrictID IN (SELECT ml.DP_DistrictID FROM dbo.users u INNER JOIN dbo.maslocations ml ON ml.location_id = u.location_id WHERE u.user_id = @UserId AND ml.DP_DistrictID IS NOT NULL AND ml.DP_DistrictID > 0)
        OR a.consignee_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId)
-       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.Role IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
+       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.user_type IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
       )
   AND (@AuthorityId IS NULL OR @AuthorityId = '' OR c1.authority = @AuthorityId)
   AND (@FinancialYearId = 0 OR b.financial_year_id = @FinancialYearId)
@@ -392,9 +392,9 @@ ORDER BY b.po_date DESC, a.po_id DESC";
                     {
                         rows.Add(new PoReceiptDeskRowDto
                         {
-                            PoItemId = Convert.ToInt32(reader["po_item_id"]),
-                            PoId = Convert.ToInt32(reader["po_id"]),
-                            ConsigneeId = Convert.ToInt32(reader["consignee_id"]),
+                            PoItemId = reader["po_item_id"] != DBNull.Value ? Convert.ToInt32(reader["po_item_id"]) : 0,
+                            PoId = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0,
+                            ConsigneeId = reader["consignee_id"] != DBNull.Value ? Convert.ToInt32(reader["consignee_id"]) : 0,
                             LocationName = reader["location_name"]?.ToString() ?? string.Empty,
                             PoNo = reader["PO_NO"]?.ToString() ?? string.Empty,
                             PoDate = reader["po_date"]?.ToString() ?? string.Empty,
@@ -414,9 +414,9 @@ ORDER BY b.po_date DESC, a.po_id DESC";
 
                 return Ok(rows);
             }
-            catch (SqlException ex)
+            catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error loading PO receipt desk.", detail = ex.Message });
+                return StatusCode(500, new { userError = "Error loading PO receipt desk.", developerError = ex.Message, message = "Error loading PO receipt desk.", detail = ex.Message });
             }
         }
 
@@ -3132,8 +3132,8 @@ GROUP BY re.receipt_id, d.Issue_id, dispatch_date, Tentative_Sdate, d.status, di
                     DispatchDate = reader["dispatch_date"]?.ToString() ?? string.Empty,
                     DispatchNo = reader["dispatch_no"]?.ToString() ?? string.Empty,
                     SuppliedQty = reader["quantity"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["quantity"]),
-                    PoId = Convert.ToInt32(reader["po_id"]),
-                    LocationId = Convert.ToInt32(reader["location_id"]),
+                    PoId = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0,
+                    LocationId = reader["location_id"] != DBNull.Value ? Convert.ToInt32(reader["location_id"]) : 0,
                     ReceiptDate = reader["recieved_date"]?.ToString() ?? string.Empty,
                     ReceiptId = reader["receipt_id"] == DBNull.Value ? null : Convert.ToInt32(reader["receipt_id"]),
                 });
