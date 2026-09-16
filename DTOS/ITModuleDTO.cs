@@ -92,21 +92,17 @@ namespace EMISAPIS.DTOS
         public int SMControlId { get; set; }
     }
 
-    public class SidebarTreeSubItemDto
+    public class SidebarItemDto
     {
-        public int SubMenuId { get; set; }
         public string Label { get; set; } = string.Empty;
         public string Route { get; set; } = string.Empty;
-        public int Order { get; set; }
+        public List<SidebarSubItemDto> Submenu { get; set; } = new();
     }
 
-    public class SidebarTreeItemDto
+    public class SidebarSubItemDto
     {
-        public int MenuId { get; set; }
         public string Label { get; set; } = string.Empty;
         public string Route { get; set; } = string.Empty;
-        public int Order { get; set; }
-        public List<SidebarTreeSubItemDto> Submenu { get; set; } = new();
     }
 }
 
