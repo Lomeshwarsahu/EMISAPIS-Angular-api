@@ -104,4 +104,22 @@ namespace EMISAPIS.DTOS
         public string Label { get; set; } = string.Empty;
         public string Route { get; set; } = string.Empty;
     }
+
+    public class SidebarTreeSubItemDto
+    {
+        public int SubMenuId { get; set; }
+        public string Label { get; set; } = string.Empty;
+        public string Route { get; set; } = string.Empty;
+        public int Order { get; set; }
+    }
+
+    public class SidebarTreeItemDto
+    {
+        public int MenuId { get; set; }
+        public string Label { get; set; } = string.Empty;
+        public string Route { get; set; } = string.Empty;
+        public int Order { get; set; }
+        public List<SidebarTreeSubItemDto> Submenu { get; set; } = new();
+    }
 }
+

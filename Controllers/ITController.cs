@@ -525,92 +525,93 @@ namespace EMISAPIS.Controllers
             return Ok(subMenus);
         }
 
-        // GET: api/IT/sidebar-tree/5
-        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpGet("sidebar-tree/{roleId}")]
-        public async Task<IActionResult> GetSidebarTree(int roleId)
+        public async Task<IActionResult> GetSidebarTreeForRole(int roleId)
         {
-            var sidebar = new List<SidebarItemDto>();
+            var result = new List<SidebarTreeItemDto>();
             using var conn = new SqlConnection(ConnStr());
             await conn.OpenAsync();
 
-            // 1. Fetch active menus mapped to this role
-            var menus = new List<MenuDto>();
-            using (var cmd = new SqlCommand(@"
-                SELECT DISTINCT m.menuid, m.menuname, m.menulink, m.menuorder
-                FROM masmenu m
-                INNER JOIN masMenuRole mr ON mr.MenuID = m.menuid
-                WHERE mr.RoleID = @RoleId AND m.isactive = 1
-                ORDER BY m.menuorder", conn))
+            var sqlMenus = @"
+                SELECT DISTINCT m.MenuOrder, m.menuid, m.menulink, m.MenuName
+                FROM masMenu m
+                INNER JOIN masmenuRole r ON r.menuid = m.menuid
+                INNER JOIN masSubMenu s ON s.MenuID = m.MenuID
+                INNER JOIN masSubMenuRole sr ON sr.SubMenuID = s.SubMenuID AND sr.RoleID = r.RoleID
+                WHERE m.isActive = 1 AND s.isActive = 1 AND r.roleid = @RoleId
+                ORDER BY m.MenuOrder";
+
+            var menuMap = new List<(int MenuId, string Label, string Route, int Order)>();
+
+            using (var cmd = new SqlCommand(sqlMenus, conn))
             {
                 cmd.Parameters.AddWithValue("@RoleId", roleId);
                 using var dr = await cmd.ExecuteReaderAsync();
                 while (await dr.ReadAsync())
                 {
-                    menus.Add(new MenuDto
-                    {
-                        MenuId = Convert.ToInt32(dr["menuid"]),
-                        MenuName = dr["menuname"]?.ToString() ?? string.Empty,
-                        MenuLink = dr["menulink"]?.ToString() ?? string.Empty,
-                        MenuOrder = Convert.ToInt32(dr["menuorder"])
-                    });
+                    menuMap.Add((
+                        Convert.ToInt32(dr["menuid"]),
+                        dr["MenuName"]?.ToString() ?? string.Empty,
+                        NormalizeRoute(dr["menulink"]?.ToString()),
+                        Convert.ToInt32(dr["MenuOrder"])
+                    ));
                 }
             }
 
-            // 2. Fetch active submenus mapped to this role
-            var submenus = new List<SubMenuDto>();
-            using (var cmd = new SqlCommand(@"
-                SELECT s.submenuid, s.submenuname, s.submenulink, s.menuid, s.submenuorder
-                FROM masSubMenu s
-                INNER JOIN masSubMenuRole sr ON sr.SubMenuID = s.submenuid
-                WHERE sr.RoleID = @RoleId AND s.isactive = 1
-                ORDER BY s.menuid, s.submenuorder", conn))
+            foreach (var menu in menuMap)
             {
-                cmd.Parameters.AddWithValue("@RoleId", roleId);
-                using var dr = await cmd.ExecuteReaderAsync();
-                while (await dr.ReadAsync())
+                var item = new SidebarTreeItemDto
                 {
-                    submenus.Add(new SubMenuDto
-                    {
-                        SubMenuId = Convert.ToInt32(dr["submenuid"]),
-                        SubMenuName = dr["submenuname"]?.ToString() ?? string.Empty,
-                        SubMenuLink = dr["submenulink"]?.ToString() ?? string.Empty,
-                        MenuId = Convert.ToInt32(dr["menuid"]),
-                        SubMenuOrder = Convert.ToInt32(dr["submenuorder"])
-                    });
-                }
-            }
-
-            // 3. Assemble hierarchy
-            foreach (var menu in menus)
-            {
-                var item = new SidebarItemDto
-                {
-                    Label = menu.MenuName,
-                    Route = menu.MenuLink
+                    MenuId = menu.MenuId,
+                    Label = menu.Label,
+                    Route = menu.Route,
+                    Order = menu.Order
                 };
 
-                var matchingSubmenus = submenus
-                    .Where(s => s.MenuId == menu.MenuId)
-                    .OrderBy(s => s.SubMenuOrder)
-                    .Select(s => new SidebarSubItemDto
-                    {
-                        Label = s.SubMenuName,
-                        Route = s.SubMenuLink
-                    })
-                    .ToList();
+                var sqlSub = @"
+                    SELECT s.submenuid, s.submenuname, s.submenulink, s.submenuorder
+                    FROM masSubMenu s
+                    INNER JOIN masSubMenuRole sr ON sr.submenuid = s.submenuid
+                    WHERE s.isActive = 1 AND s.MenuID = @MenuId AND sr.Roleid = @RoleId
+                    ORDER BY s.SubMenuOrder";
 
-                if (matchingSubmenus.Count > 0)
+                using (var subCmd = new SqlCommand(sqlSub, conn))
                 {
-                    item.Submenu = matchingSubmenus;
+                    subCmd.Parameters.AddWithValue("@MenuId", menu.MenuId);
+                    subCmd.Parameters.AddWithValue("@RoleId", roleId);
+                    using var subDr = await subCmd.ExecuteReaderAsync();
+                    while (await subDr.ReadAsync())
+                    {
+                        item.Submenu.Add(new SidebarTreeSubItemDto
+                        {
+                            SubMenuId = Convert.ToInt32(subDr["submenuid"]),
+                            Label = subDr["submenuname"]?.ToString() ?? string.Empty,
+                            Route = NormalizeRoute(subDr["submenulink"]?.ToString()),
+                            Order = Convert.ToInt32(subDr["submenuorder"])
+                        });
+                    }
                 }
 
-                sidebar.Add(item);
+                if (item.Submenu.Count > 0 || !string.IsNullOrWhiteSpace(item.Route))
+                {
+                    result.Add(item);
+                }
             }
 
-            return Ok(sidebar);
+            return Ok(result);
+        }
+
+
+        private static string NormalizeRoute(string? rawLink)
+        {
+            if (string.IsNullOrWhiteSpace(rawLink)) return string.Empty;
+            var link = rawLink.Trim();
+            if (link.StartsWith("~/")) link = link.Substring(2);
+            if (!link.StartsWith("/")) link = "/" + link;
+            return link;
         }
 
         #endregion
     }
 }
+
