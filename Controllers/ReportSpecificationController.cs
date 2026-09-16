@@ -155,6 +155,67 @@ ORDER BY {schema.CategoryNameColumn}";
             }
         }
 
+        //        [HttpPost("items/{itemId:int}/upload")]
+        //        [RequestSizeLimit(MaxPdfBytes + 1024)]
+        //        public async Task<IActionResult> UploadSpecification(int itemId, IFormFile? file)
+        //        {
+        //            if (file == null || file.Length == 0)
+        //                return BadRequest(new { message = "Please select a document to upload." });
+
+        //            if (!string.Equals(Path.GetExtension(file.FileName), ".pdf", StringComparison.OrdinalIgnoreCase))
+        //                return BadRequest(new { message = "Please upload PDF file only." });
+
+        //            if (file.Length > MaxPdfBytes)
+        //                return BadRequest(new { message = "You cannot upload file more than 2 MB." });
+
+        //            var fileName = $"{itemId}.pdf";
+        //            var physicalPath = Path.Combine(_specificationRoot, fileName);
+
+        //            try
+        //            {
+        //                await using var conn = new SqlConnection(_connectionString);
+        //                await conn.OpenAsync();
+        //                var schema = await GetSchemaAsync(conn);
+
+        //                if (!schema.HasUploadTable)
+        //                    return StatusCode(500, new { message = "Upload table masitems_upload not found in database." });
+
+        //                await using (var stream = new FileStream(physicalPath, FileMode.Create))
+        //                {
+        //                    await file.CopyToAsync(stream);
+        //                }
+
+        //                const string deleteSql = "DELETE FROM dbo.masitems_upload WHERE item_id = @ItemId";
+        //                await using (var del = new SqlCommand(deleteSql, conn))
+        //                {
+        //                    del.Parameters.AddWithValue("@ItemId", itemId);
+        //                    await del.ExecuteNonQueryAsync();
+        //                }
+
+        //                const string insertSql = @"
+        //INSERT INTO dbo.masitems_upload (upload_folder_name, file_name, item_id)
+        //VALUES (@Folder, @FileName, @ItemId)";
+
+        //                await using var ins = new SqlCommand(insertSql, conn);
+        //                ins.Parameters.AddWithValue("@Folder", UploadFolderName);
+        //                ins.Parameters.AddWithValue("@FileName", fileName);
+        //                ins.Parameters.AddWithValue("@ItemId", itemId);
+        //                await ins.ExecuteNonQueryAsync();
+
+        //                return Ok(new { message = "Uploaded Successfully." });
+        //            }
+        //            catch (SqlException ex)
+        //            {
+        //                return StatusCode(500, new { message = "Database error during upload.", detail = ex.Message });
+        //            }
+        //            catch (IOException ex)
+        //            {
+        //                return StatusCode(500, new { message = "Could not save file.", detail = ex.Message });
+        //            }
+        //        }
+
+
+        //by lomesh
         [HttpPost("items/{itemId:int}/upload")]
         [RequestSizeLimit(MaxPdfBytes + 1024)]
         public async Task<IActionResult> UploadSpecification(int itemId, IFormFile? file)
@@ -209,7 +270,7 @@ ORDER BY {schema.CategoryNameColumn}";
                     await memoryStream.CopyToAsync(stream);
                 }
 
-                // 5. Database Logic
+                // 5. Database Logic (Your original code)
                 const string deleteSql = "DELETE FROM dbo.masitems_upload WHERE item_id = @ItemId";
                 await using (var del = new SqlCommand(deleteSql, conn))
                 {
@@ -238,7 +299,6 @@ VALUES (@Folder, @FileName, @ItemId)";
                 return StatusCode(500, new { message = "Could not save file.", detail = ex.Message });
             }
         }
-
         private async Task<ReportSpecificationSchema> GetSchemaAsync(SqlConnection conn)
         {
             if (_schema != null)
@@ -471,18 +531,19 @@ WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = @Table AND COLUMN_NAME = @Column";
             return await cmd.ExecuteScalarAsync() != null;
         }
 
+        //by lomesh
         private static bool HasDangerousPdfContent(byte[] bytes)
         {
             var content = System.Text.Encoding.ASCII.GetString(bytes);
 
             string[] dangerousTags = new[]
             {
-                "/JavaScript",
-                "/JS",
-                "/OpenAction",
-                "/AA",
-                "/Launch"
-            };
+        "/JavaScript",
+        "/JS",
+        "/OpenAction",
+        "/AA",
+        "/Launch"
+    };
 
             foreach (var tag in dangerousTags)
             {
