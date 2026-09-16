@@ -197,6 +197,10 @@ namespace EMISAPIS.DTOS
         public string EmailId { get; set; } = string.Empty;
     }
 
+    public class NodalInformationDto : NodalInfoRowDto
+    {
+    }
+
     public class NodalInfoSaveRequest
     {
         public int UserId { get; set; }
@@ -204,6 +208,10 @@ namespace EMISAPIS.DTOS
         public string Designation { get; set; } = string.Empty;
         public string EmailId { get; set; } = string.Empty;
         public string MobileNo { get; set; } = string.Empty;
+    }
+
+    public class NodalInformationSaveDto : NodalInfoSaveRequest
+    {
     }
 
     public class NodalProgressRowDto

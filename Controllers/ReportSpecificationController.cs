@@ -159,6 +159,7 @@ ORDER BY {schema.CategoryNameColumn}";
         [RequestSizeLimit(MaxPdfBytes + 1024)]
         public async Task<IActionResult> UploadSpecification(int itemId, IFormFile? file)
         {
+            // 1. Basic File Checks
             if (file == null || file.Length == 0)
                 return BadRequest(new { message = "Please select a document to upload." });
 
@@ -167,6 +168,27 @@ ORDER BY {schema.CategoryNameColumn}";
 
             if (file.Length > MaxPdfBytes)
                 return BadRequest(new { message = "You cannot upload file more than 2 MB." });
+
+            // 2. MIME Type Check
+            if (!string.Equals(file.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Invalid file content type. Only PDF is allowed." });
+
+            // 3. Read File for Deep Inspection (Magic Bytes & Script Check)
+            using var memoryStream = new MemoryStream();
+            await file.CopyToAsync(memoryStream);
+            var fileBytes = memoryStream.ToArray();
+
+            // 3A. Magic Bytes Check (Verifying it actually starts with %PDF-)
+            if (fileBytes.Length < 5 || fileBytes[0] != 0x25 || fileBytes[1] != 0x50 || fileBytes[2] != 0x44 || fileBytes[3] != 0x46 || fileBytes[4] != 0x2D)
+            {
+                return BadRequest(new { message = "Corrupted or invalid PDF file format." });
+            }
+
+            // 3B. Malicious Code/Script Check
+            if (HasDangerousPdfContent(fileBytes))
+            {
+                return BadRequest(new { message = "File contains embedded scripts or unauthorized actions (Security Risk)." });
+            }
 
             var fileName = $"{itemId}.pdf";
             var physicalPath = Path.Combine(_specificationRoot, fileName);
@@ -180,11 +202,14 @@ ORDER BY {schema.CategoryNameColumn}";
                 if (!schema.HasUploadTable)
                     return StatusCode(500, new { message = "Upload table masitems_upload not found in database." });
 
+                // 4. Save the File (Using the memory stream we already read)
                 await using (var stream = new FileStream(physicalPath, FileMode.Create))
                 {
-                    await file.CopyToAsync(stream);
+                    memoryStream.Position = 0; // Reset stream position before copying
+                    await memoryStream.CopyToAsync(stream);
                 }
 
+                // 5. Database Logic
                 const string deleteSql = "DELETE FROM dbo.masitems_upload WHERE item_id = @ItemId";
                 await using (var del = new SqlCommand(deleteSql, conn))
                 {
@@ -444,6 +469,30 @@ WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = @Table AND COLUMN_NAME = @Column";
             cmd.Parameters.AddWithValue("@Table", table);
             cmd.Parameters.AddWithValue("@Column", column);
             return await cmd.ExecuteScalarAsync() != null;
+        }
+
+        private static bool HasDangerousPdfContent(byte[] bytes)
+        {
+            var content = System.Text.Encoding.ASCII.GetString(bytes);
+
+            string[] dangerousTags = new[]
+            {
+                "/JavaScript",
+                "/JS",
+                "/OpenAction",
+                "/AA",
+                "/Launch"
+            };
+
+            foreach (var tag in dangerousTags)
+            {
+                if (content.IndexOf(tag, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true; // Match found, file is dangerous
+                }
+            }
+
+            return false; // Safe file
         }
     }
 }
