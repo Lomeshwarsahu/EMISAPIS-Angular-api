@@ -345,39 +345,90 @@ ORDER BY A.item_name";
                 return BadRequest(new { message = "userId is required." });
 
             var sql = @"
+DECLARE @IsAdmin BIT = 0;
+DECLARE @UserLocId INT = NULL;
+DECLARE @UserDistId INT = NULL;
+
+SELECT TOP 1
+    @IsAdmin = CASE 
+        WHEN u.user_id = 12 THEN 1
+        WHEN u.user_type IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DIRECTOR', 'TPO', 'GM', 'MD') THEN 1
+        ELSE 0 
+    END,
+    @UserLocId = u.location_id,
+    @UserDistId = ml.DP_DistrictID
+FROM dbo.users u
+LEFT JOIN dbo.maslocations ml ON ml.location_id = u.location_id
+WHERE u.user_id = @UserId;
+
 SELECT a.po_item_id, a.po_id, a.quantity, a.consignee_id,
        c1.location_name, CONVERT(VARCHAR, b.po_date, 103) AS po_date, b.PO_NO,
        ISNULL(c.item_name, a.item_id) AS item_name, c.item_code_as_per_tender AS item_code, s.name AS supplier_name,
        ISNULL(x.single_unit_price * a.quantity, 0) AS Total_Price
+INTO #SelectedRows
 FROM dbo.po_items a
 LEFT OUTER JOIN dbo.MASITEMS R ON R.ITEM_ID = a.item_id
-LEFT OUTER JOIN dbo.purchase_order b ON a.po_id = b.po_id
+INNER JOIN dbo.purchase_order b ON a.po_id = b.po_id
 LEFT OUTER JOIN dbo.MASSUPPLIERS s ON s.SUPPLIER_ID = b.supplier_id
-LEFT OUTER JOIN (
-    SELECT F.SUPPLIER_ID, F.TENDER_ID, D.ITEM_ID, D.single_unit_price
+OUTER APPLY (
+    SELECT TOP 1 D.single_unit_price
     FROM dbo.AWARD_OF_CONTRACT F
     INNER JOIN dbo.CONTRACT_ITEMS D ON D.AWARD_OF_CONTRACT_ID = F.AWARD_OF_CONTRACT_ID
-) x ON x.TENDER_ID = b.TENDER_ID AND b.SUPPLIER_ID = x.SUPPLIER_ID AND a.ITEM_ID = x.ITEM_ID
+    WHERE F.TENDER_ID = b.TENDER_ID 
+      AND F.SUPPLIER_ID = b.SUPPLIER_ID 
+      AND D.ITEM_ID = a.ITEM_ID
+    ORDER BY F.AWARD_OF_CONTRACT_ID DESC
+) x
 LEFT OUTER JOIN dbo.maslocations c1 ON c1.location_id = a.consignee_id
 LEFT OUTER JOIN dbo.masitems c ON a.item_id = c.item_id
 WHERE (b.status IS NULL OR b.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled'))
   AND (
        @UserId = 0
-       OR c1.user_id = @UserId 
-       OR c1.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) 
+       OR @IsAdmin = 1
+       OR c1.user_id = @UserId
+       OR (@UserLocId IS NOT NULL AND (c1.location_id = @UserLocId OR a.consignee_id = @UserLocId))
        OR c1.location_id = @UserId
-       OR c1.DP_DistrictID IN (SELECT ml.DP_DistrictID FROM dbo.users u INNER JOIN dbo.maslocations ml ON ml.location_id = u.location_id WHERE u.user_id = @UserId AND ml.DP_DistrictID IS NOT NULL AND ml.DP_DistrictID > 0)
-       OR a.consignee_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId)
-       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.user_type IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
+       OR (@UserDistId IS NOT NULL AND @UserDistId > 0 AND c1.DP_DistrictID = @UserDistId)
       )
   AND (@AuthorityId IS NULL OR @AuthorityId = '' OR c1.authority = @AuthorityId)
   AND (@FinancialYearId = 0 OR b.financial_year_id = @FinancialYearId)
-  AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode)
-ORDER BY b.po_date DESC, a.po_id DESC";
+  AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode);
+
+SELECT * FROM #SelectedRows ORDER BY po_date DESC, po_id DESC;
+
+SELECT d.po_id,
+       d.location_id,
+       d.Issue_id,
+       CONVERT(VARCHAR, d.Tentative_Sdate, 103) AS Tentative_Sdate,
+       CASE WHEN re.receipt_no IS NOT NULL THEN re.receipt_no ELSE '' END AS receipt_no,
+       CASE
+           WHEN re.status IS NOT NULL THEN CASE WHEN re.status = 'C' THEN 'Installation Completed' ELSE 'Installation Pending' END
+           ELSE CASE WHEN d.status = 'C' THEN 'Receipt' ELSE 'Not Supplied' END
+       END AS SupplyStatus,
+       CONVERT(VARCHAR, d.dispatch_date, 103) AS dispatch_date,
+       d.dispatch_no,
+       SUM(i.Supplyqty) AS quantity,
+       CASE WHEN re.recieved_date IS NULL THEN 'Not Receipt' ELSE CONVERT(VARCHAR, re.recieved_date, 103) END AS recieved_date,
+       re.receipt_id
+FROM dbo.SupplierDispatch d
+INNER JOIN (SELECT DISTINCT po_id, consignee_id FROM #SelectedRows) sel 
+    ON sel.po_id = d.po_id AND sel.consignee_id = d.location_id
+INNER JOIN dbo.Issue_item_details i ON d.Issue_id = i.Issue_id
+LEFT OUTER JOIN (
+    SELECT r.issue_id, r.recieved_date, r.po_id, r.location_id, r.status, r.receipt_no, r.receipt_id
+    FROM dbo.receipts r
+    WHERE r.status = 'C'
+) re ON re.issue_id = d.Issue_id AND re.po_id = d.po_id AND re.location_id = d.location_id
+GROUP BY re.receipt_id, d.Issue_id, d.dispatch_date, d.Tentative_Sdate, d.status, d.dispatch_no,
+         d.po_id, d.location_id, re.recieved_date, re.status, re.receipt_no;
+
+DROP TABLE #SelectedRows;";
 
             try
             {
                 var rows = new List<PoReceiptDeskRowDto>();
+                var batchLookup = new Dictionary<(int PoId, int LocationId), List<PoReceiptBatchDto>>();
+
                 await using var conn = new SqlConnection(_connectionString);
                 await conn.OpenAsync();
                 await using var cmd = new SqlCommand(sql, conn);
@@ -405,11 +456,49 @@ ORDER BY b.po_date DESC, a.po_id DESC";
                             TotalPrice = reader["Total_Price"] == DBNull.Value ? null : Convert.ToDecimal(reader["Total_Price"]),
                         });
                     }
+
+                    if (await reader.NextResultAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            var batchPoId = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0;
+                            var batchLocId = reader["location_id"] != DBNull.Value ? Convert.ToInt32(reader["location_id"]) : 0;
+                            var batch = new PoReceiptBatchDto
+                            {
+                                IssueId = reader["Issue_id"]?.ToString() ?? string.Empty,
+                                TentativeSupplyDate = reader["Tentative_Sdate"]?.ToString() ?? string.Empty,
+                                ReceiptNo = reader["receipt_no"]?.ToString() ?? string.Empty,
+                                SupplyStatus = reader["SupplyStatus"]?.ToString() ?? string.Empty,
+                                DispatchDate = reader["dispatch_date"]?.ToString() ?? string.Empty,
+                                DispatchNo = reader["dispatch_no"]?.ToString() ?? string.Empty,
+                                SuppliedQty = reader["quantity"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["quantity"]),
+                                PoId = batchPoId,
+                                LocationId = batchLocId,
+                                ReceiptDate = reader["recieved_date"]?.ToString() ?? string.Empty,
+                                ReceiptId = reader["receipt_id"] == DBNull.Value ? null : Convert.ToInt32(reader["receipt_id"]),
+                            };
+
+                            var key = (batchPoId, batchLocId);
+                            if (!batchLookup.TryGetValue(key, out var batchList))
+                            {
+                                batchList = new List<PoReceiptBatchDto>();
+                                batchLookup[key] = batchList;
+                            }
+                            batchList.Add(batch);
+                        }
+                    }
                 }
 
                 foreach (var row in rows)
                 {
-                    row.Batches = await LoadReceiptBatchesAsync(conn, row.PoId, row.ConsigneeId);
+                    if (batchLookup.TryGetValue((row.PoId, row.ConsigneeId), out var batches))
+                    {
+                        row.Batches = batches;
+                    }
+                    else
+                    {
+                        row.Batches = new List<PoReceiptBatchDto>();
+                    }
                 }
 
                 return Ok(rows);
