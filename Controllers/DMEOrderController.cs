@@ -3503,12 +3503,20 @@ ORDER BY pa.entryDT DESC";
         }
 
         /// <summary>PORealloaction.aspx BtnReallocate_Click — apply reallocation for checked rows + store approval PDF.</summary>
+
+        //[HttpPost("po-reallocation")]
+        //public async Task<IActionResult> SavePoReallocation(
+        //    [FromForm] int poId,
+        //    [FromForm] string remark,
+        //    [FromForm] string items,
+        //    [FromForm] IFormFile? file)
         [HttpPost("po-reallocation")]
         public async Task<IActionResult> SavePoReallocation(
-            [FromForm] int poId,
-            [FromForm] string remark,
-            [FromForm] string items,
-            [FromForm] IFormFile? file)
+    [FromForm] int poId,
+    [FromForm] string remark,
+    [FromForm] string items,
+    IFormFile? file) 
+
         {
             if (poId <= 0)
                 return BadRequest(new { message = "poId is required." });
@@ -3796,6 +3804,16 @@ ORDER BY poi.entryDT DESC";
 
         /// <summary>EMSPOAmmendment.aspx lbtnUpdateHeaderInfo_Click — save amendment + upload PDF.</summary>
         [HttpPost("po-amendment")]
+        //public async Task<IActionResult> SavePoAmendment(
+        //    [FromForm] int poId,
+        //    [FromForm] string dispatchNo,
+        //    [FromForm] string amendDate,
+        //    [FromForm] string prevSoIssueDt,
+        //    [FromForm] string prevSoIssueNo,
+        //    [FromForm] string remarks,
+        //    [FromForm] int amendTypeId,
+        //    [FromForm] string isReprintReq,
+        //    [FromForm] IFormFile? file)
         public async Task<IActionResult> SavePoAmendment(
             [FromForm] int poId,
             [FromForm] string dispatchNo,
@@ -3805,7 +3823,7 @@ ORDER BY poi.entryDT DESC";
             [FromForm] string remarks,
             [FromForm] int amendTypeId,
             [FromForm] string isReprintReq,
-            [FromForm] IFormFile? file)
+             IFormFile? file)
         {
             if (poId <= 0)
                 return BadRequest(new { message = "poId is required." });

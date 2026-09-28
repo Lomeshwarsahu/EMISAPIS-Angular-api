@@ -113,7 +113,8 @@ namespace EMISAPIS.Controllers
                 });
             }
         }
-        [HttpGet]
+        //[HttpGet]
+        [HttpGet("GetStudents")]
         public async Task<IActionResult> GetStudents([FromServices] ILogger<AuthController> logger)
         {
             try
