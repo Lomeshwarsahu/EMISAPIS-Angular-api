@@ -55,7 +55,7 @@ namespace EMISAPIS.Controllers
 
 
         [HttpGet("ExtensionEHODetails")]
-        public async Task<IActionResult> GetExtensionEHODetails(string supplierid)
+        public async Task<IActionResult> GetExtensionEHODetails(string supplierid, [FromQuery] bool onlyExtensionRequests = false)
         {
             List<PurchaseOrderGridDTO> list = new List<PurchaseOrderGridDTO>();
 
@@ -65,6 +65,10 @@ namespace EMISAPIS.Controllers
             {
                 whereClause = " and p.supplier_id=@supplierid ";
             }
+
+            string extensionFilter = onlyExtensionRequests
+                ? " LEFT OUTER JOIN PO_extension_detail pxd on pxd.po_id = posu.po_id where pxd.isrequestedby = 'S' and pxd.status = 'P' and pxd.isapprovedHO is not null "
+                : "";
 
             string connStr = _config.GetConnectionString("DefaultConnection");
 
@@ -134,6 +138,8 @@ left outer join
 
 LEFT OUTER JOIN PO_SDDetails pDet 
 on pDet.po_id = posu.po_id 
+
+" + extensionFilter + @"
 
 order by posu.PO_date desc";
 

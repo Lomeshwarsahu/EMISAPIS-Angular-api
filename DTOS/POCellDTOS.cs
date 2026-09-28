@@ -428,5 +428,22 @@ public class SavedDataGridDto
         public int NosRC { get; set; }
     }
 
+    public class LocationDto
+    {
+        public string LocationName { get; set; }
+        public string DpDistrictId { get; set; } 
+        public string MobileNo { get; set; }
+        public string Address1 { get; set; }
+        public string Address2 { get; set; }
+        public string Address3 { get; set; }
+        public string EmailId { get; set; }
+        public string ConductPerson { get; set; }
+
+      
+        public string Did { get; set; } 
+        public string McName { get; set; }
+        public string FacilityTypeId { get; set; } 
+    }
+
 }
 

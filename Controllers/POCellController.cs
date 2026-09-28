@@ -2703,10 +2703,70 @@ namespace EMISAPIS.Controllers
                 return StatusCode(500, new { message = "Failed to compile complex multi-stage RDLC analytics raw records.", error = ex.Message });
             }
         }
+    
 
 
 
+    [HttpPost("AddLocation")]
+        public async Task<IActionResult> AddLocation([FromBody] LocationDto request)
+        {
+            // 1. Input Validation (Mirroring your legacy if-condition)
+            if (string.IsNullOrWhiteSpace(request.LocationName) ||
+                request.DpDistrictId == "0" ||
+                string.IsNullOrWhiteSpace(request.MobileNo) ||
+                string.IsNullOrWhiteSpace(request.Address1) ||
+                string.IsNullOrWhiteSpace(request.EmailId))
+            {
+                return BadRequest(new { message = "Please Enter Location Name/District/Address1/Mobile No/Email" });
+            }
 
+            // 2. Logic for UserId (Mirroring your lblDID logic)
+            string userId = "0";
+            if (request.Did == "12")
+            {
+                userId = request.McName;
+            }
 
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // 3. Parameterized SQL Query (Secure against SQL Injection)
+            string sqlQuery = @"INSERT INTO maslocations 
+                        (location_name, user_id, DP_DistrictID, facility_type_id, authority, address_1, address_2, address_3, mob_no, conduct_person, email_id) 
+                        VALUES 
+                        (@LocationName, @UserId, @DpDistrictId, @FacilityTypeId, @Authority, @Address1, @Address2, @Address3, @MobileNo, @ConductPerson, @EmailId)";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                    {
+                        // Add parameters
+                        cmd.Parameters.AddWithValue("@LocationName", request.LocationName);
+                        cmd.Parameters.AddWithValue("@UserId", userId);
+                        cmd.Parameters.AddWithValue("@DpDistrictId", request.DpDistrictId);
+                        cmd.Parameters.AddWithValue("@FacilityTypeId", request.FacilityTypeId ?? (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Authority", request.Did ?? (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Address1", request.Address1);
+                        cmd.Parameters.AddWithValue("@Address2", request.Address2 ?? (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Address3", request.Address3 ?? (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@MobileNo", request.MobileNo);
+                        cmd.Parameters.AddWithValue("@ConductPerson", request.ConductPerson ?? (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@EmailId", request.EmailId);
+
+                        await conn.OpenAsync();
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+
+                // Note: The UI grid refresh (fillgrid) should now be handled by the frontend framework (Angular/React/JS) 
+                // after receiving this 200 OK response.
+                return Ok(new { message = "Saved Successfully" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "An error occurred while saving the location.", error = ex.Message });
+            }
+        }
     }
 }
