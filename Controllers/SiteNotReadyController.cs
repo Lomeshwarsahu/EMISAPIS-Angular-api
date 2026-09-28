@@ -53,7 +53,14 @@ WHERE r.status = 'Received' AND r.po_id = @poId";
         }
 
         [HttpPost("upload")]
-        public async Task<IActionResult> Upload([FromForm] int receiptId, [FromForm] IFormFile file)
+        //public async Task<IActionResult> Upload(
+        //    [FromForm] int receiptId, 
+        //    [FromForm] IFormFile file
+        //    )
+        public async Task<IActionResult> Upload(
+            [FromForm] int receiptId,
+             IFormFile file
+            )
         {
             try
             {

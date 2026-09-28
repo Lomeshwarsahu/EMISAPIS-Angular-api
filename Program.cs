@@ -126,7 +126,9 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-app.Run();
+//app.Run();
+await app.RunAsync();
+
 
 //using EMISAPIS.Helpers;
 
