@@ -1,4 +1,6 @@
+using System.Linq;
 using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 
@@ -51,14 +53,26 @@ namespace EMISAPIS.Controllers
         public async Task<IActionResult> GetCovidStock(
             [FromQuery] int userId,
             [FromQuery] int? pid = null,
-            [FromQuery] string filterType = "All")
+            [FromQuery] string filterType = "All",
+            [FromQuery] int? pageNumber = null,
+            [FromQuery] int? pageSize = null)
         {
             if (userId <= 0)
-                return BadRequest(new { message = "userId is required." });
+                return BadRequest(new { message = "Valid userId is required." });
+
+            if (pid.HasValue && pid.Value < 0)
+                return BadRequest(new { message = "Invalid equipment pid." });
+
+            // Input sanitization
+            var cleanFilter = InputSanitizer.SanitizeAlphanumeric(filterType, 10).ToUpperInvariant();
+            if (cleanFilter != "ALL" && cleanFilter != "OR" && cleanFilter != "RI")
+                cleanFilter = "ALL";
+
+            var (pNum, pSize) = InputSanitizer.NormalizePagination(pageNumber, pageSize, defaultPageSize: 20, maxPageSize: 100);
 
             var whereExisting = string.Empty;
             var whereCgmsc = string.Empty;
-            switch ((filterType ?? "All").ToUpperInvariant())
+            switch (cleanFilter)
             {
                 case "OR":
                     whereExisting = " AND A.installation_date IS NULL AND A.Receipt_Date IS NOT NULL ";
@@ -117,6 +131,17 @@ ORDER BY pid";
             try
             {
                 var list = await ExecuteStockReaderAsync(sql, userId, pid);
+
+                Response.Headers["X-Total-Count"] = list.Count.ToString();
+                Response.Headers["X-Page-Number"] = pNum.ToString();
+                Response.Headers["X-Page-Size"] = pSize.ToString();
+
+                if (pageNumber.HasValue)
+                {
+                    var pagedList = list.Skip((pNum - 1) * pSize).Take(pSize).ToList();
+                    return Ok(pagedList);
+                }
+
                 return Ok(list);
             }
             catch (SqlException ex)

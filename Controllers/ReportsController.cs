@@ -1,4 +1,6 @@
+using System.Linq;
 using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -3308,16 +3310,24 @@ order by POdate";
         // GET: api/Reports/equipment-tag-report
         [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpGet("equipment-tag-report")]
-        public async Task<IActionResult> GetEquipmentTagReport([FromQuery] string? poType, [FromQuery] string? fromDate, [FromQuery] string? toDate)
+        public async Task<IActionResult> GetEquipmentTagReport(
+            [FromQuery] string? poType,
+            [FromQuery] string? fromDate,
+            [FromQuery] string? toDate,
+            [FromQuery] int? pageNumber = null,
+            [FromQuery] int? pageSize = null)
         {
+            var cleanPoType = InputSanitizer.SanitizeAlphanumeric(poType, 10);
+            var (pNum, pSize) = InputSanitizer.NormalizePagination(pageNumber, pageSize, defaultPageSize: 20, maxPageSize: 100);
+
             List<EquipmentTagReportDto> list = new List<EquipmentTagReportDto>();
 
             string poTypeWhere = "";
-            if (!string.IsNullOrWhiteSpace(poType) && !poType.Equals("All", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(cleanPoType) && !cleanPoType.Equals("All", StringComparison.OrdinalIgnoreCase))
             {
-                if (poType.Equals("NP", StringComparison.OrdinalIgnoreCase))
+                if (cleanPoType.Equals("NP", StringComparison.OrdinalIgnoreCase))
                     poTypeWhere = " and isnull(p.potype, 'NP') = 'NP' ";
-                else if (poType.Equals("CP", StringComparison.OrdinalIgnoreCase))
+                else if (cleanPoType.Equals("CP", StringComparison.OrdinalIgnoreCase))
                     poTypeWhere = " and isnull(p.potype, 'NP') = 'CP' ";
             }
 
@@ -3329,10 +3339,7 @@ order by POdate";
 
             if (!string.IsNullOrWhiteSpace(fromDate) && !string.IsNullOrWhiteSpace(toDate))
             {
-                if ((DateTime.TryParse(fromDate, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out fromDt) ||
-                     DateTime.TryParseExact(fromDate, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "d/M/yyyy" }, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out fromDt)) &&
-                    (DateTime.TryParse(toDate, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out toDt) ||
-                     DateTime.TryParseExact(toDate, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "d/M/yyyy" }, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out toDt)))
+                if (InputSanitizer.TryParseDate(fromDate, out fromDt) && InputSanitizer.TryParseDate(toDate, out toDt))
                 {
                     hasDateFilter = true;
                     toDt = toDt.Date.AddDays(1).AddTicks(-1);
@@ -3403,6 +3410,16 @@ order by district";
                     serialNo = reader["serialNo"]?.ToString(),
                     isTagged = reader["isTagged"]?.ToString() ?? "Pending"
                 });
+            }
+
+            Response.Headers["X-Total-Count"] = list.Count.ToString();
+            Response.Headers["X-Page-Number"] = pNum.ToString();
+            Response.Headers["X-Page-Size"] = pSize.ToString();
+
+            if (pageNumber.HasValue)
+            {
+                var pagedList = list.Skip((pNum - 1) * pSize).Take(pSize).ToList();
+                return Ok(pagedList);
             }
 
             return Ok(list);

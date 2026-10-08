@@ -3511,21 +3511,22 @@ ORDER BY pa.entryDT DESC";
         //    [FromForm] string items,
         //    [FromForm] IFormFile? file)
         [HttpPost("po-reallocation")]
+        [RequestSizeLimit(FileValidationHelper.MaxPdfSizeBytes + 1024)]
         public async Task<IActionResult> SavePoReallocation(
-    [FromForm] int poId,
-    [FromForm] string remark,
-    [FromForm] string items,
-    IFormFile? file) 
-
+            [FromForm] int poId,
+            [FromForm] string remark,
+            [FromForm] string items,
+            IFormFile? file)
         {
             if (poId <= 0)
                 return BadRequest(new { message = "poId is required." });
             if (string.IsNullOrWhiteSpace(items))
                 return BadRequest(new { message = "Select at least one row." });
-            if (file == null || file.Length == 0)
-                return BadRequest(new { message = "Upload Approval Notesheet/Letter in PDF Format." });
-            if (!string.Equals(Path.GetExtension(file.FileName), ".pdf", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { message = "Please upload pdf file only." });
+
+            if (!FileValidationHelper.ValidatePdf(file, out var fileErr, maxSizeBytes: FileValidationHelper.MaxPdfSizeBytes))
+                return BadRequest(new { message = fileErr });
+
+            remark = InputSanitizer.Sanitize(remark, 1000);
 
             List<PoReallocationSaveItemDto>? parsedItems;
             try
@@ -3823,7 +3824,7 @@ ORDER BY poi.entryDT DESC";
             [FromForm] string remarks,
             [FromForm] int amendTypeId,
             [FromForm] string isReprintReq,
-             IFormFile? file)
+            IFormFile? file)
         {
             if (poId <= 0)
                 return BadRequest(new { message = "poId is required." });
@@ -3831,12 +3832,16 @@ ORDER BY poi.entryDT DESC";
                 return BadRequest(new { message = "Select Amendment Type." });
             if (string.IsNullOrWhiteSpace(amendDate))
                 return BadRequest(new { message = "Amendment date is required." });
+
+            remarks = InputSanitizer.Sanitize(remarks, 1000);
             if (string.IsNullOrWhiteSpace(remarks))
                 return BadRequest(new { message = "Remark should not be empty." });
-            if (file == null || file.Length == 0)
-                return BadRequest(new { message = "Upload PDF File of Nasti/Letter (Merge together if more than 1 File)." });
-            if (!string.Equals(Path.GetExtension(file.FileName), ".pdf", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { message = "Please upload pdf file only." });
+
+            dispatchNo = InputSanitizer.Sanitize(dispatchNo, 100);
+            prevSoIssueNo = InputSanitizer.Sanitize(prevSoIssueNo, 100);
+
+            if (!FileValidationHelper.ValidatePdf(file, out var fileErr, maxSizeBytes: FileValidationHelper.MaxPdfSizeBytes))
+                return BadRequest(new { message = fileErr });
 
             if (!DateTime.TryParse(amendDate, out DateTime amendDt))
                 return BadRequest(new { message = "Invalid amendment date." });

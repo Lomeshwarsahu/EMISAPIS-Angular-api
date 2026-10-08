@@ -1,4 +1,5 @@
 using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 
@@ -315,17 +316,14 @@ namespace EMISAPIS.Controllers
         }
 
         [HttpPost("item-spec-upload/{itemId}")]
+        [RequestSizeLimit(FileValidationHelper.MaxPdfSizeBytes + 1024)]
         public async Task<IActionResult> UploadItemSpec(int itemId, IFormFile file)
         {
-            if (file == null || file.Length == 0)
-                return BadRequest("Please select a document to upload");
+            if (itemId <= 0)
+                return BadRequest(new { message = "Valid itemId is required." });
 
-            var ext = Path.GetExtension(file.FileName).ToLower();
-            if (ext != ".pdf")
-                return BadRequest("Please upload PDF file only");
-
-            if (file.Length > 2_000_000)
-                return BadRequest("You cannot upload file more than 2 MB");
+            if (!FileValidationHelper.ValidatePdf(file, out var fileErr, maxSizeBytes: 2_000_000))
+                return BadRequest(new { message = fileErr });
 
             var folderName = "Specification";
             var fileName = $"{itemId}.pdf";
