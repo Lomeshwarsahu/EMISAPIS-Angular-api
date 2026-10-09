@@ -481,6 +481,7 @@ $RECYCLE.BIN/
 *.msi
 *.msix
 *.msm
+*.md
 *.msp
 
 # Windows shortcuts
