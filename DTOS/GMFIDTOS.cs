@@ -226,6 +226,44 @@ namespace EMISAPIS.DTOS
         public string IsProvisional { get; set; } = "N"; // Y = Anticipatory, N = Actual
         public string FileBase64 { get; set; } = string.Empty; // PDF File binary upload string stream
     }
+    public class SubmitFundOpeningBalanceDto
+    {
+        public int BudgetId { get; set; }
+        public long Amount { get; set; }
+        public string ReceivedDate { get; set; } = string.Empty;
+        public int DirectorateId { get; set; }
+
+     
+        public int? FacilityId { get; set; }
+
+        public int BankId { get; set; }
+        public string Remarks { get; set; } = string.Empty;
+        public string IsOp { get; set; } = "N";
+        public string IsProvisional { get; set; } = "N";
+        public string FileBase64 { get; set; } = string.Empty;
+
+        public int? MHID { get; set; }
+        public int? SHID { get; set; }
+        public string UTRNO { get; set; } = string.Empty;
+    }
+    //public class SubmitFundOpeningBalanceDto
+    //{
+    //    public int BudgetId { get; set; }
+    //    public long Amount { get; set; }
+    //    public string ReceivedDate { get; set; } = string.Empty; // YYYY-MM-DD
+    //    public int DirectorateId { get; set; }
+    //    public int FacilityId { get; set; }
+    //    public int BankId { get; set; }
+    //    public string Remarks { get; set; } = string.Empty;
+    //    public string IsOp { get; set; } = "N";
+    //    public string IsProvisional { get; set; } = "N";
+    //    public string FileBase64 { get; set; } = string.Empty;
+
+    //    // Naye 3 Fields (New Fields)
+    //    public int? MHID { get; set; }
+    //    public int? SHID { get; set; }
+    //    public string UTRNO { get; set; } = string.Empty;
+    //}
     public class FundDetailsResponseDto
     {
         public int Budgetid { get; set; }

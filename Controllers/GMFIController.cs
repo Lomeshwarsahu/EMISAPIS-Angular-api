@@ -1402,9 +1402,101 @@ where 1=1 order by b.BUDGETNAME";
             }
             return Ok(list);
         }
+       
 
-        // D. SYSTEM SUBMIT HANDLER TRANSACTION BLOCK WITH SCOPE IDENTITY & DOCUMENT RECOVERY DATA ATTACHMENT
-        [HttpPost("SaveFundReceiptRecord")]
+[HttpPost("SaveOpeningBalanceRecord")]
+    public async Task<IActionResult> SaveOpeningBalanceRecord([FromBody] SubmitFundOpeningBalanceDto dto)
+    {
+        string connString = _config.GetConnectionString("DefaultConnection");
+        using (SqlConnection conn = new SqlConnection(connString))
+        {
+            await conn.OpenAsync();
+            using (SqlTransaction trans = conn.BeginTransaction())
+            {
+                try
+                {
+                    // 1. Insert Query me MHID, SHID aur UTRNO add kiya gaya hai
+                    string insertSql = @"
+                    INSERT INTO MASBUDGETDETAILS 
+                    (BUDGETID, AMOUNT, RECEIVEDDATE, ENTRYDATE, directorate_id, facilityid, bankid, Remarks, IsOP, ISPROVISIONAL, MHID, SHID, UTRNO)
+                    VALUES 
+                    (@BudId, @Amt, CONVERT(DATETIME, @RecDt, 120), GETDATE(), @DirId, @FacId, @BankId, @Rem, @IsOp, @IsProv, @MhId, @ShId, @UtrNo);
+                    
+                    SELECT SCOPE_IDENTITY();";
+
+                    int generatedBgid = 0;
+                    using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
+                    {
+                        cmd.Parameters.AddWithValue("@BudId", dto.BudgetId);
+                        cmd.Parameters.AddWithValue("@Amt", dto.Amount);
+                        cmd.Parameters.AddWithValue("@RecDt", dto.ReceivedDate);
+                        cmd.Parameters.AddWithValue("@DirId", dto.DirectorateId);
+
+                            
+                            //cmd.Parameters.AddWithValue("@FacId", dto.FacilityId.HasValue ? (object)dto.FacilityId.Value : DBNull.Value);
+                            cmd.Parameters.AddWithValue("@FacId", dto.DirectorateId == 12 ? (object)dto.FacilityId : DBNull.Value);
+                        cmd.Parameters.AddWithValue("@BankId", dto.BankId);
+                        cmd.Parameters.AddWithValue("@Rem", string.IsNullOrEmpty(dto.Remarks) ? DBNull.Value : dto.Remarks);
+                        cmd.Parameters.AddWithValue("@IsOp", dto.IsOp);
+                        cmd.Parameters.AddWithValue("@IsProv", dto.IsProvisional);
+
+                        // Naye parameters (DBNull handling ke sath)
+                        cmd.Parameters.AddWithValue("@MhId", dto.MHID.HasValue ? (object)dto.MHID.Value : DBNull.Value);
+                        cmd.Parameters.AddWithValue("@ShId", dto.SHID.HasValue ? (object)dto.SHID.Value : DBNull.Value);
+                        cmd.Parameters.AddWithValue("@UtrNo", string.IsNullOrEmpty(dto.UTRNO) ? DBNull.Value : dto.UTRNO);
+
+                        generatedBgid = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+                    }
+
+                    // 2. File ko Server ke Folder me save karna aur DB me filename/filepath update karna
+                    if (!string.IsNullOrEmpty(dto.FileBase64))
+                    {
+                        // File ka naam generate karna
+                        string fileName = $"Fund_{generatedBgid}_{dto.DirectorateId}.pdf";
+
+                        // Actual server path jahan file save hogi (wwwroot/Uploads/FundReceipts)
+                        string folderPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "Uploads", "FundReceipts");
+
+                        // Agar folder nahi bana hai, toh create karein
+                        if (!Directory.Exists(folderPath))
+                        {
+                            Directory.CreateDirectory(folderPath);
+                        }
+
+                        // Pura File path jahan bytes write honge
+                        string physicalFilePath = Path.Combine(folderPath, fileName);
+
+                        // Base64 string ko bytes me convert karke file system me save karein
+                        byte[] fileBytes = Convert.FromBase64String(dto.FileBase64);
+                        await System.IO.File.WriteAllBytesAsync(physicalFilePath, fileBytes);
+
+                        // Frontend pe dikhane / DB me save karne ke liye relative path
+                        string dbFilePath = $"/Uploads/FundReceipts/{fileName}";
+
+                        // Table me FILENAME aur FILEPATH update karein
+                        string updateFileSql = "UPDATE MASBUDGETDETAILS SET FILENAME = @FileName, FILEPATH = @FilePath WHERE BGID = @Bgid";
+                        using (SqlCommand updCmd = new SqlCommand(updateFileSql, conn, trans))
+                        {
+                            updCmd.Parameters.AddWithValue("@FileName", fileName);
+                            updCmd.Parameters.AddWithValue("@FilePath", dbFilePath);
+                            updCmd.Parameters.AddWithValue("@Bgid", generatedBgid);
+                            await updCmd.ExecuteNonQueryAsync();
+                        }
+                    }
+
+                    await trans.CommitAsync();
+                    return Ok(new { message = "Saved Successfully" });
+                }
+                catch (Exception ex)
+                {
+                    await trans.RollbackAsync();
+                    return StatusCode(500, new { message = "Transaction operation failed during fund enrollment process.", error = ex.Message });
+                }
+            }
+        }
+    }
+    // D. SYSTEM SUBMIT HANDLER TRANSACTION BLOCK WITH SCOPE IDENTITY & DOCUMENT RECOVERY DATA ATTACHMENT
+    [HttpPost("SaveFundReceiptRecord")]
         public async Task<IActionResult> SaveFundReceiptRecord([FromBody] SubmitFundReceiptDto dto)
         {
             string connString = _config.GetConnectionString("DefaultConnection");
