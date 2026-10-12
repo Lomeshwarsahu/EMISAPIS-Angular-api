@@ -93,9 +93,9 @@ namespace EMISAPIS.DTOS
         public string InvoiceDate { get; set; } = string.Empty; // invoice_date
     }
 
-  
 
-public class UpdateReceivedDateRequestDto
+
+    public class UpdateReceivedDateRequestDto
     {
         public int ReceiptId { get; set; } // txtreceiptid.Text
         public string ReceivedDate { get; set; } = string.Empty; // txtReceivedDate.Text (Format: DD-MM-YYYY)
@@ -164,9 +164,9 @@ public class UpdateReceivedDateRequestDto
     }
     public class FundMasterDto
     {
-        public int Budgetid { get; set; } 
-        public string Budgetname { get; set; } = string.Empty; 
-        public int Orderid { get; set; } 
+        public int Budgetid { get; set; }
+        public string Budgetname { get; set; } = string.Empty;
+        public int Orderid { get; set; }
     }
     public class DirectorateDropdownDto
     {
@@ -436,7 +436,7 @@ public class UpdateReceivedDateRequestDto
     }
 
 
-        
+
     namespace EMISAPIS.DTOS
     {
         public class PoItemDetailsDto
@@ -579,4 +579,40 @@ public class UpdateReceivedDateRequestDto
         public int InvoiceItemId { get; set; }
     }
 
+    public class MainHeadDto
+    {
+        public string MainHead_Eng { get; set; } = string.Empty;
+        public string MainHead_Hindi { get; set; } = string.Empty;
+        public string IsActive { get; set; } = "Active"; // Default 'Active'
+    }
+
+
+    public class MainHeadResponseDto
+    {
+        public int MHID { get; set; }
+        public string MainHead_Eng { get; set; } = string.Empty;
+        public string MainHead_Hindi { get; set; } = string.Empty;
+        public string IsActive { get; set; } = string.Empty;
+        public DateTime? CreatedDate { get; set; }
+    }
+      
+        public class SubHeadDto
+    {
+        public int MHID { get; set; }
+        public string SubHead_Eng { get; set; } = string.Empty;
+        public string SubHead_Hindi { get; set; } = string.Empty;
+        public string IsActive { get; set; } = "Active"; // Default 'Active'
+    }
+    public class SubHeadResponseDto
+    {
+        public int MHID { get; set; }
+        public int SHID { get; set; }
+        
+        public string SubHead_Eng { get; set; } = string.Empty;
+        public string SubHead_Hindi { get; set; } = string.Empty;
+        public string IsActive { get; set; } = string.Empty;
+        public DateTime? CreatedDate { get; set; }
+    }
+
 }
+

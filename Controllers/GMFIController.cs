@@ -4710,9 +4710,273 @@ GROUP BY
             }
         }
 
+        //new MainfundHead entry
+
+    // Step 2: POST Method
+[HttpPost("SaveMainHead")]
+        public async Task<IActionResult> SaveMainHead([FromBody] MainHeadDto dto)
+        {
+            // Basic validation
+            if (dto == null || string.IsNullOrWhiteSpace(dto.MainHead_Eng)) //|| string.IsNullOrWhiteSpace(dto.MainHead_Hindi)
+            {
+                return BadRequest(new { message = "MainHead English and Hindi names are required." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        // SQL Query for Mas_MainHead
+                        // Note: GETDATE() automatically current date and time insert kar dega
+                        string insertSql = @"
+                    INSERT INTO Mas_MainHead (MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate) 
+                    VALUES (@Eng, @Hindi, @IsActive, GETDATE());
+                    SELECT SCOPE_IDENTITY();";
+
+                        int generatedMhid = 0;
+
+                        using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@Eng", dto.MainHead_Eng.Trim());
+                            // Hindi text ke liye database handle kar lega kyunki aapne table me nvarchar banaya hai
+                            cmd.Parameters.AddWithValue("@Hindi", dto.MainHead_Hindi.Trim());
+                            cmd.Parameters.AddWithValue("@IsActive", string.IsNullOrWhiteSpace(dto.IsActive) ? "Active" : dto.IsActive.Trim());
+
+                            // Execute query and get the newly generated MHID
+                            generatedMhid = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+                        }
+
+                        // Agar sab kuch theek raha toh transaction commit karein
+                        await trans.CommitAsync();
+                        return Ok(new { message = "Main Head Saved Successfully.", mhid = generatedMhid });
+                    }
+                    catch (Exception ex)
+                    {
+                        // Agar koi error aayi toh transaction rollback ho jayega
+                        await trans.RollbackAsync();
+                        return StatusCode(500, new { message = "Database transaction failed.", error = ex.Message });
+                    }
+                }
+            }
+        }
+
+        // 2. Aapka GET Method
+        [HttpGet("GetMainHeads")]
+        public async Task<IActionResult> GetMainHeads()
+        {
+            string connString = _config.GetConnectionString("DefaultConnection");
+            List<MainHeadResponseDto> mainHeadsList = new List<MainHeadResponseDto>();
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                try
+                {
+                    string selectSql = "SELECT MHID, MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate FROM Mas_MainHead";
+
+                    using (SqlCommand cmd = new SqlCommand(selectSql, conn))
+                    {
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var mainHead = new MainHeadResponseDto
+                                {
+                                    MHID = Convert.ToInt32(reader["MHID"]),
+                                    MainHead_Eng = reader["MainHead_Eng"] != DBNull.Value ? reader["MainHead_Eng"].ToString() : string.Empty,
+                                    MainHead_Hindi = reader["MainHead_Hindi"] != DBNull.Value ? reader["MainHead_Hindi"].ToString() : string.Empty,
+                                    IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
+                                    CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
+                                };
+                                mainHeadsList.Add(mainHead);
+                            }
+                        }
+                    }
+                    return Ok(mainHeadsList);
+                }
+                catch (Exception ex)
+                {
+                    return StatusCode(500, new { message = "Database fetch failed.", error = ex.Message });
+                }
+            }
+        }
+
+        //new SubfundHead entry
+
+        // Step 2: POST Method
+        [HttpPost("SaveSubHead")]
+        public async Task<IActionResult> SaveSubHead([FromBody] SubHeadDto dto)
+        {
+            // Basic validation
+            if (dto == null || string.IsNullOrWhiteSpace(dto.SubHead_Eng))
+            {
+                return BadRequest(new { message = "SubHead English name is required." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        string insertSql = @"
+                    INSERT INTO SubHead (MHID, SubHead_Eng, SubHead_Hindi, IsActive, CreatedDate)                          
+                    VALUES (@MHID, @Eng, @Hindi, @IsActive, GETDATE());            
+                    SELECT SCOPE_IDENTITY();";
+
+                        int generatedShid = 0; // Ise Mhid ki jagah Shid manna behtar hai kyunki naya record SubHead ka hai
+
+                        using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@MHID", dto.MHID);
+                            cmd.Parameters.AddWithValue("@Eng", dto.SubHead_Eng.Trim());
+                            cmd.Parameters.AddWithValue("@Hindi", string.IsNullOrWhiteSpace(dto.SubHead_Hindi) ? string.Empty : dto.SubHead_Hindi.Trim());
+                            cmd.Parameters.AddWithValue("@IsActive", string.IsNullOrWhiteSpace(dto.IsActive) ? "Active" : dto.IsActive.Trim());
+
+                            // SAFELY HANDLE DBNULL HERE
+                            object dbResult = await cmd.ExecuteScalarAsync();
+
+                            if (dbResult != null && dbResult != DBNull.Value)
+                            {
+                                generatedShid = Convert.ToInt32(dbResult);
+                            }
+                            else
+                            {
+                                // Agar table me Identity set nahi hai, toh ye 0 rahega aur crash nahi hoga
+                                generatedShid = 0;
+                            }
+                        }
+
+                        await trans.CommitAsync();
+                        return Ok(new { message = "Sub Head Saved Successfully.", shid = generatedShid });
+                    }
+                    catch (Exception ex)
+                    {
+                        await trans.RollbackAsync();
+                        return StatusCode(500, new { message = "Database transaction failed.", error = ex.Message });
+                    }
+                }
+            }
+        }
+
+        // 2. Aapka GET Method
+        [HttpGet("GetSubHeads")]
+        public async Task<IActionResult> GetSubHeads()
+        {
+            string connString = _config.GetConnectionString("DefaultConnection");
+            List<SubHeadResponseDto> mainHeadsList = new List<SubHeadResponseDto>();
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                try
+                {
+                    string selectSql = "SELECT MHID, SHID, SubHead_Eng, SubHead_Hindi, IsActive, CreatedDate FROM SubHead";
+
+                    using (SqlCommand cmd = new SqlCommand(selectSql, conn))
+                    {
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var SubHead = new SubHeadResponseDto
+                                {
+                                    // Yahan dono IDs ke liye DBNull check add kiya gaya hai. Null hone par ye 0 set ho jayega.
+                                    MHID = reader["MHID"] != DBNull.Value ? Convert.ToInt32(reader["MHID"]) : 0,
+                                    SHID = reader["SHID"] != DBNull.Value ? Convert.ToInt32(reader["SHID"]) : 0,
+
+                                    SubHead_Eng = reader["SubHead_Eng"] != DBNull.Value ? reader["SubHead_Eng"].ToString() : string.Empty,
+                                    SubHead_Hindi = reader["SubHead_Hindi"] != DBNull.Value ? reader["SubHead_Hindi"].ToString() : string.Empty,
+                                    IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
+                                    CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
+                                };
+                                mainHeadsList.Add(SubHead);
+                            }
+                        }
+                    }
+                    return Ok(mainHeadsList);
+                }
+                catch (Exception ex)
+                {
+                    return StatusCode(500, new { message = "Database fetch failed.", error = ex.Message });
+                }
+            }
+        }
+
+
+        [HttpGet("GetSubHeadById/{Mhid}")]
+        public async Task<IActionResult> GetSubHeadById(int Mhid)
+        {
+            // Parameter validation
+            if (Mhid <= 0)
+            {
+                return BadRequest(new { message = "Invalid ID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            SubHeadResponseDto subHead = null;
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+                try
+                {
+                    // WHERE clause add kiya gaya hai
+                    string selectSql = "SELECT MHID, SHID, SubHead_Eng, SubHead_Hindi, IsActive, CreatedDate FROM SubHead WHERE MHID = @Mhid";
+
+                    using (SqlCommand cmd = new SqlCommand(selectSql, conn))
+                    {
+                        // Query me parameter pass karna
+                        cmd.Parameters.AddWithValue("@Mhid", Mhid);
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            // Kyunki ID se sirf ek hi record aayega, isliye 'while' ki jagah 'if' use karenge
+                            if (await reader.ReadAsync())
+                            {
+                                subHead = new SubHeadResponseDto
+                                {
+                                    MHID = reader["MHID"] != DBNull.Value ? Convert.ToInt32(reader["MHID"]) : 0,
+                                    SHID = reader["SHID"] != DBNull.Value ? Convert.ToInt32(reader["SHID"]) : 0,
+                                    SubHead_Eng = reader["SubHead_Eng"] != DBNull.Value ? reader["SubHead_Eng"].ToString() : string.Empty,
+                                    SubHead_Hindi = reader["SubHead_Hindi"] != DBNull.Value ? reader["SubHead_Hindi"].ToString() : string.Empty,
+                                    IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
+                                    CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
+                                };
+                            }
+                        }
+                    }
+
+                    // Agar database me us ID ka koi data nahi mila
+                    if (subHead == null)
+                    {
+                        return NotFound(new { message = "SubHead not found." });
+                    }
+
+                    return Ok(subHead);
+                }
+                catch (Exception ex)
+                {
+                    return StatusCode(500, new { message = "Database fetch failed.", error = ex.Message });
+                }
+            }
+        }
+
+
+
+
     }
+
 }
 
 
 
- 
+
