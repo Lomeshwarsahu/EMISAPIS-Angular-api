@@ -16,6 +16,16 @@ EnvFileLoader.Load();
 // 2) Expand `${ENV_VAR}` placeholders in appsettings*.json from environment / .env
 EnvPlaceholderResolver.Expand(builder.Configuration);
 
+Console.WriteLine("========================================");
+Console.WriteLine("🚀 [ENV VERIFICATION] Checking Environment Variables:");
+Console.WriteLine($"  - Jwt:Issuer: {builder.Configuration["Jwt:Issuer"]}");
+Console.WriteLine($"  - Jwt:Audience: {builder.Configuration["Jwt:Audience"]}");
+Console.WriteLine($"  - Jwt:Key Loaded: {!string.IsNullOrWhiteSpace(builder.Configuration["Jwt:Key"])}");
+Console.WriteLine($"  - Jwt:DurationInMinutes: {builder.Configuration["Jwt:DurationInMinutes"]}");
+Console.WriteLine($"  - ConnectionString Loaded: {!string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection"))}");
+Console.WriteLine($"  - OtpSms:GatewayUrl: {builder.Configuration["OtpSms:GatewayUrl"]}");
+Console.WriteLine("========================================");
+
 // Add services to the container.
 builder.Services.Configure<OtpSmsOptions>(
     builder.Configuration.GetSection(OtpSmsOptions.SectionName));
