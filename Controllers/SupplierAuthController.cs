@@ -1,5 +1,6 @@
 using EMISAPIS.DTOS;
 using EMISAPIS.Helpers;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 
@@ -66,6 +67,7 @@ namespace EMISAPIS.Controllers
             Directory.CreateDirectory(_invoiceDocRoot);
         }
 
+        [AllowAnonymous]
         [HttpGet("profile/{id:int}")]
         public async Task<IActionResult> GetSupplierProfile(int id, [FromQuery] string mode = "login")
         {
@@ -133,6 +135,7 @@ namespace EMISAPIS.Controllers
             }
         }
 
+        [AllowAnonymous]
         [HttpPost("send-otp")]
         public async Task<IActionResult> SendSupplierOtp([FromBody] SupplierOtpRequestDto request)
         {
@@ -237,6 +240,7 @@ namespace EMISAPIS.Controllers
             }
         }
 
+        [AllowAnonymous]
         [HttpPost("complete-password")]
         public async Task<IActionResult> CompleteSupplierPassword([FromBody] SupplierPasswordRequestDto request)
         {
