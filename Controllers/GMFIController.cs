@@ -1326,6 +1326,7 @@ where 1=1 order by b.BUDGETNAME";
 
             using (SqlConnection conn = new SqlConnection(connString))
             {
+                GetFundReceiptsGridSummary
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
                     cmd.Parameters.AddWithValue("@BudId", budgetId);
@@ -1372,6 +1373,7 @@ where 1=1 order by b.BUDGETNAME";
 
             using (SqlConnection conn = new SqlConnection(connString))
             {
+                GetFundsToMap
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
                     if (directorateId > 0) cmd.Parameters.AddWithValue("@DirId", directorateId);
@@ -1418,7 +1420,7 @@ where 1=1 order by b.BUDGETNAME";
                     // 1. Insert Query me MHID, SHID aur UTRNO add kiya gaya hai
                     string insertSql = @"
                     INSERT INTO MASBUDGETDETAILS 
-                    (BUDGETID, AMOUNT, RECEIVEDDATE, ENTRYDATE, directorate_id, facilityid, bankid, Remarks, IsOP, ISPROVISIONAL, MHID, SHID, UTRNO)
+                    (BUDGETID, AMOUNT, RECEIVEDDATE, ENTRYDATE, directorate_id, facilityid, bankid, Remarks, IsOP,ISPROVISIONAL, MHID, SHID, UTRNO)
                     VALUES 
                     (@BudId, @Amt, CONVERT(DATETIME, @RecDt, 120), GETDATE(), @DirId, @FacId, @BankId, @Rem, @IsOp, @IsProv, @MhId, @ShId, @UtrNo);
                     
@@ -1438,10 +1440,9 @@ where 1=1 order by b.BUDGETNAME";
                         cmd.Parameters.AddWithValue("@BankId", dto.BankId);
                         cmd.Parameters.AddWithValue("@Rem", string.IsNullOrEmpty(dto.Remarks) ? DBNull.Value : dto.Remarks);
                         cmd.Parameters.AddWithValue("@IsOp", dto.IsOp);
-                        cmd.Parameters.AddWithValue("@IsProv", dto.IsProvisional);
-
-                        // Naye parameters (DBNull handling ke sath)
-                        cmd.Parameters.AddWithValue("@MhId", dto.MHID.HasValue ? (object)dto.MHID.Value : DBNull.Value);
+                        //cmd.Parameters.AddWithValue("@IsProv", dto.IsProvisional);
+                            cmd.Parameters.AddWithValue("@IsProv", string.IsNullOrEmpty(dto.IsProvisional) ? DBNull.Value : dto.IsProvisional);
+                            cmd.Parameters.AddWithValue("@MhId", dto.MHID.HasValue ? (object)dto.MHID.Value : DBNull.Value);
                         cmd.Parameters.AddWithValue("@ShId", dto.SHID.HasValue ? (object)dto.SHID.Value : DBNull.Value);
                         cmd.Parameters.AddWithValue("@UtrNo", string.IsNullOrEmpty(dto.UTRNO) ? DBNull.Value : dto.UTRNO);
 
