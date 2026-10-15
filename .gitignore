@@ -7,6 +7,11 @@
 .env
 !.env.example
 
+# AppSettings configuration files
+appsettings.json
+appsettings.Development.json
+appsettings.*.json
+
 # User-specific files
 *.rsuser
 *.suo
@@ -476,6 +481,7 @@ $RECYCLE.BIN/
 *.msi
 *.msix
 *.msm
+*.md
 *.msp
 
 # Windows shortcuts
