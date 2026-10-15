@@ -1,6 +1,13 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
 using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
 
 namespace EMISAPIS.Controllers
 {
@@ -15,6 +22,9 @@ namespace EMISAPIS.Controllers
         [HttpGet("receipts")]
         public async Task<IActionResult> GetReceipts([FromQuery] int poId)
         {
+            if (poId <= 0)
+                return BadRequest(new { message = "Valid poId is required." });
+
             try
             {
                 var list = new List<SiteNotReadyReceiptDto>();
@@ -23,51 +33,53 @@ namespace EMISAPIS.Controllers
                 var sql = @"
 SELECT r.receipt_id, r.receipt_no,
 CONVERT(varchar,r.recieved_date,103) recieved_date,
-r.receipt_qty,
-ISNULL(r.SiteNotReadyFile,'') SiteNotReadyFile,
-ISNULL(r.SiteNotFlag,'N') SiteNotFlag,
-r.po_id, m.location_name
+r.total_rec_qty,
+l.location_name,
+r.SiteNotReadyFile,
+r.SiteNotFlag
 FROM receipts r
-INNER JOIN maslocations m ON m.location_id = r.location_id
+JOIN maslocations l ON r.location_id = l.location_id
 WHERE r.status = 'Received' AND r.po_id = @poId";
                 using var cmd = new SqlCommand(sql, conn);
                 cmd.Parameters.AddWithValue("@poId", poId);
-                using var dr = await cmd.ExecuteReaderAsync();
-                while (await dr.ReadAsync())
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
                 {
                     list.Add(new SiteNotReadyReceiptDto
                     {
-                        ReceiptId = Convert.ToInt32(dr["receipt_id"]),
-                        ReceiptNo = dr["receipt_no"]?.ToString() ?? "",
-                        RecievedDate = dr["recieved_date"]?.ToString() ?? "",
-                        ReceiptQty = Convert.ToDecimal(dr["receipt_qty"]),
-                        LocationName = dr["location_name"]?.ToString() ?? "",
-                        SiteNotReadyFile = dr["SiteNotReadyFile"]?.ToString() ?? "",
-                        SiteNotFlag = dr["SiteNotFlag"]?.ToString() ?? "",
-                        PoId = Convert.ToInt32(dr["po_id"])
+                        ReceiptId = reader.GetInt32(0),
+                        ReceiptNo = reader.IsDBNull(1) ? "" : reader.GetString(1),
+                        RecievedDate = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                        ReceiptQty = reader.IsDBNull(3) ? 0 : Convert.ToDecimal(reader.GetValue(3)),
+                        LocationName = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                        SiteNotReadyFile = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        SiteNotFlag = reader.IsDBNull(6) ? null : reader.GetString(6),
                     });
                 }
                 return Ok(list);
             }
-            catch { return Ok(new List<SiteNotReadyReceiptDto>()); }
+            catch
+            {
+                return Ok(new List<SiteNotReadyReceiptDto>());
+            }
         }
 
         [HttpPost("upload")]
-        //public async Task<IActionResult> Upload(
-        //    [FromForm] int receiptId, 
-        //    [FromForm] IFormFile file
-        //    )
+        [RequestSizeLimit(FileValidationHelper.DefaultMaxFileSizeBytes + 1024)]
         public async Task<IActionResult> Upload(
             [FromForm] int receiptId,
-             IFormFile file
-            )
+            IFormFile file)
         {
+            if (receiptId <= 0)
+                return BadRequest(new { message = "Valid receiptId is required." });
+
+            if (!FileValidationHelper.ValidateDocumentOrImage(file, out var fileErr, maxSizeBytes: FileValidationHelper.DefaultMaxFileSizeBytes))
+                return BadRequest(new { message = fileErr });
+
             try
             {
-                if (file == null || file.Length == 0)
-                    return BadRequest(new { message = "No file provided" });
-
-                var fileName = $"SiteNotReady_{receiptId}{Path.GetExtension(file.FileName)}";
+                var safeExt = Path.GetExtension(file.FileName).ToLowerInvariant();
+                var fileName = $"SiteNotReady_{receiptId}_{Guid.NewGuid():N}{safeExt}";
                 var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "sitenotready");
                 Directory.CreateDirectory(uploadsDir);
                 var filePath = Path.Combine(uploadsDir, fileName);
