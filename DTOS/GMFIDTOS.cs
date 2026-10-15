@@ -211,7 +211,30 @@ namespace EMISAPIS.DTOS
         public string Pentry { get; set; } = string.Empty; // Provisional / Actual
         public string PentryShow { get; set; } = string.Empty; // Anticipatory / Actual
         public long ActualAmountReceived { get; set; } // ActualAmountReceived
+
+        // --- नीचे 4 नए कॉलम जोड़े गए हैं (SQL Query के अनुसार) ---
+
+        public string IsOp { get; set; } = string.Empty; // isop ('Y', 'N', 'U')
+        public int? MHID { get; set; } // Main Head ID (null ho sakta hai)
+        public int? SHID { get; set; } // Sub Head ID (null ho sakta hai)
+        public string FilePath { get; set; } = string.Empty; // filepath (File download path)
     }
+    //public class FundReceiptGridDto
+    //{
+    //    public int Bgid { get; set; } // bgid
+    //    public int Budgetid { get; set; } // BUDGETID
+    //    public string UserName { get; set; } = string.Empty; // user_name (Directorate)
+    //    public string FacName { get; set; } = string.Empty; // facName (College/Hospital)
+    //    public string BudgetName { get; set; } = string.Empty; // BUDGETNAME
+    //    public string RecDate { get; set; } = string.Empty; // recdate
+    //    public long Amount { get; set; } // amount
+    //    public string FileName { get; set; } = string.Empty; // filename
+    //    public string Remarks { get; set; } = string.Empty; // remarks
+    //    public string RecType { get; set; } = string.Empty; // RecType
+    //    public string Pentry { get; set; } = string.Empty; // Provisional / Actual
+    //    public string PentryShow { get; set; } = string.Empty; // Anticipatory / Actual
+    //    public long ActualAmountReceived { get; set; } // ActualAmountReceived
+    //}
 
     public class SubmitFundReceiptDto
     {
@@ -228,7 +251,7 @@ namespace EMISAPIS.DTOS
     }
     public class SubmitFundOpeningBalanceDto
     {
-        public int BudgetId { get; set; }
+        public int? BudgetId { get; set; }
         public long Amount { get; set; }
         public string ReceivedDate { get; set; } = string.Empty;
         public int DirectorateId { get; set; }
@@ -257,12 +280,12 @@ namespace EMISAPIS.DTOS
     //    public string Remarks { get; set; } = string.Empty;
     //    public string IsOp { get; set; } = "N";
     //    public string IsProvisional { get; set; } = "N";
-    //    public string FileBase64 { get; set; } = string.Empty;
-
+    //    public string FileBase64 { get; set; } = string.Empty; 
+     
     //    // Naye 3 Fields (New Fields)
     //    public int? MHID { get; set; }
     //    public int? SHID { get; set; }
-    //    public string UTRNO { get; set; } = string.Empty;
+    //    public string UTRNO { get; set; } = string.Empty;   
     //}
     public class FundDetailsResponseDto
     {

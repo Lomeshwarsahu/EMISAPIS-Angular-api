@@ -1326,7 +1326,7 @@ where 1=1 order by b.BUDGETNAME";
 
             using (SqlConnection conn = new SqlConnection(connString))
             {
-                GetFundReceiptsGridSummary
+            
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
                     cmd.Parameters.AddWithValue("@BudId", budgetId);
@@ -1341,39 +1341,55 @@ where 1=1 order by b.BUDGETNAME";
                 }
             }
         }
-
-        // C. COMPREHENSIVE FUNDS MASTER ARCHIVE GRID LOADER (Emulating: fillgrid)
         [HttpGet("GetFundReceiptsGridSummary/{directorateId}")]
         public async Task<IActionResult> GetFundReceiptsGridSummary(int directorateId)
         {
             var list = new List<FundReceiptGridDto>();
             string connString = _config.GetConnectionString("DefaultConnection");
 
-            string query = @"
-            SELECT d.facility_aut_name AS user_name, ISNULL(facName,'-') AS facName, b.BUDGETNAME, 
-                   CONVERT(VARCHAR, mbd.receiveddate, 105) AS recdate, CAST(mbd.amount AS BIGINT) AS amount,
-                   mbd.filename, mbd.remarks, mbd.bgid, b.BUDGETID,
-                   CASE WHEN mbd.Isop='Y' THEN 'Opening Balance' ELSE 'Received from Directorate' END AS RecType,
-                   CASE WHEN isprovisional ='Y' THEN 'Provisional' ELSE 'Actual' END AS Pentry,
-                   CASE WHEN isprovisional ='Y' THEN 'Anticipatory' ELSE 'Actual' END AS PentryShow,
-                   CASE WHEN isprovisional='Y' THEN CAST(ISNULL(act.actamt,0) AS BIGINT) ELSE CAST(ISNULL(mbd.amount,0) AS BIGINT) END AS ActualAmountReceived
-            FROM MASBUDGETDETAILS mbd
-            INNER JOIN MASBUDGET b ON b.BUDGETID = mbd.BUDGETID
-            INNER JOIN facility_aut d ON d.facility_aut_id = mbd.directorate_id
-            LEFT OUTER JOIN (
-                SELECT designation +'-'+user_name AS facName, user_id FROM users WHERE authority=12 AND user_id!=12
-            ) f ON f.user_id = mbd.FACILITYID
-            LEFT OUTER JOIN (
-                SELECT SUM(Amount) AS actamt, BGID FROM MASBUDGETDETAILSActualEntry GROUP BY BGID
-            ) act ON act.BGID = mbd.BGID
-            WHERE 1=1";
+            string query = @" 
+        SELECT 
+            d.facility_aut_name AS user_name, 
+            ISNULL(facName,'-') AS facName, 
+            ISNULL(b.BUDGETNAME, 'N/A') AS BUDGETNAME, 
+            CONVERT(VARCHAR, mbd.receiveddate, 105) AS recdate, 
+            CAST(mbd.amount AS BIGINT) AS amount,
+            mbd.filename, 
+            mbd.remarks, 
+            mbd.bgid, 
+            mbd.BUDGETID, 
+            mbd.isop, 
+            mbd.MHID, 
+            mbd.SHID, 
+            mbd.filepath,
+            CASE 
+                WHEN mbd.Isop = 'Y' THEN 'Opening Balance' 
+                WHEN mbd.Isop = 'U' THEN 'Unidentified Fund'
+                ELSE 'Received from Directorate' 
+            END AS RecType,
+            CASE WHEN isprovisional ='Y' THEN 'Provisional' ELSE 'Actual' END AS Pentry,
+            CASE WHEN isprovisional ='Y' THEN 'Anticipatory' ELSE 'Actual' END AS PentryShow,
+            CASE WHEN isprovisional='Y' THEN CAST(ISNULL(act.actamt,0) AS BIGINT) ELSE CAST(ISNULL(mbd.amount,0) AS BIGINT) END AS ActualAmountReceived 
+        FROM MASBUDGETDETAILS mbd 
+        LEFT JOIN MASBUDGET b ON b.BUDGETID = mbd.BUDGETID 
+        INNER JOIN facility_aut d ON d.facility_aut_id = mbd.directorate_id 
+        LEFT OUTER JOIN (
+            SELECT designation +'-'+user_name AS facName, user_id 
+            FROM users 
+            WHERE authority=12 AND user_id!=12 
+        ) f ON f.user_id = mbd.FACILITYID 
+        LEFT OUTER JOIN (
+            SELECT SUM(Amount) AS actamt, BGID 
+            FROM MASBUDGETDETAILSActualEntry 
+            GROUP BY BGID 
+        ) act ON act.BGID = mbd.BGID 
+        WHERE 1=1";
 
             if (directorateId > 0) query += " AND mbd.directorate_id = @DirId";
             query += " ORDER BY mbd.receiveddate DESC";
 
             using (SqlConnection conn = new SqlConnection(connString))
             {
-                GetFundsToMap
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
                     if (directorateId > 0) cmd.Parameters.AddWithValue("@DirId", directorateId);
@@ -1384,19 +1400,26 @@ where 1=1 order by b.BUDGETNAME";
                         {
                             list.Add(new FundReceiptGridDto
                             {
-                                Bgid = Convert.ToInt32(dr["bgid"]),
-                                Budgetid = Convert.ToInt32(dr["BUDGETID"]),
-                                UserName = dr["user_name"]?.ToString() ?? "",
-                                FacName = dr["facName"]?.ToString() ?? "-",
-                                BudgetName = dr["BUDGETNAME"]?.ToString() ?? "",
-                                RecDate = dr["recdate"]?.ToString() ?? "",
-                                Amount = Convert.ToInt64(dr["amount"]),
-                                FileName = dr["filename"]?.ToString() ?? "",
-                                Remarks = dr["remarks"]?.ToString() ?? "",
-                                RecType = dr["RecType"]?.ToString() ?? "",
-                                Pentry = dr["Pentry"]?.ToString() ?? "",
-                                PentryShow = dr["PentryShow"]?.ToString() ?? "",
-                                ActualAmountReceived = Convert.ToInt64(dr["ActualAmountReceived"])
+                                Bgid = dr["bgid"] == DBNull.Value ? 0 : Convert.ToInt32(dr["bgid"]),
+                                Budgetid = dr["BUDGETID"] == DBNull.Value ? 0 : Convert.ToInt32(dr["BUDGETID"]),
+                                UserName = dr["user_name"] == DBNull.Value ? "" : dr["user_name"].ToString(),
+                                FacName = dr["facName"] == DBNull.Value ? "-" : dr["facName"].ToString(),
+                                BudgetName = dr["BUDGETNAME"] == DBNull.Value ? "" : dr["BUDGETNAME"].ToString(),
+                                RecDate = dr["recdate"] == DBNull.Value ? "" : dr["recdate"].ToString(),
+                                Amount = dr["amount"] == DBNull.Value ? 0 : Convert.ToInt64(dr["amount"]),
+                                FileName = dr["filename"] == DBNull.Value ? "" : dr["filename"].ToString(),
+                                Remarks = dr["remarks"] == DBNull.Value ? "" : dr["remarks"].ToString(),
+                                RecType = dr["RecType"] == DBNull.Value ? "" : dr["RecType"].ToString(),
+                                Pentry = dr["Pentry"] == DBNull.Value ? "" : dr["Pentry"].ToString(),
+                                PentryShow = dr["PentryShow"] == DBNull.Value ? "" : dr["PentryShow"].ToString(),
+
+                                // यहाँ आपने आख़िर में कॉमा (,) नहीं लगाया था, मैंने लगा दिया है
+                                ActualAmountReceived = dr["ActualAmountReceived"] == DBNull.Value ? 0 : Convert.ToInt64(dr["ActualAmountReceived"]),
+
+                                IsOp = dr["isop"] == DBNull.Value ? "" : dr["isop"].ToString(),
+                                FilePath = dr["filepath"] == DBNull.Value ? "" : dr["filepath"].ToString(),
+                                MHID = dr["MHID"] == DBNull.Value ? (int?)null : Convert.ToInt32(dr["MHID"]),
+                                SHID = dr["SHID"] == DBNull.Value ? (int?)null : Convert.ToInt32(dr["SHID"])
                             });
                         }
                     }
@@ -1404,9 +1427,115 @@ where 1=1 order by b.BUDGETNAME";
             }
             return Ok(list);
         }
-       
 
-[HttpPost("SaveOpeningBalanceRecord")]
+        //        // C. COMPREHENSIVE FUNDS MASTER ARCHIVE GRID LOADER (Emulating: fillgrid)
+        //        [HttpGet("GetFundReceiptsGridSummary/{directorateId}")]
+        //        public async Task<IActionResult> GetFundReceiptsGridSummary(int directorateId)
+        //        {
+        //            var list = new List<FundReceiptGridDto>();
+        //            string connString = _config.GetConnectionString("DefaultConnection");
+
+        //            //string query = @"
+        //            //SELECT d.facility_aut_name AS user_name, ISNULL(facName,'-') AS facName, b.BUDGETNAME, 
+        //            //       CONVERT(VARCHAR, mbd.receiveddate, 105) AS recdate, CAST(mbd.amount AS BIGINT) AS amount,
+        //            //       mbd.filename, mbd.remarks, mbd.bgid, b.BUDGETID,
+        //            //       CASE WHEN mbd.Isop='Y' THEN 'Opening Balance' ELSE 'Received from Directorate' END AS RecType,
+        //            //       CASE WHEN isprovisional ='Y' THEN 'Provisional' ELSE 'Actual' END AS Pentry,
+        //            //       CASE WHEN isprovisional ='Y' THEN 'Anticipatory' ELSE 'Actual' END AS PentryShow,
+        //            //       CASE WHEN isprovisional='Y' THEN CAST(ISNULL(act.actamt,0) AS BIGINT) ELSE CAST(ISNULL(mbd.amount,0) AS BIGINT) END AS ActualAmountReceived
+        //            //FROM MASBUDGETDETAILS mbd
+        //            //INNER JOIN MASBUDGET b ON b.BUDGETID = mbd.BUDGETID
+        //            //INNER JOIN facility_aut d ON d.facility_aut_id = mbd.directorate_id
+        //            //LEFT OUTER JOIN (
+        //            //    SELECT designation +'-'+user_name AS facName, user_id FROM users WHERE authority=12 AND user_id!=12
+        //            //) f ON f.user_id = mbd.FACILITYID
+        //            //LEFT OUTER JOIN (
+        //            //    SELECT SUM(Amount) AS actamt, BGID FROM MASBUDGETDETAILSActualEntry GROUP BY BGID
+        //            //) act ON act.BGID = mbd.BGID
+        //            //WHERE 1=1";
+        //            string query = @"
+        //           SELECT 
+        //    d.facility_aut_name AS user_name, 
+        //    ISNULL(facName,'-') AS facName, 
+        //    ISNULL(b.BUDGETNAME, 'N/A') AS BUDGETNAME, -- Agar BudgetId null hoga to 'N/A' dikhega
+        //    CONVERT(VARCHAR, mbd.receiveddate, 105) AS recdate, 
+        //    CAST(mbd.amount AS BIGINT) AS amount,
+        //    mbd.filename, 
+        //    mbd.remarks, 
+        //    mbd.bgid, 
+        //    mbd.BUDGETID, -- 'b.BUDGETID' ki jagah 'mbd.BUDGETID' use karein
+
+        //    -- आपके द्वारा मांगे गए 4 नए कॉलम:
+        //    mbd.isop, 
+        //    mbd.MHID, 
+        //    mbd.SHID, 
+        //    mbd.filepath,
+
+        //    -- Unidentified ('U') वाली अपडेटेड कंडीशन:
+        //    CASE 
+        //        WHEN mbd.Isop = 'Y' THEN 'Opening Balance' 
+        //        WHEN mbd.Isop = 'U' THEN 'Unidentified Fund'
+        //        ELSE 'Received from Directorate' 
+        //    END AS RecType,
+
+        //    CASE WHEN isprovisional ='Y' THEN 'Provisional' ELSE 'Actual' END AS Pentry,
+        //    CASE WHEN isprovisional ='Y' THEN 'Anticipatory' ELSE 'Actual' END AS PentryShow,
+        //    CASE WHEN isprovisional='Y' THEN CAST(ISNULL(act.actamt,0) AS BIGINT) ELSE CAST(ISNULL(mbd.amount,0) AS BIGINT) END AS ActualAmountReceived
+
+        //FROM MASBUDGETDETAILS mbd
+        //-- INNER JOIN ko LEFT JOIN kiya gaya hai taaki null BudgetId wale record bhi grid me dikhein
+        //LEFT JOIN MASBUDGET b ON b.BUDGETID = mbd.BUDGETID
+        //INNER JOIN facility_aut d ON d.facility_aut_id = mbd.directorate_id
+        //LEFT OUTER JOIN (
+        //    SELECT designation +'-'+user_name AS facName, user_id 
+        //    FROM users 
+        //    WHERE authority=12 AND user_id!=12
+        //) f ON f.user_id = mbd.FACILITYID
+        //LEFT OUTER JOIN (
+        //    SELECT SUM(Amount) AS actamt, BGID 
+        //    FROM MASBUDGETDETAILSActualEntry 
+        //    GROUP BY BGID
+        //) act ON act.BGID = mbd.BGID
+        //WHERE 1=1";
+        //            if (directorateId > 0) query += " AND mbd.directorate_id = @DirId";
+        //            query += " ORDER BY mbd.receiveddate DESC";
+
+        //            using (SqlConnection conn = new SqlConnection(connString))
+        //            {
+
+        //                using (SqlCommand cmd = new SqlCommand(query, conn))
+        //                {
+        //                    if (directorateId > 0) cmd.Parameters.AddWithValue("@DirId", directorateId);
+        //                    await conn.OpenAsync();
+        //                    using (SqlDataReader dr = await cmd.ExecuteReaderAsync())
+        //                    {
+        //                        while (await dr.ReadAsync())
+        //                        {
+        //                            list.Add(new FundReceiptGridDto
+        //                            {
+        //                                Bgid = Convert.ToInt32(dr["bgid"]),
+        //                                Budgetid = Convert.ToInt32(dr["BUDGETID"]),
+        //                                UserName = dr["user_name"]?.ToString() ?? "",
+        //                                FacName = dr["facName"]?.ToString() ?? "-",
+        //                                BudgetName = dr["BUDGETNAME"]?.ToString() ?? "",
+        //                                RecDate = dr["recdate"]?.ToString() ?? "",
+        //                                Amount = Convert.ToInt64(dr["amount"]),
+        //                                FileName = dr["filename"]?.ToString() ?? "",
+        //                                Remarks = dr["remarks"]?.ToString() ?? "",
+        //                                RecType = dr["RecType"]?.ToString() ?? "",
+        //                                Pentry = dr["Pentry"]?.ToString() ?? "",
+        //                                PentryShow = dr["PentryShow"]?.ToString() ?? "",
+        //                                ActualAmountReceived = Convert.ToInt64(dr["ActualAmountReceived"])
+        //                            });
+        //                        }
+        //                    }
+        //                }
+        //            }
+        //            return Ok(list);
+        //        }
+
+
+        [HttpPost("SaveOpeningBalanceRecord")]
     public async Task<IActionResult> SaveOpeningBalanceRecord([FromBody] SubmitFundOpeningBalanceDto dto)
     {
         string connString = _config.GetConnectionString("DefaultConnection");
@@ -1429,8 +1558,9 @@ where 1=1 order by b.BUDGETNAME";
                     int generatedBgid = 0;
                     using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
                     {
-                        cmd.Parameters.AddWithValue("@BudId", dto.BudgetId);
-                        cmd.Parameters.AddWithValue("@Amt", dto.Amount);
+                            //cmd.Parameters.AddWithValue("@BudId", dto.BudgetId);
+                            cmd.Parameters.AddWithValue("@BudId", dto.BudgetId.HasValue ? (object)dto.BudgetId.Value : DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Amt", dto.Amount);
                         cmd.Parameters.AddWithValue("@RecDt", dto.ReceivedDate);
                         cmd.Parameters.AddWithValue("@DirId", dto.DirectorateId);
 
@@ -1642,6 +1772,50 @@ where 1=1 order by b.BUDGETNAME";
             }
         }
 
+        [HttpGet("VerifyFirstTimeOpeningBalanceByHead/{directorateId}")]
+        public async Task<IActionResult> VerifyFirstTimeOpeningBalanceByHead([FromRoute] int directorateId, [FromQuery] int mhid, [FromQuery] int? shid, [FromQuery] int facilityId = 0)
+        {
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            // 1. Base Query: MHID और IsOp = 'Y' (Opening Balance) को हमेशा चेक करेगा
+            string query = "SELECT COUNT(*) FROM MASBUDGETDETAILS WHERE MHID = @MhId AND IsOp = 'Y'";
+
+            // 2. Dynamic Query: अगर SHID (Sub Head) की वैल्यू आई है (null या 0 नहीं है), तो उसे भी क्वेरी में जोड़ देगा
+            if (shid.HasValue && shid.Value > 0)
+            {
+                query += " AND SHID = @ShId";
+            }
+
+            // 3. Directorate & Facility Logic
+            if (directorateId == 12)
+                query += " AND FACILITYID = @FacId";
+            else
+                query += " AND directorate_id = @DirId";
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                using (SqlCommand cmd = new SqlCommand(query, conn))
+                {
+                    // Parameters पास करना
+                    cmd.Parameters.AddWithValue("@MhId", mhid);
+
+                    // अगर SHID है तभी पैरामीटर में ऐड करेंगे
+                    if (shid.HasValue && shid.Value > 0)
+                    {
+                        cmd.Parameters.AddWithValue("@ShId", shid.Value);
+                    }
+
+                    cmd.Parameters.AddWithValue("@DirId", directorateId);
+                    cmd.Parameters.AddWithValue("@FacId", facilityId);
+
+                    await conn.OpenAsync();
+                    int recordCount = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+
+                    // अगर count 0 से ज्यादा है, मतलब ओपनिंग बैलेंस पहले ही डला हुआ है
+                    return Ok(new { isAlreadyInitialized = recordCount > 0 });
+                }
+            }
+        }
         [HttpGet("GetActualEntriesByBgid/{bgid}")]
         public async Task<IActionResult> GetActualEntriesByBgid(int bgid)
         {
