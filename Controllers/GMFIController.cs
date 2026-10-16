@@ -1558,15 +1558,21 @@ where 1=1 order by b.BUDGETNAME";
                     int generatedBgid = 0;
                     using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
                     {
-                            //cmd.Parameters.AddWithValue("@BudId", dto.BudgetId);
+                            // FacilityId ke liye:
+                            cmd.Parameters.AddWithValue("@FacId", dto.FacilityId.HasValue ? (object)dto.FacilityId.Value : DBNull.Value);
+                            //cmd.Parameters.AddWithValue("@FacId", (object)dto.FacilityId ?? DBNull.Value);
+                            //cmd.Parameters.AddWithValue("@FacId", dto.FacilityId.HasValue ? (object)dto.FacilityId.Value : DBNull.Value);
+                            //cmd.Parameters.AddWithValue("@FacId", dto.DirectorateId == 12 ? (object)dto.FacilityId : DBNull.Value);
+                            // BudgetId bhi aapke payload me null hai, uske liye bhi same karein:
+                            //cmd.Parameters.AddWithValue("@BudId", (object)dto.BudgetId ?? DBNull.Value);
+                          
                             cmd.Parameters.AddWithValue("@BudId", dto.BudgetId.HasValue ? (object)dto.BudgetId.Value : DBNull.Value);
                             cmd.Parameters.AddWithValue("@Amt", dto.Amount);
                         cmd.Parameters.AddWithValue("@RecDt", dto.ReceivedDate);
                         cmd.Parameters.AddWithValue("@DirId", dto.DirectorateId);
 
                             
-                            //cmd.Parameters.AddWithValue("@FacId", dto.FacilityId.HasValue ? (object)dto.FacilityId.Value : DBNull.Value);
-                            cmd.Parameters.AddWithValue("@FacId", dto.DirectorateId == 12 ? (object)dto.FacilityId : DBNull.Value);
+                          
                         cmd.Parameters.AddWithValue("@BankId", dto.BankId);
                         cmd.Parameters.AddWithValue("@Rem", string.IsNullOrEmpty(dto.Remarks) ? DBNull.Value : dto.Remarks);
                         cmd.Parameters.AddWithValue("@IsOp", dto.IsOp);
@@ -1771,22 +1777,26 @@ where 1=1 order by b.BUDGETNAME";
                 return StatusCode(500, new { message = "Database mapping extraction transaction crashed.", error = ex.Message });
             }
         }
-
         [HttpGet("VerifyFirstTimeOpeningBalanceByHead/{directorateId}")]
-        public async Task<IActionResult> VerifyFirstTimeOpeningBalanceByHead([FromRoute] int directorateId, [FromQuery] int mhid, [FromQuery] int? shid, [FromQuery] int facilityId = 0)
+        public async Task<IActionResult> VerifyFirstTimeOpeningBalanceByHead(
+    [FromRoute] int directorateId,
+    [FromQuery] int mhid,
+    [FromQuery] int bankId,   // 1. Naya Parameter Add kiya
+    [FromQuery] int? shid,
+    [FromQuery] int facilityId = 0)
         {
             string connString = _config.GetConnectionString("DefaultConnection");
 
-            // 1. Base Query: MHID और IsOp = 'Y' (Opening Balance) को हमेशा चेक करेगा
-            string query = "SELECT COUNT(*) FROM MASBUDGETDETAILS WHERE MHID = @MhId AND IsOp = 'Y'";
+            // 2. Base Query me bankid = @BankId add kiya gaya hai
+            string query = "SELECT COUNT(*) FROM MASBUDGETDETAILS WHERE MHID = @MhId AND bankid = @BankId AND IsOp = 'Y'";
 
-            // 2. Dynamic Query: अगर SHID (Sub Head) की वैल्यू आई है (null या 0 नहीं है), तो उसे भी क्वेरी में जोड़ देगा
+            // Dynamic Query: अगर SHID (Sub Head) की वैल्यू आई है (null या 0 नहीं है), तो उसे भी क्वेरी में जोड़ देगा
             if (shid.HasValue && shid.Value > 0)
             {
                 query += " AND SHID = @ShId";
             }
 
-            // 3. Directorate & Facility Logic
+            // Directorate & Facility Logic
             if (directorateId == 12)
                 query += " AND FACILITYID = @FacId";
             else
@@ -1796,10 +1806,9 @@ where 1=1 order by b.BUDGETNAME";
             {
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
-                    // Parameters पास करना
                     cmd.Parameters.AddWithValue("@MhId", mhid);
+                    cmd.Parameters.AddWithValue("@BankId", bankId); 
 
-                    // अगर SHID है तभी पैरामीटर में ऐड करेंगे
                     if (shid.HasValue && shid.Value > 0)
                     {
                         cmd.Parameters.AddWithValue("@ShId", shid.Value);
@@ -1811,11 +1820,54 @@ where 1=1 order by b.BUDGETNAME";
                     await conn.OpenAsync();
                     int recordCount = Convert.ToInt32(await cmd.ExecuteScalarAsync());
 
-                    // अगर count 0 से ज्यादा है, मतलब ओपनिंग बैलेंस पहले ही डला हुआ है
                     return Ok(new { isAlreadyInitialized = recordCount > 0 });
                 }
             }
         }
+        //[HttpGet("VerifyFirstTimeOpeningBalanceByHead/{directorateId}")]
+        //public async Task<IActionResult> VerifyFirstTimeOpeningBalanceByHead([FromRoute] int directorateId, [FromQuery] int mhid, [FromQuery] int? shid, [FromQuery] int facilityId = 0)
+        //{
+        //    string connString = _config.GetConnectionString("DefaultConnection");
+
+        //    // 1. Base Query: MHID और IsOp = 'Y' (Opening Balance) को हमेशा चेक करेगा
+        //    string query = "SELECT COUNT(*) FROM MASBUDGETDETAILS WHERE MHID = @MhId AND IsOp = 'Y'";
+
+        //    // 2. Dynamic Query: अगर SHID (Sub Head) की वैल्यू आई है (null या 0 नहीं है), तो उसे भी क्वेरी में जोड़ देगा
+        //    if (shid.HasValue && shid.Value > 0)
+        //    {
+        //        query += " AND SHID = @ShId";
+        //    }
+
+        //    // 3. Directorate & Facility Logic
+        //    if (directorateId == 12)
+        //        query += " AND FACILITYID = @FacId";
+        //    else
+        //        query += " AND directorate_id = @DirId";
+
+        //    using (SqlConnection conn = new SqlConnection(connString))
+        //    {
+        //        using (SqlCommand cmd = new SqlCommand(query, conn))
+        //        {
+        //            // Parameters पास करना
+        //            cmd.Parameters.AddWithValue("@MhId", mhid);
+
+        //            // अगर SHID है तभी पैरामीटर में ऐड करेंगे
+        //            if (shid.HasValue && shid.Value > 0)
+        //            {
+        //                cmd.Parameters.AddWithValue("@ShId", shid.Value);
+        //            }
+
+        //            cmd.Parameters.AddWithValue("@DirId", directorateId);
+        //            cmd.Parameters.AddWithValue("@FacId", facilityId);
+
+        //            await conn.OpenAsync();
+        //            int recordCount = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+
+        //            // अगर count 0 से ज्यादा है, मतलब ओपनिंग बैलेंस पहले ही डला हुआ है
+        //            return Ok(new { isAlreadyInitialized = recordCount > 0 });
+        //        }
+        //    }
+        //}
         [HttpGet("GetActualEntriesByBgid/{bgid}")]
         public async Task<IActionResult> GetActualEntriesByBgid(int bgid)
         {
