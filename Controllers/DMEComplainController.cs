@@ -306,7 +306,7 @@ SELECT complaints.status, complaints.complaint_id, complaints.complaint_no,
        CONVERT(varchar, complaints.not_function_date, 103) AS not_function_date,
        masitems.item_name, masitems.item_code, maslocations.location_name,
        complaints_trouble.complaints_troubleshoot, maslocations.user_id,
-       users.user_name, complaints.Make_No
+       users.user_name, complaints.Serial_no
 FROM complaints
 INNER JOIN masitems ON complaints.item_id = masitems.item_id
 INNER JOIN maslocations ON complaints.location_id = maslocations.location_id
@@ -640,7 +640,7 @@ WHERE u.user_id = @UserId";
                 ItemId = SafeInt("item_id"),
                 ItemName = SafeStr("item_name"),
                 ItemCode = SafeStr("item_code"),
-                MakeNo = SafeStr("Make_No"),
+                MakeNo = Has("Make_No") ? SafeStr("Make_No") : SafeStr("Serial_no"),
                 SerialNo = SafeStr("Serial_no"),
                 ComplainTroubleshoot = SafeStr("complaints_troubleshoot"),
                 LocationName = SafeStr("location_name"),
