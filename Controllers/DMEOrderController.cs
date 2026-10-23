@@ -108,14 +108,21 @@ ORDER BY item_name";
         public async Task<IActionResult> GetPoDashboard(
             [FromQuery] int userId,
             [FromQuery] int financialYearId = 0,
-            [FromQuery] string? itemCode = null)
+            [FromQuery] string? itemCode = null,
+            [FromQuery] int page = 0,
+            [FromQuery] int pageSize = 10)
         {
             if (userId <= 0)
                 return BadRequest(new { message = "userId is required." });
 
+            // page=0 = full list (legacy shape); page>0 = one page + total count
+            var paged = page > 0;
+            pageSize = Math.Clamp(pageSize, 1, 500);
+
             // financialYearId=0 and empty/0 itemCode = All
             var sql = @"
-SELECT A.PO_ID,
+SELECT COUNT(*) OVER () AS TotalRows,
+       A.PO_ID,
        CONVERT(VARCHAR, a.po_date, 103) AS po_date,
        a.PO_NO,
        b.NAME AS SUPPLIER_NAME,
@@ -157,9 +164,12 @@ WHERE a.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled')
       )
   AND (@FinancialYearId = 0 OR a.FINANCIAL_YEAR_ID = @FinancialYearId)
   AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode)
-ORDER BY a.po_date DESC";
+ORDER BY a.po_date DESC, a.PO_ID DESC, pi.po_item_id";
+            if (paged)
+                sql += "\nOFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
 
             var list = new List<PoDashboardRowDto>();
+            var totalCount = 0;
 
             try
             {
@@ -169,10 +179,16 @@ ORDER BY a.po_date DESC";
                 cmd.Parameters.AddWithValue("@UserId", userId);
                 cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
                 cmd.Parameters.AddWithValue("@ItemCode", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim());
+                if (paged)
+                {
+                    cmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    cmd.Parameters.AddWithValue("@PageSize", pageSize);
+                }
 
                 await using var reader = await cmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
                 {
+                    totalCount = Convert.ToInt32(reader["TotalRows"]);
                     list.Add(new PoDashboardRowDto
                     {
                         PoId = reader["PO_ID"] != DBNull.Value ? Convert.ToInt32(reader["PO_ID"]) : 0,
@@ -193,6 +209,8 @@ ORDER BY a.po_date DESC";
                     });
                 }
 
+                if (paged)
+                    return Ok(new PagedListDto<PoDashboardRowDto> { Items = list, TotalCount = totalCount, Page = page, PageSize = pageSize });
                 return Ok(list);
             }
             catch (Exception ex)
@@ -339,13 +357,20 @@ ORDER BY A.item_name";
             [FromQuery] int userId,
             [FromQuery] string? authorityId = null,
             [FromQuery] int financialYearId = 0,
-            [FromQuery] string? itemCode = null)
+            [FromQuery] string? itemCode = null,
+            [FromQuery] int page = 0,
+            [FromQuery] int pageSize = 10)
         {
             if (userId <= 0)
                 return BadRequest(new { message = "userId is required." });
 
+            // page=0 = full list (legacy shape); page>0 = one page + total count, batches loaded for that page only
+            var paged = page > 0;
+            pageSize = Math.Clamp(pageSize, 1, 500);
+
             var sql = @"
-SELECT a.po_item_id, a.po_id, a.quantity, a.consignee_id,
+SELECT COUNT(*) OVER () AS TotalRows,
+       a.po_item_id, a.po_id, a.quantity, a.consignee_id,
        c1.location_name, CONVERT(VARCHAR, b.po_date, 103) AS po_date, b.PO_NO,
        ISNULL(c.item_name, a.item_id) AS item_name, c.item_code_as_per_tender AS item_code, s.name AS supplier_name,
        ISNULL(x.single_unit_price * a.quantity, 0) AS Total_Price
@@ -373,11 +398,14 @@ WHERE (b.status IS NULL OR b.status NOT IN ('Incomplete', 'Waiting For Approval'
   AND (@AuthorityId IS NULL OR @AuthorityId = '' OR c1.authority = @AuthorityId)
   AND (@FinancialYearId = 0 OR b.financial_year_id = @FinancialYearId)
   AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode)
-ORDER BY b.po_date DESC, a.po_id DESC";
+ORDER BY b.po_date DESC, a.po_id DESC, a.po_item_id";
+            if (paged)
+                sql += "\nOFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
 
             try
             {
                 var rows = new List<PoReceiptDeskRowDto>();
+                var totalCount = 0;
                 await using var conn = new SqlConnection(_connectionString);
                 await conn.OpenAsync();
                 await using var cmd = new SqlCommand(sql, conn);
@@ -385,11 +413,17 @@ ORDER BY b.po_date DESC, a.po_id DESC";
                 cmd.Parameters.AddWithValue("@AuthorityId", string.IsNullOrWhiteSpace(authorityId) ? DBNull.Value : authorityId.Trim());
                 cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
                 cmd.Parameters.AddWithValue("@ItemCode", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim());
+                if (paged)
+                {
+                    cmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    cmd.Parameters.AddWithValue("@PageSize", pageSize);
+                }
 
                 await using (var reader = await cmd.ExecuteReaderAsync())
                 {
                     while (await reader.ReadAsync())
                     {
+                        totalCount = Convert.ToInt32(reader["TotalRows"]);
                         rows.Add(new PoReceiptDeskRowDto
                         {
                             PoItemId = reader["po_item_id"] != DBNull.Value ? Convert.ToInt32(reader["po_item_id"]) : 0,
@@ -412,6 +446,8 @@ ORDER BY b.po_date DESC, a.po_id DESC";
                     row.Batches = await LoadReceiptBatchesAsync(conn, row.PoId, row.ConsigneeId);
                 }
 
+                if (paged)
+                    return Ok(new PagedListDto<PoReceiptDeskRowDto> { Items = rows, TotalCount = totalCount, Page = page, PageSize = pageSize });
                 return Ok(rows);
             }
             catch (Exception ex)
