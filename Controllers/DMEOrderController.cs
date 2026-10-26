@@ -108,14 +108,21 @@ ORDER BY item_name";
         public async Task<IActionResult> GetPoDashboard(
             [FromQuery] int userId,
             [FromQuery] int financialYearId = 0,
-            [FromQuery] string? itemCode = null)
+            [FromQuery] string? itemCode = null,
+            [FromQuery] int page = 0,
+            [FromQuery] int pageSize = 10)
         {
             if (userId <= 0)
                 return BadRequest(new { message = "userId is required." });
 
+            // page=0 = full list (legacy shape); page>0 = one page + total count
+            var paged = page > 0;
+            pageSize = Math.Clamp(pageSize, 1, 500);
+
             // financialYearId=0 and empty/0 itemCode = All
             var sql = @"
-SELECT A.PO_ID,
+SELECT COUNT(*) OVER () AS TotalRows,
+       A.PO_ID,
        CONVERT(VARCHAR, a.po_date, 103) AS po_date,
        a.PO_NO,
        b.NAME AS SUPPLIER_NAME,
@@ -132,34 +139,31 @@ SELECT A.PO_ID,
        ltp.filePathReagent,
        ltp.tender_item_id
 FROM dbo.PURCHASE_ORDER a
-LEFT OUTER JOIN dbo.po_items pi ON pi.po_id = a.po_id
-LEFT OUTER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
-LEFT OUTER JOIN dbo.MASSUPPLIERS b ON a.SUPPLIER_ID = b.SUPPLIER_ID
-LEFT OUTER JOIN dbo.MASITEMS R ON R.ITEM_ID = ISNULL(pi.item_id, a.ITEM_ID)
-LEFT OUTER JOIN dbo.TENDERS c ON c.TENDER_ID = a.TENDER_ID
-LEFT OUTER JOIN dbo.indent_consolidation id ON id.indent_consolidation_id = pi.INDENT_CONSOLIDATION_ID
-LEFT OUTER JOIN dbo.indent i ON i.indent_id = pi.indent_id
-LEFT OUTER JOIN dbo.indent_items im ON im.indent_item_id = pi.indent_item_id AND im.indent_id = pi.indent_id
-LEFT OUTER JOIN dbo.indent_cons_items ci ON ci.indent_cons_items_id = i.indent_cons_items_id AND ci.indent_consolidated_id = id.indent_consolidation_id
-LEFT OUTER JOIN dbo.tender_items ti ON ti.tender_id = c.tender_id AND ti.item_id = ISNULL(pi.item_id, a.ITEM_ID)
-LEFT OUTER JOIN dbo.live_tender_price ltp ON ltp.supplier_id = a.supplier_id AND ltp.tender_item_id = ti.tender_item_id
-LEFT OUTER JOIN dbo.MAS_FINANCIAL_YEAR E ON E.FINANCIAL_YEAR_ID = a.FINANCIAL_YEAR_ID
-LEFT OUTER JOIN dbo.mas_financial_year iy ON iy.financial_year_id = id.financial_year_id
+-- same INNER joins as PODashboardDMEFAC.aspx (rows without indent / tender / live price are not listed)
+INNER JOIN dbo.po_items pi ON pi.po_id = a.po_id
+INNER JOIN dbo.indent_consolidation id ON id.indent_consolidation_id = pi.INDENT_CONSOLIDATION_ID
+INNER JOIN dbo.indent i ON i.indent_id = pi.indent_id
+INNER JOIN dbo.indent_items im ON im.indent_item_id = pi.indent_item_id AND im.indent_id = pi.indent_id
+INNER JOIN dbo.indent_cons_items ci ON ci.indent_cons_items_id = i.indent_cons_items_id AND ci.indent_consolidated_id = id.indent_consolidation_id
+INNER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
+INNER JOIN dbo.MASSUPPLIERS b ON a.SUPPLIER_ID = b.SUPPLIER_ID
+INNER JOIN dbo.MASITEMS R ON R.ITEM_ID = a.ITEM_ID
+INNER JOIN dbo.TENDERS c ON c.TENDER_ID = a.TENDER_ID
+INNER JOIN dbo.tender_items ti ON ti.tender_id = c.tender_id AND ti.item_id = pi.item_id
+INNER JOIN dbo.live_tender_price ltp ON ltp.supplier_id = a.supplier_id AND ltp.tender_item_id = ti.tender_item_id
+INNER JOIN dbo.MAS_FINANCIAL_YEAR E ON E.FINANCIAL_YEAR_ID = a.FINANCIAL_YEAR_ID
+INNER JOIN dbo.mas_financial_year iy ON iy.financial_year_id = id.financial_year_id
 WHERE a.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled')
-  AND (
-       @UserId = 0
-       OR l.user_id = @UserId 
-       OR l.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) 
-       OR l.location_id = @UserId
-       OR l.DP_DistrictID IN (SELECT ml.DP_DistrictID FROM dbo.users u INNER JOIN dbo.maslocations ml ON ml.location_id = u.location_id WHERE u.user_id = @UserId AND ml.DP_DistrictID IS NOT NULL AND ml.DP_DistrictID > 0)
-       OR pi.consignee_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId)
-       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.user_type IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
-      )
+  -- PODashboardDMEFAC.aspx: only POs whose consignee belongs to the logged-in user
+  AND l.user_id = @UserId
   AND (@FinancialYearId = 0 OR a.FINANCIAL_YEAR_ID = @FinancialYearId)
   AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode)
-ORDER BY a.po_date DESC";
+ORDER BY a.po_date DESC, a.PO_ID DESC, pi.po_item_id";
+            if (paged)
+                sql += "\nOFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
 
             var list = new List<PoDashboardRowDto>();
+            var totalCount = 0;
 
             try
             {
@@ -169,10 +173,16 @@ ORDER BY a.po_date DESC";
                 cmd.Parameters.AddWithValue("@UserId", userId);
                 cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
                 cmd.Parameters.AddWithValue("@ItemCode", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim());
+                if (paged)
+                {
+                    cmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    cmd.Parameters.AddWithValue("@PageSize", pageSize);
+                }
 
                 await using var reader = await cmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
                 {
+                    totalCount = Convert.ToInt32(reader["TotalRows"]);
                     list.Add(new PoDashboardRowDto
                     {
                         PoId = reader["PO_ID"] != DBNull.Value ? Convert.ToInt32(reader["PO_ID"]) : 0,
@@ -193,6 +203,8 @@ ORDER BY a.po_date DESC";
                     });
                 }
 
+                if (paged)
+                    return Ok(new PagedListDto<PoDashboardRowDto> { Items = list, TotalCount = totalCount, Page = page, PageSize = pageSize });
                 return Ok(list);
             }
             catch (Exception ex)
@@ -339,20 +351,28 @@ ORDER BY A.item_name";
             [FromQuery] int userId,
             [FromQuery] string? authorityId = null,
             [FromQuery] int financialYearId = 0,
-            [FromQuery] string? itemCode = null)
+            [FromQuery] string? itemCode = null,
+            [FromQuery] int page = 0,
+            [FromQuery] int pageSize = 10)
         {
             if (userId <= 0)
                 return BadRequest(new { message = "userId is required." });
 
+            // page=0 = full list (legacy shape); page>0 = one page + total count, batches loaded for that page only
+            var paged = page > 0;
+            pageSize = Math.Clamp(pageSize, 1, 500);
+
             var sql = @"
-SELECT a.po_item_id, a.po_id, a.quantity, a.consignee_id,
+SELECT COUNT(*) OVER () AS TotalRows,
+       a.po_item_id, a.po_id, a.quantity, a.consignee_id,
        c1.location_name, CONVERT(VARCHAR, b.po_date, 103) AS po_date, b.PO_NO,
        ISNULL(c.item_name, a.item_id) AS item_name, c.item_code_as_per_tender AS item_code, s.name AS supplier_name,
        ISNULL(x.single_unit_price * a.quantity, 0) AS Total_Price
 FROM dbo.po_items a
-LEFT OUTER JOIN dbo.MASITEMS R ON R.ITEM_ID = a.item_id
-LEFT OUTER JOIN dbo.purchase_order b ON a.po_id = b.po_id
-LEFT OUTER JOIN dbo.MASSUPPLIERS s ON s.SUPPLIER_ID = b.supplier_id
+-- same joins as Facilitypo_supply_editDME.aspx
+INNER JOIN dbo.MASITEMS R ON R.ITEM_ID = a.item_id
+INNER JOIN dbo.purchase_order b ON a.po_id = b.po_id
+INNER JOIN dbo.MASSUPPLIERS s ON s.SUPPLIER_ID = b.supplier_id
 LEFT OUTER JOIN (
     SELECT F.SUPPLIER_ID, F.TENDER_ID, D.ITEM_ID, D.single_unit_price
     FROM dbo.AWARD_OF_CONTRACT F
@@ -360,24 +380,20 @@ LEFT OUTER JOIN (
 ) x ON x.TENDER_ID = b.TENDER_ID AND b.SUPPLIER_ID = x.SUPPLIER_ID AND a.ITEM_ID = x.ITEM_ID
 LEFT OUTER JOIN dbo.maslocations c1 ON c1.location_id = a.consignee_id
 LEFT OUTER JOIN dbo.masitems c ON a.item_id = c.item_id
-WHERE (b.status IS NULL OR b.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled'))
-  AND (
-       @UserId = 0
-       OR c1.user_id = @UserId 
-       OR c1.location_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId) 
-       OR c1.location_id = @UserId
-       OR c1.DP_DistrictID IN (SELECT ml.DP_DistrictID FROM dbo.users u INNER JOIN dbo.maslocations ml ON ml.location_id = u.location_id WHERE u.user_id = @UserId AND ml.DP_DistrictID IS NOT NULL AND ml.DP_DistrictID > 0)
-       OR a.consignee_id IN (SELECT location_id FROM dbo.users WHERE user_id = @UserId)
-       OR EXISTS (SELECT 1 FROM dbo.users u WHERE u.user_id = @UserId AND u.user_type IN ('AD', 'ADMIN', 'AU', 'AUPO', 'DME', 'DIRECTOR', 'TPO', 'GM', 'MD'))
-      )
+WHERE b.status NOT IN ('Incomplete', 'Waiting For Approval', 'Cancelled')
+  -- Facilitypo_supply_editDME.aspx: only consignees of the logged-in user (+ their authority)
+  AND c1.user_id = @UserId
   AND (@AuthorityId IS NULL OR @AuthorityId = '' OR c1.authority = @AuthorityId)
   AND (@FinancialYearId = 0 OR b.financial_year_id = @FinancialYearId)
   AND (@ItemCode IS NULL OR @ItemCode = '' OR @ItemCode = '0' OR R.item_code_as_per_tender = @ItemCode)
-ORDER BY b.po_date DESC, a.po_id DESC";
+ORDER BY b.po_date DESC, a.po_id DESC, a.po_item_id";
+            if (paged)
+                sql += "\nOFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
 
             try
             {
                 var rows = new List<PoReceiptDeskRowDto>();
+                var totalCount = 0;
                 await using var conn = new SqlConnection(_connectionString);
                 await conn.OpenAsync();
                 await using var cmd = new SqlCommand(sql, conn);
@@ -385,11 +401,17 @@ ORDER BY b.po_date DESC, a.po_id DESC";
                 cmd.Parameters.AddWithValue("@AuthorityId", string.IsNullOrWhiteSpace(authorityId) ? DBNull.Value : authorityId.Trim());
                 cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
                 cmd.Parameters.AddWithValue("@ItemCode", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim());
+                if (paged)
+                {
+                    cmd.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                    cmd.Parameters.AddWithValue("@PageSize", pageSize);
+                }
 
                 await using (var reader = await cmd.ExecuteReaderAsync())
                 {
                     while (await reader.ReadAsync())
                     {
+                        totalCount = Convert.ToInt32(reader["TotalRows"]);
                         rows.Add(new PoReceiptDeskRowDto
                         {
                             PoItemId = reader["po_item_id"] != DBNull.Value ? Convert.ToInt32(reader["po_item_id"]) : 0,
@@ -412,6 +434,8 @@ ORDER BY b.po_date DESC, a.po_id DESC";
                     row.Batches = await LoadReceiptBatchesAsync(conn, row.PoId, row.ConsigneeId);
                 }
 
+                if (paged)
+                    return Ok(new PagedListDto<PoReceiptDeskRowDto> { Items = rows, TotalCount = totalCount, Page = page, PageSize = pageSize });
                 return Ok(rows);
             }
             catch (Exception ex)

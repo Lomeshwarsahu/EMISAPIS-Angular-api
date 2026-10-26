@@ -13,6 +13,15 @@ namespace EMISAPIS.DTOS
         public string ItemCodeAsPerTender { get; set; } = string.Empty;
     }
 
+    /// <summary>Server-side paged list response (returned when <c>page</c> &gt; 0).</summary>
+    public class PagedListDto<T>
+    {
+        public List<T> Items { get; set; } = new();
+        public int TotalCount { get; set; }
+        public int Page { get; set; }
+        public int PageSize { get; set; }
+    }
+
     public class PoReceiptDeskRowDto
     {
         public int PoItemId { get; set; }
