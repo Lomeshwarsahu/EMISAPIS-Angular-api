@@ -1341,6 +1341,23 @@ where 1=1 order by b.BUDGETNAME";
                 }
             }
         }
+        /// <summary>Opening Balance grid — streams a fund receipt PDF saved by SaveOpeningBalanceRecord (wwwroot/Uploads/FundReceipts).</summary>
+        [HttpGet("GetFundReceiptFile")]
+        public async Task<IActionResult> GetFundReceiptFile([FromQuery] string? filePath)
+        {
+            // Only the file name is used, so a path like "../x" cannot leave the FundReceipts folder
+            var fileName = Path.GetFileName(filePath ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(fileName) || !fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "A PDF file path is required." });
+
+            var fullPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "Uploads", "FundReceipts", fileName);
+            if (!System.IO.File.Exists(fullPath))
+                return NotFound(new { message = "Document not found for this record." });
+
+            var bytes = await System.IO.File.ReadAllBytesAsync(fullPath);
+            return File(bytes, "application/pdf");
+        }
+
         [HttpGet("GetFundReceiptsGridSummary/{directorateId}")]
         public async Task<IActionResult> GetFundReceiptsGridSummary(int directorateId)
         {
