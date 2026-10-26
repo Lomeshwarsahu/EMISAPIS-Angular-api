@@ -640,13 +640,21 @@ namespace EMISAPIS.DTOS
         public int InvoiceItemId { get; set; }
     }
 
-    public class MainHeadDto
+    public class MainHeadUpdateDto
     {
+        public int MHID { get; set; }
         public string MainHead_Eng { get; set; } = string.Empty;
         public string MainHead_Hindi { get; set; } = string.Empty;
         public string IsActive { get; set; } = "Active"; // Default 'Active'
     }
 
+    public class MainHeadDto
+    {
+      
+        public string MainHead_Eng { get; set; } = string.Empty;
+        public string MainHead_Hindi { get; set; } = string.Empty;
+        public string IsActive { get; set; } = "Active"; // Default 'Active'
+    }
 
     public class MainHeadResponseDto
     {

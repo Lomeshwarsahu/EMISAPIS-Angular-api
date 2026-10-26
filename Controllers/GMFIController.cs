@@ -5048,14 +5048,85 @@ GROUP BY
 
         //new MainfundHead entry
 
-    // Step 2: POST Method
-[HttpPost("SaveMainHead")]
+        // Step 2: POST Method
+        //[HttpPost("SaveMainHead")]
+        //        public async Task<IActionResult> SaveMainHead([FromBody] MainHeadDto dto)
+        //        {
+        //            // Basic validation
+        //            if (dto == null || string.IsNullOrWhiteSpace(dto.MainHead_Eng)) //|| string.IsNullOrWhiteSpace(dto.MainHead_Hindi)
+        //            {
+        //                return BadRequest(new { message = "MainHead English and Hindi names are required." });
+        //            }
+
+        //            string connString = _config.GetConnectionString("DefaultConnection");
+
+        //            using (SqlConnection conn = new SqlConnection(connString))
+        //            {
+        //                await conn.OpenAsync();
+        //                using (SqlTransaction trans = conn.BeginTransaction())
+        //                {
+        //                    try
+        //                    {
+        //                        // SQL Query for Mas_MainHead
+        //                        // Note: GETDATE() automatically current date and time insert kar dega
+        //                        string insertSql = @"
+        //                    INSERT INTO Mas_MainHead (MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate) 
+        //                    VALUES (@Eng, @Hindi, @IsActive, GETDATE());
+        //                    SELECT SCOPE_IDENTITY();";
+
+        //                        int generatedMhid = 0;
+
+        //                        using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
+        //                        {
+        //                            cmd.Parameters.AddWithValue("@Eng", dto.MainHead_Eng.Trim());
+        //                            // Hindi text ke liye database handle kar lega kyunki aapne table me nvarchar banaya hai
+        //                            cmd.Parameters.AddWithValue("@Hindi", dto.MainHead_Hindi.Trim());
+        //                            cmd.Parameters.AddWithValue("@IsActive", string.IsNullOrWhiteSpace(dto.IsActive) ? "Active" : dto.IsActive.Trim());
+
+        //                            // Execute query and get the newly generated MHID
+        //                            generatedMhid = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        //                        }
+
+        //                        // Agar sab kuch theek raha toh transaction commit karein
+        //                        await trans.CommitAsync();
+        //                        return Ok(new { message = "Main Head Saved Successfully.", mhid = generatedMhid });
+        //                    }
+        //                    catch (Exception ex)
+        //                    {
+        //                        // Agar koi error aayi toh transaction rollback ho jayega
+        //                        await trans.RollbackAsync();
+        //                        return StatusCode(500, new { message = "Database transaction failed.", error = ex.Message });
+        //                    }
+        //                }
+        //            }
+        //        }
+
+        [HttpPost("SaveMainHead")]
         public async Task<IActionResult> SaveMainHead([FromBody] MainHeadDto dto)
         {
-            // Basic validation
-            if (dto == null || string.IsNullOrWhiteSpace(dto.MainHead_Eng)) //|| string.IsNullOrWhiteSpace(dto.MainHead_Hindi)
+            if (dto == null || string.IsNullOrWhiteSpace(dto.MainHead_Eng))
             {
-                return BadRequest(new { message = "MainHead English and Hindi names are required." });
+                return BadRequest(new { message = "Main Head English name is required." });
+            }
+
+            string engName = dto.MainHead_Eng;
+
+            // 1. Check for leading or trailing spaces (Aage ya peeche space)
+            if (engName != engName.Trim())
+            {
+                return BadRequest(new { message = "Leading or trailing spaces are not allowed in Main Head." });
+            }
+
+            // 2. Check for double spaces (Beech mein double space)
+            if (engName.Contains("  "))
+            {
+                return BadRequest(new { message = "Double spaces are not allowed between words." });
+            }
+
+            // 3. Check for hyphens (-) or underscores (_)
+            if (engName.Contains("-") || engName.Contains("_"))
+            {
+                return BadRequest(new { message = "Hyphens (-) and underscores (_) are not allowed in Main Head." });
             }
 
             string connString = _config.GetConnectionString("DefaultConnection");
@@ -5063,37 +5134,43 @@ GROUP BY
             using (SqlConnection conn = new SqlConnection(connString))
             {
                 await conn.OpenAsync();
+
+                // 4. Database Duplicate Check (Case-insensitive check)
+                string checkSql = "SELECT COUNT(1) FROM Mas_MainHead WHERE LOWER(MainHead_Eng) = LOWER(@Eng)";
+                using (SqlCommand checkCmd = new SqlCommand(checkSql, conn))
+                {
+                    checkCmd.Parameters.AddWithValue("@Eng", engName.Trim());
+                    int count = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
+                    if (count > 0)
+                    {
+                        return BadRequest(new { message = "This Main Head already exists in the database." });
+                    }
+                }
+
                 using (SqlTransaction trans = conn.BeginTransaction())
                 {
                     try
                     {
-                        // SQL Query for Mas_MainHead
-                        // Note: GETDATE() automatically current date and time insert kar dega
                         string insertSql = @"
                     INSERT INTO Mas_MainHead (MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate) 
                     VALUES (@Eng, @Hindi, @IsActive, GETDATE());
                     SELECT SCOPE_IDENTITY();";
 
                         int generatedMhid = 0;
-
                         using (SqlCommand cmd = new SqlCommand(insertSql, conn, trans))
                         {
-                            cmd.Parameters.AddWithValue("@Eng", dto.MainHead_Eng.Trim());
-                            // Hindi text ke liye database handle kar lega kyunki aapne table me nvarchar banaya hai
-                            cmd.Parameters.AddWithValue("@Hindi", dto.MainHead_Hindi.Trim());
+                            cmd.Parameters.AddWithValue("@Eng", engName.Trim());
+                            cmd.Parameters.AddWithValue("@Hindi", dto.MainHead_Hindi != null ? dto.MainHead_Hindi.Trim() : (object)DBNull.Value);
                             cmd.Parameters.AddWithValue("@IsActive", string.IsNullOrWhiteSpace(dto.IsActive) ? "Active" : dto.IsActive.Trim());
 
-                            // Execute query and get the newly generated MHID
                             generatedMhid = Convert.ToInt32(await cmd.ExecuteScalarAsync());
                         }
 
-                        // Agar sab kuch theek raha toh transaction commit karein
                         await trans.CommitAsync();
                         return Ok(new { message = "Main Head Saved Successfully.", mhid = generatedMhid });
                     }
                     catch (Exception ex)
                     {
-                        // Agar koi error aayi toh transaction rollback ho jayega
                         await trans.RollbackAsync();
                         return StatusCode(500, new { message = "Database transaction failed.", error = ex.Message });
                     }
@@ -5101,39 +5178,209 @@ GROUP BY
             }
         }
 
-        // 2. Aapka GET Method
-        [HttpGet("GetMainHeads")]
-        public async Task<IActionResult> GetMainHeads()
+        [HttpPut("UpdateMainHead")]
+        public async Task<IActionResult> UpdateMainHead([FromBody] MainHeadUpdateDto dto)
+        {
+            if (dto == null || dto.MHID <= 0 || string.IsNullOrWhiteSpace(dto.MainHead_Eng))
+            {
+                return BadRequest(new { message = "Valid MHID and Main Head English name are required." });
+            }
+
+            string engName = dto.MainHead_Eng;
+
+            // Format Validations
+            if (engName != engName.Trim())
+            {
+                return BadRequest(new { message = "Leading or trailing spaces are not allowed in Main Head." });
+            }
+            if (engName.Contains("  "))
+            {
+                return BadRequest(new { message = "Double spaces are not allowed between words." });
+            }
+            if (engName.Contains("-") || engName.Contains("_"))
+            {
+                return BadRequest(new { message = "Hyphens (-) and underscores (_) are not allowed in Main Head." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+
+                // Duplicate Check (Current ID ko chhod kar baki sabme check karega)
+                string checkSql = "SELECT COUNT(1) FROM Mas_MainHead WHERE LOWER(MainHead_Eng) = LOWER(@Eng) AND MHID != @MHID";
+                using (SqlCommand checkCmd = new SqlCommand(checkSql, conn))
+                {
+                    checkCmd.Parameters.AddWithValue("@Eng", engName.Trim());
+                    checkCmd.Parameters.AddWithValue("@MHID", dto.MHID);
+                    int count = Convert.ToInt32(await checkCmd.ExecuteScalarAsync());
+                    if (count > 0)
+                    {
+                        return BadRequest(new { message = "Another Main Head with this name already exists." });
+                    }
+                }
+
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        string updateSql = @"
+                    UPDATE Mas_MainHead 
+                    SET MainHead_Eng = @Eng, 
+                        MainHead_Hindi = @Hindi, 
+                        IsActive = @IsActive 
+                    WHERE MHID = @MHID;";
+
+                        using (SqlCommand cmd = new SqlCommand(updateSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@MHID", dto.MHID);
+                            cmd.Parameters.AddWithValue("@Eng", engName.Trim());
+                            cmd.Parameters.AddWithValue("@Hindi", dto.MainHead_Hindi != null ? dto.MainHead_Hindi.Trim() : (object)DBNull.Value);
+                            cmd.Parameters.AddWithValue("@IsActive", string.IsNullOrWhiteSpace(dto.IsActive) ? "Active" : dto.IsActive.Trim());
+
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+
+                        await trans.CommitAsync();
+                        return Ok(new { message = "Main Head Updated Successfully." });
+                    }
+                    catch (Exception ex)
+                    {
+                        await trans.RollbackAsync();
+                        return StatusCode(500, new { message = "Database transaction failed.", error = ex.Message });
+                    }
+                }
+            }
+        }
+
+        //[HttpPut("UpdateMainHead")]
+        //public async Task<IActionResult> UpdateMainHead([FromBody] MainHeadUpdateDto dto)
+        //{
+        //    // Basic validation (MHID aur English name hona zaroori hai)
+        //    if (dto == null || dto.MHID <= 0 || string.IsNullOrWhiteSpace(dto.MainHead_Eng))
+        //    {
+        //        return BadRequest(new { message = "Valid MHID and Main Head English name are required." });
+        //    }
+
+        //    string connString = _config.GetConnectionString("DefaultConnection");
+
+        //    using (SqlConnection conn = new SqlConnection(connString))
+        //    {
+        //        await conn.OpenAsync();
+        //        using (SqlTransaction trans = conn.BeginTransaction())
+        //        {
+        //            try
+        //            {
+        //                // SQL Query for Update Mas_MainHead based on MHID
+        //                string updateSql = @"
+        //            UPDATE Mas_MainHead 
+        //            SET MainHead_Eng = @Eng, 
+        //                MainHead_Hindi = @Hindi, 
+        //                IsActive = @IsActive 
+        //            WHERE MHID = @MHID;";
+
+        //                int rowsAffected = 0;
+
+        //                using (SqlCommand cmd = new SqlCommand(updateSql, conn, trans))
+        //                {
+        //                    cmd.Parameters.AddWithValue("@MHID", dto.MHID);
+        //                    cmd.Parameters.AddWithValue("@Eng", dto.MainHead_Eng.Trim());
+        //                    cmd.Parameters.AddWithValue("@Hindi", dto.MainHead_Hindi != null ? dto.MainHead_Hindi.Trim() : (object)DBNull.Value);
+        //                    cmd.Parameters.AddWithValue("@IsActive", string.IsNullOrWhiteSpace(dto.IsActive) ? "Active" : dto.IsActive.Trim());
+
+        //                    // ExecuteNonQuery se check karenge ki kitni rows update hui hain
+        //                    rowsAffected = await cmd.ExecuteNonQueryAsync();
+        //                }
+
+        //                // Agar MHID database mein nahi mila toh rowsAffected 0 hoga
+        //                if (rowsAffected == 0)
+        //                {
+        //                    await trans.RollbackAsync();
+        //                    return NotFound(new { message = "Main Head record not found for the given ID." });
+        //                }
+
+        //                // Sab kuch theek raha toh transaction commit karein
+        //                await trans.CommitAsync();
+        //                return Ok(new { message = "Main Head Updated Successfully.", mhid = dto.MHID });
+        //            }
+        //            catch (Exception ex)
+        //            {
+        //                // Agar koi error aayi toh rollback ho jayega
+        //                await trans.RollbackAsync();
+        //                return StatusCode(500, new { message = "Database transaction failed.", error = ex.Message });
+        //            }
+        //        }
+        //    }
+        //}
+
+        [HttpGet("GetMainHeadById/{id}")]
+        public async Task<IActionResult> GetMainHeadById(int id)
         {
             string connString = _config.GetConnectionString("DefaultConnection");
-            List<MainHeadResponseDto> mainHeadsList = new List<MainHeadResponseDto>();
 
             using (SqlConnection conn = new SqlConnection(connString))
             {
                 await conn.OpenAsync();
                 try
                 {
-                    string selectSql = "SELECT MHID, MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate FROM Mas_MainHead";
+                    // Agar id == 0 hai toh saara data select hoga, nahi toh sirf specific ID wala
+                    string selectSql = id == 0
+                        ? "SELECT MHID, MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate FROM Mas_MainHead"
+                        : "SELECT MHID, MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate FROM Mas_MainHead WHERE MHID = @MHID";
 
                     using (SqlCommand cmd = new SqlCommand(selectSql, conn))
                     {
+                        // Agar id 0 se badi hai tabhi parameter add karenge
+                        if (id > 0)
+                        {
+                            cmd.Parameters.AddWithValue("@MHID", id);
+                        }
+
                         using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
                         {
-                            while (await reader.ReadAsync())
+                            // Agar id == 0 hai toh List return karenge
+                            if (id == 0)
                             {
-                                var mainHead = new MainHeadResponseDto
+                                var mainHeadsList = new List<MainHeadResponseDto>();
+                                while (await reader.ReadAsync())
                                 {
-                                    MHID = Convert.ToInt32(reader["MHID"]),
-                                    MainHead_Eng = reader["MainHead_Eng"] != DBNull.Value ? reader["MainHead_Eng"].ToString() : string.Empty,
-                                    MainHead_Hindi = reader["MainHead_Hindi"] != DBNull.Value ? reader["MainHead_Hindi"].ToString() : string.Empty,
-                                    IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
-                                    CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
-                                };
-                                mainHeadsList.Add(mainHead);
+                                    mainHeadsList.Add(new MainHeadResponseDto
+                                    {
+                                        MHID = Convert.ToInt32(reader["MHID"]),
+                                        MainHead_Eng = reader["MainHead_Eng"] != DBNull.Value ? reader["MainHead_Eng"].ToString() : string.Empty,
+                                        MainHead_Hindi = reader["MainHead_Hindi"] != DBNull.Value ? reader["MainHead_Hindi"].ToString() : string.Empty,
+                                        IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
+                                        CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
+                                    });
+                                }
+                                return Ok(mainHeadsList);
+                            }
+                            else
+                            {
+                                // Agar specific ID di gayi hai toh single object return karenge
+                                MainHeadResponseDto mainHead = null;
+                                if (await reader.ReadAsync())
+                                {
+                                    mainHead = new MainHeadResponseDto
+                                    {
+                                        MHID = Convert.ToInt32(reader["MHID"]),
+                                        MainHead_Eng = reader["MainHead_Eng"] != DBNull.Value ? reader["MainHead_Eng"].ToString() : string.Empty,
+                                        MainHead_Hindi = reader["MainHead_Hindi"] != DBNull.Value ? reader["MainHead_Hindi"].ToString() : string.Empty,
+                                        IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
+                                        CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
+                                    };
+                                }
+
+                                if (mainHead == null)
+                                {
+                                    return NotFound(new { message = "Main Head not found for the given ID." });
+                                }
+
+                                return Ok(mainHead);
                             }
                         }
                     }
-                    return Ok(mainHeadsList);
                 }
                 catch (Exception ex)
                 {
@@ -5141,6 +5388,46 @@ GROUP BY
                 }
             }
         }
+        // 2. Aapka GET Method
+        //[HttpGet("GetMainHeads")]
+        //public async Task<IActionResult> GetMainHeads()
+        //{
+        //    string connString = _config.GetConnectionString("DefaultConnection");
+        //    List<MainHeadResponseDto> mainHeadsList = new List<MainHeadResponseDto>();
+
+        //    using (SqlConnection conn = new SqlConnection(connString))
+        //    {
+        //        await conn.OpenAsync();
+        //        try
+        //        {
+        //            string selectSql = "SELECT MHID, MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate FROM Mas_MainHead";
+
+        //            using (SqlCommand cmd = new SqlCommand(selectSql, conn))
+        //            {
+        //                using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+        //                {
+        //                    while (await reader.ReadAsync())
+        //                    {
+        //                        var mainHead = new MainHeadResponseDto
+        //                        {
+        //                            MHID = Convert.ToInt32(reader["MHID"]),
+        //                            MainHead_Eng = reader["MainHead_Eng"] != DBNull.Value ? reader["MainHead_Eng"].ToString() : string.Empty,
+        //                            MainHead_Hindi = reader["MainHead_Hindi"] != DBNull.Value ? reader["MainHead_Hindi"].ToString() : string.Empty,
+        //                            IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
+        //                            CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
+        //                        };
+        //                        mainHeadsList.Add(mainHead);
+        //                    }
+        //                }
+        //            }
+        //            return Ok(mainHeadsList);
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            return StatusCode(500, new { message = "Database fetch failed.", error = ex.Message });
+        //        }
+        //    }
+        //}
 
         //new SubfundHead entry
 
@@ -5306,7 +5593,27 @@ GROUP BY
             }
         }
 
+        [HttpGet("Transliterate")]
+        public async Task<IActionResult> Transliterate([FromQuery] string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return BadRequest("Text is required");
+            }
 
+            try
+            {
+                using var httpClient = new HttpClient();
+                var googleUrl = $"https://inputtools.google.com/request?itc=hi-t-i0-und&text={Uri.EscapeDataString(text)}&num=1&app=demopage";
+
+                var jsonResponse = await httpClient.GetStringAsync(googleUrl);
+                return Content(jsonResponse, "application/json");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
 
 
     }
