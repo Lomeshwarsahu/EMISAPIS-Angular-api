@@ -33,32 +33,33 @@ namespace EMISAPIS.Controllers
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("DefaultConnection is not configured.");
 
+            _emsRoleRoot = LegacyFileRoot.Resolve(configuration, env);
+
             var complaintConfigured = configuration["FileStorage:ComplaintPath"];
             _complaintFileRoot = string.IsNullOrWhiteSpace(complaintConfigured)
-                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "ComplainUploads"))
+                ? Path.GetFullPath(Path.Combine(_emsRoleRoot, "ComplainUploads"))
                 : Path.GetFullPath(complaintConfigured);
 
             var emdConfigured = configuration["FileStorage:EmdDepositPath"];
             _emdFileRoot = string.IsNullOrWhiteSpace(emdConfigured)
-                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "EMDUploads"))
+                ? Path.GetFullPath(Path.Combine(_emsRoleRoot, "EMDUploads"))
                 : Path.GetFullPath(emdConfigured);
 
             var sdConfigured = configuration["FileStorage:SdDetailPath"];
             _sdFileRoot = string.IsNullOrWhiteSpace(sdConfigured)
-                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "Upload_SDdeatil"))
+                ? Path.GetFullPath(Path.Combine(_emsRoleRoot, "Upload_SDdeatil"))
                 : Path.GetFullPath(sdConfigured);
 
             var extensionConfigured = configuration["FileStorage:PoExtensionPath"];
             _extensionFileRoot = string.IsNullOrWhiteSpace(extensionConfigured)
-                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "PO_Ext_Docs"))
+                ? Path.GetFullPath(Path.Combine(_emsRoleRoot, "PO_Ext_Docs"))
                 : Path.GetFullPath(extensionConfigured);
 
             var invoiceConfigured = configuration["FileStorage:InvoiceDocPath"];
             _invoiceDocRoot = string.IsNullOrWhiteSpace(invoiceConfigured)
-                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "Upload_invoiceDoc"))
+                ? Path.GetFullPath(Path.Combine(_emsRoleRoot, "Upload_invoiceDoc"))
                 : Path.GetFullPath(invoiceConfigured);
 
-            _emsRoleRoot = Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole"));
             _mongoService = new MongoService();
 
             Directory.CreateDirectory(_emdFileRoot);

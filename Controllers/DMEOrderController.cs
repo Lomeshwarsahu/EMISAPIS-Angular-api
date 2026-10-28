@@ -24,7 +24,7 @@ namespace EMISAPIS.Controllers
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("DefaultConnection missing.");
 
-            _emsRoleRoot = Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole"));
+            _emsRoleRoot = LegacyFileRoot.Resolve(configuration, env);
             var configured = configuration["FileStorage:IndentUploadsPath"];
             _indentUploadsRoot = string.IsNullOrWhiteSpace(configured)
                 ? Path.GetFullPath(Path.Combine(_emsRoleRoot, "Uploads"))
@@ -229,8 +229,11 @@ ORDER BY a.po_date DESC, a.PO_ID DESC, pi.po_item_id";
 
             const string sql = @"
 SELECT TOP 1
+       ltp.tPpriceid,
        ltp.filePathReagent,
-       ltp.filePathAccessories
+       ltp.filePathAccessories,
+       ltp.isMongoReagent,
+       ltp.isMongoAccessories
 FROM dbo.PURCHASE_ORDER a
 INNER JOIN dbo.po_items pi ON pi.po_id = a.po_id
 INNER JOIN dbo.maslocations l ON l.location_id = pi.consignee_id
@@ -253,16 +256,41 @@ WHERE a.po_id = @PoId AND (l.user_id = @UserId OR l.location_id IN (SELECT locat
                 if (!await reader.ReadAsync())
                     return NotFound(new { message = "Attachment not found for this purchase order." });
 
-                var dbPath = kind == "reagent"
-                    ? reader["filePathReagent"]?.ToString()?.Trim() ?? string.Empty
-                    : reader["filePathAccessories"]?.ToString()?.Trim() ?? string.Empty;
+                var isReagent = kind == "reagent";
+                var dbPath = reader[isReagent ? "filePathReagent" : "filePathAccessories"]?.ToString()?.Trim() ?? string.Empty;
+                var isMongo = string.Equals(
+                    reader[isReagent ? "isMongoReagent" : "isMongoAccessories"]?.ToString()?.Trim(), "Y",
+                    StringComparison.OrdinalIgnoreCase);
+                var tPriceId = reader["tPpriceid"] == DBNull.Value ? 0 : Convert.ToInt32(reader["tPpriceid"]);
 
                 if (string.IsNullOrWhiteSpace(dbPath))
                     return NotFound(new { message = "File not uploaded." });
 
+                // Legacy stores either "~/Upload_Reagent/<file>" (disk) or a bare file name with isMongo* = 'Y'
+                // (TenderItemsPriceGEM/AR → Mongo PriceRAFile / PriceAccFile keyed by tPpriceid).
                 var physicalPath = ResolveIndentPhysicalPath(dbPath, Path.GetFileName(dbPath));
-                if (physicalPath == null || !System.IO.File.Exists(physicalPath))
+                if (physicalPath == null)
+                {
+                    var typedFolder = Path.Combine(_emsRoleRoot, isReagent ? "Upload_Reagent" : "Upload_Accessories", Path.GetFileName(dbPath));
+                    if (System.IO.File.Exists(typedFolder))
+                        physicalPath = typedFolder;
+                }
+
+                if (physicalPath == null)
+                {
+                    if (isMongo && tPriceId > 0)
+                    {
+                        var mongoFile = await _mongoService.GetTenderPriceFile(tPriceId, isReagent);
+                        if (mongoFile?.ExtFile is { Length: > 0 })
+                        {
+                            var mongoName = string.IsNullOrWhiteSpace(mongoFile.ExtFileName)
+                                ? $"{kind}_{poId}.pdf"
+                                : Path.GetFileName(mongoFile.ExtFileName);
+                            return File(mongoFile.ExtFile, "application/pdf", mongoName);
+                        }
+                    }
                     return NotFound(new { message = "File not found on disk." });
+                }
 
                 var downloadName = Path.GetFileName(physicalPath);
                 if (string.IsNullOrWhiteSpace(downloadName))

@@ -9,6 +9,9 @@ namespace EMISAPIS.Helpers
         private readonly IMongoCollection<EelSubmissionFiles> _eelSubmissionCollection;
         private readonly IMongoCollection<PoReallocationFile> _reallocationCollection;
         private readonly IMongoCollection<PoAmendmentFile> _amendmentCollection;
+        // Legacy TenderItemsPriceGEM/AR: reagent & accessories lists, keyed by live_tender_price.tPpriceid (same shape as PORealloaction).
+        private readonly IMongoCollection<PoReallocationFile> _priceReagentCollection;
+        private readonly IMongoCollection<PoReallocationFile> _priceAccessoriesCollection;
 
         public MongoService()
         {
@@ -19,6 +22,8 @@ namespace EMISAPIS.Helpers
             _eelSubmissionCollection = database.GetCollection<EelSubmissionFiles>("masEELSubmission");
             _reallocationCollection = database.GetCollection<PoReallocationFile>("PORealloaction");
             _amendmentCollection = database.GetCollection<PoAmendmentFile>("POAmendment");
+            _priceReagentCollection = database.GetCollection<PoReallocationFile>("PriceRAFile");
+            _priceAccessoriesCollection = database.GetCollection<PoReallocationFile>("PriceAccFile");
         }
 
         public async Task<ReceiptItemFiles?> GetFile(int itemId)
@@ -154,6 +159,14 @@ namespace EMISAPIS.Helpers
         {
             return await _amendmentCollection
                 .Find(x => x.PoAmmdId == poAmmdId)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<PoReallocationFile?> GetTenderPriceFile(int tPriceId, bool reagent)
+        {
+            var collection = reagent ? _priceReagentCollection : _priceAccessoriesCollection;
+            return await collection
+                .Find(x => x.ExtensionId == tPriceId)
                 .FirstOrDefaultAsync();
         }
     }

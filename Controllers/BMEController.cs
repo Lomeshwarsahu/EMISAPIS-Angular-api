@@ -1,4 +1,5 @@
 ﻿using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -4524,12 +4525,11 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
 
             string connString = _config.GetConnectionString("DefaultConnection");
 
-            // 3. File Directory Path Configurations (Root/Uploads/Tenders)
-            string uploadFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Tenders");
-            if (!Directory.Exists(uploadFolder))
-            {
-                Directory.CreateDirectory(uploadFolder); // Folder nahi hai toh auto-create karega
-            }
+            // 3. Legacy folders (tender_details_PriceEntry): <LegacyRoot>/Upload_Reagent, <LegacyRoot>/Upload_Accessories.
+            //    DB keeps "~/Upload_Reagent/<file>" so DMEOrderController po-attachment can find it.
+            string legacyRoot = LegacyFileRoot.Resolve(_config, _env);
+            string reagentFolder = Path.Combine(legacyRoot, "Upload_Reagent");
+            string accessoriesFolder = Path.Combine(legacyRoot, "Upload_Accessories");
 
             // WebForms layout naming strategy strings
             string reagentFileName = "";
@@ -4540,8 +4540,10 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
                 // --- A. PROCESS REAGENT FILE UPLOAD ---
                 if (request.FileUploadReagent != null)
                 {
-                    reagentFileName = $"Reagent_{request.TPriceId}.pdf";
-                    string fullPath = Path.Combine(uploadFolder, reagentFileName);
+                    Directory.CreateDirectory(reagentFolder);
+                    string fileName = $"Reagent_{request.TPriceId}.pdf";
+                    reagentFileName = $"~/Upload_Reagent/{fileName}";
+                    string fullPath = Path.Combine(reagentFolder, fileName);
 
                     // Save file inside destination disk folder location
                     using (var stream = new FileStream(fullPath, FileMode.Create))
@@ -4553,8 +4555,10 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
                 // --- B. PROCESS ACCESSORIES FILE UPLOAD ---
                 if (request.FileUploadAccessories != null)
                 {
-                    accessoriesFileName = $"Acc_{request.TPriceId}.pdf";
-                    string fullPath = Path.Combine(uploadFolder, accessoriesFileName);
+                    Directory.CreateDirectory(accessoriesFolder);
+                    string fileName = $"Acc_{request.TPriceId}.pdf";
+                    accessoriesFileName = $"~/Upload_Accessories/{fileName}";
+                    string fullPath = Path.Combine(accessoriesFolder, fileName);
 
                     using (var stream = new FileStream(fullPath, FileMode.Create))
                     {
@@ -4569,9 +4573,9 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
                                fdate = @NegoDate, 
                                IsAccept = 'Y', 
                                CMC1 = @C1, CMC2 = @C2, CMC3 = @C3, CMC4 = @C4, CMC5 = @C5,
-                               isMongoReagent = CASE WHEN @ReagentFile <> '' THEN 'Y' ELSE isMongoReagent END,
+                               isMongoReagent = CASE WHEN @ReagentFile <> '' THEN NULL ELSE isMongoReagent END,
                                filePathReagent = CASE WHEN @ReagentFile <> '' THEN @ReagentFile ELSE filePathReagent END,
-                               isMongoAccessories = CASE WHEN @AccFile <> '' THEN 'Y' ELSE isMongoAccessories END,
+                               isMongoAccessories = CASE WHEN @AccFile <> '' THEN NULL ELSE isMongoAccessories END,
                                filePathAccessories = CASE WHEN @AccFile <> '' THEN @AccFile ELSE filePathAccessories END
                            WHERE tPpriceid = @Id";
 

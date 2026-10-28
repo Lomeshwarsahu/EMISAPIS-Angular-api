@@ -1,4 +1,5 @@
 using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Globalization;
@@ -21,7 +22,7 @@ namespace EMISAPIS.Controllers
 
             var configured = configuration["FileStorage:ComplaintPath"];
             _complaintFileRoot = string.IsNullOrWhiteSpace(configured)
-                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", "ComplainUploads"))
+                ? Path.GetFullPath(Path.Combine(LegacyFileRoot.Resolve(configuration, env), "ComplainUploads"))
                 : Path.GetFullPath(configured);
 
             Directory.CreateDirectory(_complaintFileRoot);

@@ -12,6 +12,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 // 1) Load `.env` into process environment
 EnvFileLoader.Load();
+// CreateBuilder already snapshotted env vars; re-add them so plain `.env` keys
+// (e.g. FileStorage__LegacyRoot) reach IConfiguration without a `${...}` placeholder.
+builder.Configuration.AddEnvironmentVariables();
 
 // 2) Expand `${ENV_VAR}` placeholders in appsettings*.json from environment / .env
 EnvPlaceholderResolver.Expand(builder.Configuration);

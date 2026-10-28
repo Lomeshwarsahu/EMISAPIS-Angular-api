@@ -25,7 +25,7 @@ namespace EMISAPIS.Controllers
 
             var configured = configuration["FileStorage:SpecificationPath"];
             _specificationRoot = string.IsNullOrWhiteSpace(configured)
-                ? Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "EMSRole", UploadFolderName))
+                ? Path.GetFullPath(Path.Combine(LegacyFileRoot.Resolve(configuration, env), UploadFolderName))
                 : Path.GetFullPath(configured);
 
             Directory.CreateDirectory(_specificationRoot);
