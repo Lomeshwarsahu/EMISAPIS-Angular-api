@@ -670,6 +670,449 @@ namespace EMISAPIS.Controllers
 
 
 
+
+        // ---------------- Legacy TenderCoverAObClaim.aspx: Claim-Object Preparation ----------------
+
+        // setItemName + ItemDetails
+        [HttpGet("GetObjClaimPrep/{tenderId}")]
+        public async Task<IActionResult> GetObjClaimPrep(int tenderId)
+        {
+            string headerSql = @"SELECT m.tender_id, m.tender_no, CONVERT(varchar(10), m.TENDER_DATE, 103) AS TENDER_DATE,
+                    CONVERT(varchar, m.cover_a, 103) AS covADT, m.csid,
+                    (CASE WHEN ms.CSID = '1' THEN 'Tender Live' WHEN ms.CSID = '2' THEN 'Cover A Opened' WHEN ms.CSID = '3' THEN 'Cover B Opened'
+                          WHEN ms.CSID = '4' THEN 'Under Demo' WHEN ms.CSID = '5' THEN 'Price Bid' ELSE 'Tender Cancelled' END) AS Status
+                FROM mascoverstatus ms INNER JOIN TENDERS m ON m.csid = ms.csid
+                WHERE m.tender_id = @Tid";
+            string gridSql = @"SELECT ms.SCHSTATUSDID, t.tender_id, mas.name, mas.supplier_id, ms.EMD,
+                    ISNULL(ReqEMDAMt, 0) AS ReqEMDAMt, ISNULL(submittedEMDAMT, 0) AS submittedEMDAMT, ms.REMARK,
+                    ISNULL(piitem.cntparticipated, 0) AS pitems, tel.Eligiblity AS TechEli, FEl.Eligiblity AS FinElig,
+                    ms.CovATechRemarksBefore_OBClM, ms.CovAFINRemarksBefore_OBClM, ms.IsObjUploadElig, ms.ObjUploadRemrks
+                FROM tenders t
+                INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
+                INNER JOIN masEligiblity tEl ON tEl.ID = ms.ISCovTechEli
+                INNER JOIN masEligiblity FEl ON FEl.ID = ms.IsCOVFinEli
+                INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
+                INNER JOIN MASDOCUMENTTYPE dt ON dt.dtypeid = ms.EMDDOCTYPE
+                LEFT OUTER JOIN (
+                    SELECT COUNT(ch.ITEMID) cntparticipated, sc.SCHEMEID, sc.SUPPLIERID FROM SCHEMESTATUSDETAILSCHILD ch
+                    INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+                    GROUP BY sc.SCHEMEID, sc.SUPPLIERID
+                ) piitem ON piitem.SCHEMEID = t.tender_id AND piitem.SUPPLIERID = mas.supplier_id
+                LEFT OUTER JOIN (
+                    SELECT SUPPLIERID, SUM(emd_amount) ReqEMDAMt, emd AS submittedEMDAMT, SCHEMEID FROM (
+                        SELECT ch.ITEMID, sc.SUPPLIERID, sc.EMD, ti.emd_amount, sc.SCHEMEID FROM SCHEMESTATUSDETAILSCHILD ch
+                        INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID
+                        INNER JOIN tender_items ti ON ti.item_id = ch.ITEMID AND ti.tender_id = sc.SCHEMEID
+                        WHERE sc.SCHEMEID = @Tid
+                    ) b GROUP BY SUPPLIERID, EMD, SCHEMEID
+                ) em ON em.SCHEMEID = t.tender_id AND em.SUPPLIERID = ms.SUPPLIERID
+                WHERE t.tender_id = @Tid
+                ORDER BY mas.name";
+            try
+            {
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                await conn.OpenAsync();
+
+                object? header = null;
+                using (SqlCommand h = new SqlCommand(headerSql, conn))
+                {
+                    h.Parameters.AddWithValue("@Tid", tenderId);
+                    using SqlDataReader r = await h.ExecuteReaderAsync();
+                    if (await r.ReadAsync())
+                    {
+                        header = new
+                        {
+                            TenderId = Convert.ToInt32(r["tender_id"]),
+                            TenderNo = r["tender_no"]?.ToString() ?? "",
+                            TenderDate = r["TENDER_DATE"]?.ToString() ?? "",
+                            CoverA = r["covADT"]?.ToString() ?? "",
+                            Status = r["Status"]?.ToString() ?? ""
+                        };
+                    }
+                }
+
+                var bidders = new List<object>();
+                using (SqlCommand g = new SqlCommand(gridSql, conn))
+                {
+                    g.Parameters.AddWithValue("@Tid", tenderId);
+                    using SqlDataReader r = await g.ExecuteReaderAsync();
+                    while (await r.ReadAsync())
+                    {
+                        bidders.Add(new
+                        {
+                            SchStatusDid = Convert.ToInt32(r["SCHSTATUSDID"]),
+                            TenderId = Convert.ToInt32(r["tender_id"]),
+                            SupplierId = Convert.ToInt32(r["supplier_id"]),
+                            SupplierName = r["name"]?.ToString() ?? "",
+                            ReqEmd = r["ReqEMDAMt"] == DBNull.Value ? 0m : Convert.ToDecimal(r["ReqEMDAMt"]),
+                            SubmittedEmd = r["submittedEMDAMT"] == DBNull.Value ? 0m : Convert.ToDecimal(r["submittedEMDAMT"]),
+                            TechEli = r["TechEli"]?.ToString() ?? "",
+                            TechRemarks = r["CovATechRemarksBefore_OBClM"]?.ToString() ?? "",
+                            FinEli = r["FinElig"]?.ToString() ?? "",
+                            FinRemarks = r["CovAFINRemarksBefore_OBClM"]?.ToString() ?? "",
+                            PItems = Convert.ToInt32(r["pitems"]),
+                            Remark = r["REMARK"]?.ToString() ?? "",
+                            ObjEligibility = r["IsObjUploadElig"]?.ToString() ?? "",
+                            ObjRemarks = r["ObjUploadRemrks"]?.ToString() ?? ""
+                        });
+                    }
+                }
+
+                int pending = 0;
+                using (SqlCommand p = new SqlCommand(@"SELECT COUNT(DISTINCT sc.SUPPLIERID) FROM masschemesstatusdetails sc
+                    INNER JOIN tenders t ON t.tender_id = sc.SCHEMEID WHERE t.tender_id = @Tid AND t.csid = 2 AND sc.IsObjUploadElig IS NULL", conn))
+                {
+                    p.Parameters.AddWithValue("@Tid", tenderId);
+                    pending = Convert.ToInt32(await p.ExecuteScalarAsync());
+                }
+
+                return Ok(new { Header = header, Bidders = bidders, PendingSuppliers = pending });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching claim objection data", error = ex.Message });
+            }
+        }
+
+        // btnaccepted_Click: writes the Object Claim Prep eligibility only (not the Cover A tech/finance decision)
+        [HttpPost("UpdateObjClaimPrep")]
+        public async Task<IActionResult> UpdateObjClaimPrep([FromBody] UpdateObjClaimPrepRequest request)
+        {
+            string eli = (request.Eligibility ?? "").Trim();
+            string remarks = (request.Remarks ?? "").Trim();
+            if (eli == "" || eli == "0") return BadRequest(new { message = "Please select Eligibility" });
+            if (eli == "N" && remarks == "") return BadRequest(new { message = "Please Enter Rejection Remark for Not Eligible" });
+            if (eli == "C" && remarks == "") return BadRequest(new { message = "Please Enter Clarification Remarks" });
+
+            try
+            {
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                using SqlCommand cmd = new SqlCommand(@"UPDATE masschemesstatusdetails SET IsObjUploadElig = @Eli, ObjUploadRemrks = @Rem
+                    WHERE SCHSTATUSDID = @Sid AND schemeid = @Tid", conn);
+                cmd.Parameters.AddWithValue("@Eli", eli);
+                cmd.Parameters.AddWithValue("@Rem", remarks);
+                cmd.Parameters.AddWithValue("@Sid", request.SchStatusDid);
+                cmd.Parameters.AddWithValue("@Tid", request.TenderId);
+                await conn.OpenAsync();
+                int rows = await cmd.ExecuteNonQueryAsync();
+                return rows > 0
+                    ? Ok(new { message = "Object Claim Updated Successfully" })
+                    : NotFound(new { message = "Record not found to update." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error updating object claim", error = ex.Message });
+            }
+        }
+
+        // btnFreezCovA_Click ("Freeze for Object Claim Upload"): tender goes to csid 7 with the objection window dates
+        [HttpPost("FreezeObjClaim")]
+        public async Task<IActionResult> FreezeObjClaim([FromBody] FreezeObjClaimRequest request)
+        {
+            if (request.TenderId <= 0) return BadRequest(new { message = "Select Tender No first" });
+            if (!DateTime.TryParse(request.StartDate, out DateTime start)) return BadRequest(new { message = "Enter Objection Claim Start Date" });
+            if (!DateTime.TryParse(request.EndDate, out DateTime end)) return BadRequest(new { message = "Enter Objection Claim End Date" });
+
+            try
+            {
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                await conn.OpenAsync();
+
+                using (SqlCommand p = new SqlCommand(@"SELECT COUNT(DISTINCT sc.SUPPLIERID) FROM masschemesstatusdetails sc
+                    INNER JOIN tenders t ON t.tender_id = sc.SCHEMEID WHERE t.tender_id = @Tid AND t.csid = 2 AND sc.IsObjUploadElig IS NULL", conn))
+                {
+                    p.Parameters.AddWithValue("@Tid", request.TenderId);
+                    if (Convert.ToInt32(await p.ExecuteScalarAsync()) > 0)
+                        return BadRequest(new { message = "Claim Objection Not Completed for all suppliers" });
+                }
+
+                DateTime? coverA = null;
+                using (SqlCommand c = new SqlCommand("SELECT cover_a FROM tenders WHERE tender_id = @Tid", conn))
+                {
+                    c.Parameters.AddWithValue("@Tid", request.TenderId);
+                    object? v = await c.ExecuteScalarAsync();
+                    if (v != null && v != DBNull.Value) coverA = Convert.ToDateTime(v).Date;
+                }
+                if (coverA == null || start.Date < coverA)
+                    return BadRequest(new { message = "Object Claim Start Date Should be Greater/Equal to Tender Cover A Date" });
+                if (end.Date <= start.Date)
+                    return BadRequest(new { message = "Object Claim End Date Should be Greater to Start Date" });
+
+                using SqlCommand u = new SqlCommand("UPDATE tenders SET csid = 7, ObjCStartDT = @S, ObjCEndDT = @E WHERE tender_id = @Tid", conn);
+                u.Parameters.AddWithValue("@S", start.Date);
+                u.Parameters.AddWithValue("@E", end.Date);
+                u.Parameters.AddWithValue("@Tid", request.TenderId);
+                await u.ExecuteNonQueryAsync();
+                return Ok(new { message = "Object Claim Uploaded Successfully" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Object Claim Not Saved Successfully", error = ex.Message });
+            }
+        }
+
+        // ---------------- Legacy TenderCoverAObClaimAfterB.aspx: Finalization of Cover B ----------------
+
+        // Tender.cs GetIncompletedCOVB: first "item-supplier" still waiting for an eligible/not eligible decision
+        private async Task<string> GetPendingCoverBAsync(SqlConnection conn, int tenderId)
+        {
+            string sql = @"SELECT TOP 1 mi.item_name + '-' + s.name AS suppliername
+                FROM masschemesstatusdetails ms
+                INNER JOIN schemestatusdetailschild msc ON msc.schemeid = ms.schemeid AND msc.supplierId = ms.supplierId
+                INNER JOIN massuppliers s ON s.supplier_id = ms.supplierid AND s.supplier_id = msc.supplierid
+                INNER JOIN masitems mi ON mi.item_id = msc.itemid
+                WHERE ms.schemeid = @Tid AND ms.ISELIGIBLE_B = 'Y' AND msc.FLAGCOB = 'Y' AND msc.flagcoc IS NULL";
+            using SqlCommand cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@Tid", tenderId);
+            object? v = await cmd.ExecuteScalarAsync();
+            return v == null || v == DBNull.Value ? "" : v.ToString() ?? "";
+        }
+
+        // setItemName + ItemDetails2 + GetIncompletedCOVB
+        [HttpGet("GetCoverBShortlisting/{tenderId}")]
+        public async Task<IActionResult> GetCoverBShortlisting(int tenderId)
+        {
+            string headerSql = @"SELECT tender_id, tender_no, CONVERT(varchar, TENDER_DATE, 103) AS tender_date,
+                    CONVERT(varchar, cover_b, 103) AS cover_b,
+                    (CASE WHEN csid = '1' THEN 'Tender Live' WHEN csid = '2' THEN 'Cover A Opened' WHEN csid = '3' THEN 'Cover B Opened'
+                          WHEN csid = '4' THEN 'Under Demonstration' WHEN csid = '5' THEN 'Price Bid Opened' ELSE 'Cancelled' END) AS Status
+                FROM tenders WHERE tender_id = @Tid";
+            string gridSql = @"SELECT s.supplier_id, COUNT(DISTINCT mi.item_Id) AS nositems, s.name AS suppliername,
+                    ms.schemeid AS tender_id, ms.SCHSTATUSDID AS schstatusdid, ISNULL(cntW, 0) AS cntworks, ISNULL(cntN, 0) AS cntN
+                FROM masschemesstatusdetails ms
+                INNER JOIN schemestatusdetailschild msc ON msc.schemeid = ms.schemeid AND msc.supplierId = ms.supplierId
+                INNER JOIN massuppliers s ON s.supplier_id = ms.supplierid AND s.supplier_id = msc.supplierid
+                INNER JOIN masitems mi ON mi.item_id = msc.itemid
+                LEFT OUTER JOIN (SELECT COUNT(itemid) AS cntW, schemeid, SUPPLIERID FROM schemestatusdetailschild
+                                 WHERE schemeid = @Tid AND flagcob = 'Y' AND FLAGCOC = 'Y' GROUP BY schemeid, SUPPLIERID) cF
+                    ON cF.schemeid = ms.schemeid AND cF.SUPPLIERID = s.supplier_id
+                LEFT OUTER JOIN (SELECT COUNT(itemid) AS cntN, schemeid, SUPPLIERID FROM schemestatusdetailschild
+                                 WHERE schemeid = @Tid AND flagcob = 'Y' AND FLAGCOC = 'N' GROUP BY schemeid, SUPPLIERID) cN
+                    ON cN.schemeid = ms.schemeid AND cN.SUPPLIERID = s.supplier_id
+                WHERE ms.schemeid = @Tid AND ms.ISELIGIBLE_B = 'Y' AND msc.FLAGCOB = 'Y'
+                GROUP BY s.name, s.supplier_id, ms.schemeid, ms.SCHSTATUSDID, cF.cntW, cN.cntN
+                ORDER BY s.name";
+            try
+            {
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                await conn.OpenAsync();
+
+                object? header = null;
+                using (SqlCommand h = new SqlCommand(headerSql, conn))
+                {
+                    h.Parameters.AddWithValue("@Tid", tenderId);
+                    using SqlDataReader r = await h.ExecuteReaderAsync();
+                    if (await r.ReadAsync())
+                    {
+                        header = new
+                        {
+                            TenderId = Convert.ToInt32(r["tender_id"]),
+                            TenderNo = r["tender_no"]?.ToString() ?? "",
+                            TenderDate = r["tender_date"]?.ToString() ?? "",
+                            CoverB = r["cover_b"]?.ToString() ?? "",
+                            Status = r["Status"]?.ToString() ?? ""
+                        };
+                    }
+                }
+
+                var bidders = new List<object>();
+                using (SqlCommand g = new SqlCommand(gridSql, conn))
+                {
+                    g.Parameters.AddWithValue("@Tid", tenderId);
+                    using SqlDataReader r = await g.ExecuteReaderAsync();
+                    while (await r.ReadAsync())
+                    {
+                        bidders.Add(new
+                        {
+                            SupplierId = Convert.ToInt32(r["supplier_id"]),
+                            SupplierName = r["suppliername"]?.ToString() ?? "",
+                            TenderId = Convert.ToInt32(r["tender_id"]),
+                            SchStatusDid = Convert.ToInt32(r["schstatusdid"]),
+                            EligibleItems = Convert.ToInt32(r["nositems"]),
+                            EligibleForC = Convert.ToInt32(r["cntworks"]),
+                            NotEligibleForC = Convert.ToInt32(r["cntN"])
+                        });
+                    }
+                }
+
+                string pending = await GetPendingCoverBAsync(conn, tenderId);
+                return Ok(new { Header = header, Bidders = bidders, Pending = pending });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching Cover B shortlisting", error = ex.Message });
+            }
+        }
+
+        // Tender.cs GetParticipatedItemsB (Item Action popup)
+        [HttpGet("GetCoverBItems")]
+        public async Task<IActionResult> GetCoverBItems([FromQuery] int tenderId, [FromQuery] int schStatusDid)
+        {
+            string sql = @"SELECT sc.ChildID, m.item_code_as_per_tender, m.item_name, sc.itemid, sc.FLAGCOB, sc.FLAGCOC,
+                    s.SUPPLIERID, sp.name, sc.RemarksA, sc.DemoRemarksID
+                FROM masschemesstatusdetails s
+                INNER JOIN schemestatusdetailschild sc ON sc.SCHSTATUSDID = s.SCHSTATUSDID
+                INNER JOIN masitems m ON m.item_id = sc.itemid
+                INNER JOIN massuppliers sp ON sp.supplier_id = s.SUPPLIERID
+                WHERE sc.FLAGCOB = 'Y' AND s.SCHEMEID = @Tid AND sc.SCHSTATUSDID = @Sid";
+            try
+            {
+                var list = new List<object>();
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                using SqlCommand cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@Tid", tenderId);
+                cmd.Parameters.AddWithValue("@Sid", schStatusDid);
+                await conn.OpenAsync();
+                using SqlDataReader r = await cmd.ExecuteReaderAsync();
+                while (await r.ReadAsync())
+                {
+                    list.Add(new
+                    {
+                        ChildId = Convert.ToInt32(r["ChildID"]),
+                        ItemId = Convert.ToInt32(r["itemid"]),
+                        SupplierId = Convert.ToInt32(r["SUPPLIERID"]),
+                        SupplierName = r["name"]?.ToString() ?? "",
+                        ItemCode = r["item_code_as_per_tender"]?.ToString() ?? "",
+                        ItemName = r["item_name"]?.ToString() ?? "",
+                        // Legacy GVDetail_RowDataBound: checked when FLAGCOC = 'Y'
+                        Eligible = (r["FLAGCOC"]?.ToString() ?? "") == "Y",
+                        Decided = r["FLAGCOC"] != DBNull.Value,
+                        DemoRemarksId = r["DemoRemarksID"] == DBNull.Value ? 0 : Convert.ToInt32(r["DemoRemarksID"]),
+                        RemarksA = r["RemarksA"]?.ToString() ?? ""
+                    });
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching items", error = ex.Message });
+            }
+        }
+
+        // BindEligiblity: masDemoEligiblity
+        [HttpGet("GetDemoEligibilityList")]
+        public async Task<IActionResult> GetDemoEligibilityList()
+        {
+            try
+            {
+                var list = new List<object>();
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                using SqlCommand cmd = new SqlCommand("SELECT ID, COVBRemarks FROM masDemoEligiblity ORDER BY ID", conn);
+                await conn.OpenAsync();
+                using SqlDataReader r = await cmd.ExecuteReaderAsync();
+                while (await r.ReadAsync())
+                {
+                    list.Add(new { Id = Convert.ToInt32(r["ID"]), Remarks = r["COVBRemarks"]?.ToString() ?? "" });
+                }
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching remarks", error = ex.Message });
+            }
+        }
+
+        // btnUpdateItems: checked = eligible for Cover C (flagcoc 'Y'), unchecked = not eligible ('N') with a remark
+        [HttpPost("UpdateCoverBItems")]
+        public async Task<IActionResult> UpdateCoverBItems([FromBody] UpdateCoverBItemsRequest request)
+        {
+            if (request == null || request.Items == null || request.Items.Count == 0)
+                return BadRequest(new { message = "Not Saved Successfully" });
+            if (request.Items.Any(i => !i.Eligible && i.DemoRemarksId <= 0))
+                return BadRequest(new { message = "Please Select Remarks for Not eligible" });
+
+            try
+            {
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                await conn.OpenAsync();
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    foreach (var i in request.Items)
+                    {
+                        using SqlCommand cmd = new SqlCommand(@"UPDATE schemestatusdetailschild SET DemoRemarksID = @Rid, flagcoc = @Flag
+                            WHERE supplierid = @Sid AND ChildID = @Cid AND itemid = @Iid", conn, trans);
+                        cmd.Parameters.AddWithValue("@Rid", i.Eligible ? (object)"0" : i.DemoRemarksId.ToString());
+                        cmd.Parameters.AddWithValue("@Flag", i.Eligible ? "Y" : "N");
+                        cmd.Parameters.AddWithValue("@Sid", i.SupplierId);
+                        cmd.Parameters.AddWithValue("@Cid", i.ChildId);
+                        cmd.Parameters.AddWithValue("@Iid", i.ItemId);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                    trans.Commit();
+                }
+
+                int eligible = request.Items.Count(i => i.Eligible);
+                int notEligible = request.Items.Count - eligible;
+                string pending = await GetPendingCoverBAsync(conn, request.TenderId);
+                return Ok(new { message = eligible + " nos Items Eligible and " + notEligible + " nos Items Not Eligible", pending });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving items", error = ex.Message });
+            }
+        }
+
+        // btnFreezCovA_Click ("Freeze Cover B Shortlisting"): demo PDF -> Mongo DemoFile, tender to Price Bid (csid 5), cover_c = price bid date
+        [HttpPost("FreezeCoverB")]
+        public async Task<IActionResult> FreezeCoverB([FromForm] FreezeCoverBRequest request)
+        {
+            if (request.TenderId <= 0) return BadRequest(new { message = "Select Tender No first" });
+            if (request.File == null || request.File.Length == 0) return BadRequest(new { message = "Please Upload Demo for Bulk" });
+            if (!string.Equals(Path.GetExtension(request.File.FileName), ".pdf", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Please Choose PDF File for DEMO" });
+            if (request.File.Length > 1000000) return BadRequest(new { message = "File More than 1 MB." });
+            if (!DateTime.TryParse(request.PriceBidDate, out DateTime priceBidDate))
+                return BadRequest(new { message = "COVER B Shorlisted Not Saved,Please Check Shortlist Items " });
+
+            try
+            {
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                await conn.OpenAsync();
+
+                string pending = await GetPendingCoverBAsync(conn, request.TenderId);
+                if (pending != "") return BadRequest(new { message = "Pending Cover B for item " + pending });
+
+                DateTime? coverB = null;
+                using (SqlCommand c = new SqlCommand("SELECT cover_b FROM tenders WHERE tender_id = @Tid", conn))
+                {
+                    c.Parameters.AddWithValue("@Tid", request.TenderId);
+                    object? v = await c.ExecuteScalarAsync();
+                    if (v != null && v != DBNull.Value) coverB = Convert.ToDateTime(v).Date;
+                }
+                if (coverB == null || priceBidDate.Date < coverB)
+                    return BadRequest(new { message = "Price Bid Date Should be Greater/Equal to Tender Cover B Date" });
+
+                string fileName = "Bulk_E" + request.TenderId;
+                using (var ms = new MemoryStream())
+                {
+                    await request.File.CopyToAsync(ms);
+                    await new EMISAPIS.Helpers.MongoService().InsertDemoFile(request.TenderId, fileName, ms.ToArray(), ".pdf");
+                }
+
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    using (SqlCommand u = new SqlCommand("UPDATE tenders SET csid = 5, cover_c = @Dt WHERE tender_id = @Tid", conn, trans))
+                    {
+                        u.Parameters.AddWithValue("@Dt", priceBidDate.Date);
+                        u.Parameters.AddWithValue("@Tid", request.TenderId);
+                        await u.ExecuteNonQueryAsync();
+                    }
+                    using (SqlCommand u = new SqlCommand("UPDATE schemestatusdetailschild SET DemoFile = @F WHERE FLAGCOC IS NOT NULL AND SCHEMEID = @Tid", conn, trans))
+                    {
+                        u.Parameters.AddWithValue("@F", fileName);
+                        u.Parameters.AddWithValue("@Tid", request.TenderId);
+                        await u.ExecuteNonQueryAsync();
+                    }
+                    trans.Commit();
+                }
+                return Ok(new { message = "COVER B Shorlisted Successfully,Please Open Price bid from e-Proc" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error freezing Cover B", error = ex.Message });
+            }
+        }
+
     }
 
 

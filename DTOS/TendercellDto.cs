@@ -134,4 +134,43 @@
         public List<UpdateItemModel> Items { get; set; }
     }
 
+    // Legacy TenderCoverAObClaimAfterB.aspx (Finalization of Cover B)
+    public class CoverBItemUpdate
+    {
+        public int ChildId { get; set; }
+        public int ItemId { get; set; }
+        public int SupplierId { get; set; }
+        public bool Eligible { get; set; }
+        public int DemoRemarksId { get; set; }
+    }
+
+    public class UpdateCoverBItemsRequest
+    {
+        public int TenderId { get; set; }
+        public List<CoverBItemUpdate> Items { get; set; } = new List<CoverBItemUpdate>();
+    }
+
+    public class FreezeCoverBRequest
+    {
+        public int TenderId { get; set; }
+        public string PriceBidDate { get; set; } = string.Empty;
+        public IFormFile? File { get; set; }
+    }
+
+    // Legacy TenderCoverAObClaim.aspx (Claim-Object Preparation)
+    public class UpdateObjClaimPrepRequest
+    {
+        public int TenderId { get; set; }
+        public int SchStatusDid { get; set; }
+        public string Eligibility { get; set; } = string.Empty;
+        public string? Remarks { get; set; }
+    }
+
+    public class FreezeObjClaimRequest
+    {
+        public int TenderId { get; set; }
+        public string StartDate { get; set; } = string.Empty;
+        public string EndDate { get; set; } = string.Empty;
+    }
+
 }

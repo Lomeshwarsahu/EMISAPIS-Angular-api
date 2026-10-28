@@ -12,6 +12,8 @@ namespace EMISAPIS.Helpers
         // Legacy TenderItemsPriceGEM/AR: reagent & accessories lists, keyed by live_tender_price.tPpriceid (same shape as PORealloaction).
         private readonly IMongoCollection<PoReallocationFile> _priceReagentCollection;
         private readonly IMongoCollection<PoReallocationFile> _priceAccessoriesCollection;
+        // Legacy TenderCoverAObClaimAfterB (Freeze Cover B): "Demo for Bulk" PDF, keyed by tender_id (same shape as PORealloaction).
+        private readonly IMongoCollection<PoReallocationFile> _demoFileCollection;
 
         public MongoService()
         {
@@ -24,6 +26,7 @@ namespace EMISAPIS.Helpers
             _amendmentCollection = database.GetCollection<PoAmendmentFile>("POAmendment");
             _priceReagentCollection = database.GetCollection<PoReallocationFile>("PriceRAFile");
             _priceAccessoriesCollection = database.GetCollection<PoReallocationFile>("PriceAccFile");
+            _demoFileCollection = database.GetCollection<PoReallocationFile>("DemoFile");
         }
 
         public async Task<ReceiptItemFiles?> GetFile(int itemId)
@@ -117,6 +120,18 @@ namespace EMISAPIS.Helpers
             return await _eelSubmissionCollection
                 .Find(x => x.EELID == eelId)
                 .FirstOrDefaultAsync();
+        }
+
+        // Legacy MongoDB_Class.Insert_DEMO_File: a new document per upload
+        public async Task InsertDemoFile(int tenderId, string fileName, byte[] fileBytes, string ext = ".pdf")
+        {
+            await _demoFileCollection.InsertOneAsync(new PoReallocationFile
+            {
+                ExtensionId = tenderId,
+                ExtFileName = fileName,
+                ExtFile = fileBytes,
+                Ext = ext,
+            });
         }
 
         public async Task UpsertReallocationFile(int extensionId, byte[] fileBytes, string ext = ".pdf")

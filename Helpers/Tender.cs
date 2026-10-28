@@ -29,7 +29,8 @@ public class Tender
         if (undOBClaim == "Under Prep")
         {
             strcsid = " and csid in (2)";
-            whUnderObjectClaim = " and sc.ISCovTechEli is not null ";
+            // Legacy Tender.cs: both technical and finance Cover A evaluation must be done
+            whUnderObjectClaim = " and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null ";
         }
         else if (undOBClaim == "Under Obj")
         {

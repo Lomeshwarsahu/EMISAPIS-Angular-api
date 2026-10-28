@@ -455,9 +455,9 @@ namespace EMISAPIS.DTOS
     {
         public int TenderId { get; set; }
         public string TenderNo { get; set; }
-        public int WarrantyYear { get; set; }
-        public int DomesticDays { get; set; }
-        public int ImportDays { get; set; }
+        public int? WarrantyYear { get; set; }
+        public int? DomesticDays { get; set; }
+        public int? ImportDays { get; set; }
         public int Csid { get; set; } // ddlStatus.SelectedValue
         public string TenderRemarks { get; set; }
         public string TenderDescription { get; set; }
@@ -559,6 +559,45 @@ namespace EMISAPIS.DTOS
         public int ItemId { get; set; }
         public decimal TenderQuantity { get; set; }
         public decimal EmdAmount { get; set; }
+    }
+
+    // Legacy AddExcel.aspx (Sheet1: col A = item code, col C = EMD, col D = tender qty)
+    public class TenderExcelItemRow
+    {
+        public string ItemCode { get; set; } = string.Empty;
+        public decimal EmdAmount { get; set; }
+        public decimal TenderQuantity { get; set; }
+    }
+
+    public class AddItemsFromExcelDto
+    {
+        public int TenderId { get; set; }
+        public List<TenderExcelItemRow> Rows { get; set; } = new List<TenderExcelItemRow>();
+    }
+
+    public class TenderActionChecksDto
+    {
+        public int TenderId { get; set; }
+        public int CsId { get; set; }
+        public bool HasBidder { get; set; }
+        public bool CoverAItemsPending { get; set; }
+    }
+
+    public class TenderStatusRemarkDto
+    {
+        public int TenderId { get; set; }
+        public string TenderNo { get; set; } = string.Empty;
+        public int TsId { get; set; }
+        public string TenderStatus { get; set; } = string.Empty;
+        public string TenderRemark { get; set; } = string.Empty;
+        public string EntryDate { get; set; } = string.Empty;
+    }
+
+    public class SaveTenderStatusRemarkDto
+    {
+        public int TenderId { get; set; }
+        public int TsId { get; set; }
+        public string Remarks { get; set; } = string.Empty;
     }
 
   
@@ -719,16 +758,16 @@ namespace EMISAPIS.DTOS
     public class UpdateLevyRequest
     {
         public string TenderId { get; set; }
-        public int CancellationDays { get; set; }
-        public decimal CancellationPercentage { get; set; }
-        public decimal PenaltyPercent120 { get; set; } // Penalty for 121-180 days
-        public decimal PenaltyPercent { get; set; }    // Penalty for >60 & <120
+        public int? CancellationDays { get; set; }
+        public decimal? CancellationPercentage { get; set; }
+        public decimal? PenaltyPercent120 { get; set; } // Penalty for 121-180 days
+        public decimal? PenaltyPercent { get; set; }    // Penalty for >60 & <120
         public string PenaltyType { get; set; }        // Days or Week
         public string ReleaseType { get; set; }        // Month, Week, NR
         public string PerformanceReq { get; set; }     // Yes, No, NA
-        public decimal ReleaseValue { get; set; }      // Release Duration
-        public decimal LogoCharges { get; set; }
-        public decimal LogoChargesUpper { get; set; }
+        public decimal? ReleaseValue { get; set; }      // Release Duration
+        public decimal? LogoCharges { get; set; }
+        public decimal? LogoChargesUpper { get; set; }
         public string LeavyEntryDt { get; set; }       // For condition check
         public string PerfEntryDt { get; set; }        // For condition check
     }
@@ -884,6 +923,14 @@ namespace EMISAPIS.DTOS
     //    public IFormFile? FileUploadReagent { get; set; }
     //    public IFormFile? FileUploadAccessories { get; set; }
     //}
+    public class AddLiveTenderPriceRequest
+    {
+        public int TenderItemId { get; set; }
+        public int SupplierId { get; set; }
+        public decimal? BasicRate { get; set; }
+        public decimal? Gst { get; set; }
+    }
+
     public class TenderAcceptRequestDto
     {
         public int TPriceId { get; set; }
