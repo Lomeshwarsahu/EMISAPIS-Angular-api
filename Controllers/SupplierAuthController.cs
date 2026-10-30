@@ -2154,7 +2154,9 @@ WHERE Issue_id = @IssueId AND supplierid = @SupplierId";
 
             try
             {
-                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                // Suppliers see only their own POs; HO staff (PO Cell dispatch pages) may open any PO's report.
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId)
+                    ?? await ResolvePoSupplierForStaffUserAsync(userId, poId);
                 if (supplierId == null)
                     return NotFound(new { message = "Supplier user not found." });
 
@@ -5398,6 +5400,25 @@ WHERE SCHEMEID = @TenderId AND SUPPLIERID = @SupplierId";
 
             object? participantResult = await participantCmd.ExecuteScalarAsync();
             return participantResult != null && participantResult != DBNull.Value;
+        }
+
+        /// <summary>For a non-supplier (HO) user, returns the supplier of the PO; null when the user is unknown or a supplier.</summary>
+        private async Task<int?> ResolvePoSupplierForStaffUserAsync(int userId, int poId)
+        {
+            const string sql = @"
+SELECT p.supplier_id
+FROM purchase_order p
+WHERE p.po_id = @PoId
+  AND EXISTS (SELECT 1 FROM users u WHERE u.user_id = @UserId AND ISNULL(u.user_type, '') <> 'SUP')";
+
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@PoId", poId);
+            cmd.Parameters.AddWithValue("@UserId", userId);
+
+            object? result = await cmd.ExecuteScalarAsync();
+            return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
         }
 
         private static async Task<bool> PoBelongsToSupplierAsync(SqlConnection con, int poId, int supplierId)
