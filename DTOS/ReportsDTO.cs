@@ -458,15 +458,28 @@ namespace EMISAPIS.DTOS
 
     public class DispatchDetailDto
     {
-        public int? dispatch_id { get; set; }
+        public int? po_id { get; set; }
         public string? po_no { get; set; }
         public string? po_date { get; set; }
-        public string? supplier_name { get; set; }
         public string? item_name { get; set; }
-        public decimal? dispatched_qty { get; set; }
+        public string? item_code { get; set; }
+        public decimal? quantity { get; set; }
+        public int? consignee_id { get; set; }
+        public string? consignee { get; set; }
+        public string? location { get; set; }
+        public decimal? unit_price { get; set; }
+        public decimal? total_price { get; set; }
+        public List<DispatchBatchDto> dispatchBatches { get; set; } = new();
+    }
+
+    public class DispatchBatchDto
+    {
+        public int? issue_id { get; set; }
+        public string? tentative_date { get; set; }
+        public string? supply_status { get; set; }
         public string? dispatch_date { get; set; }
-        public string? chalan_no { get; set; }
-        public string? location_name { get; set; }
+        public string? dispatch_no { get; set; }
+        public decimal? qty { get; set; }
     }
 
     public class ReportIndentPoDetailDto

@@ -2090,10 +2090,13 @@ order by m.location_name";
 
         // GET: api/Reports/po-summary-consignee-ho?financialYearId=19&directorateId=5
         [HttpGet("po-summary-consignee-ho")]
-        public async Task<IActionResult> GetPOSummaryConsigneeHO([FromQuery] int financialYearId, [FromQuery] int directorateId = 0)
+        public async Task<IActionResult> GetPOSummaryConsigneeHO([FromQuery] int? financialYearId, [FromQuery] int? directorateId)
         {
+            // "All" directorate/year arrive as blank query values; treat them as 0 instead of failing model binding.
+            int yearId = financialYearId ?? 0;
+            int dirId = directorateId ?? 0;
             List<POSummaryConsigneeHoDto> list = new List<POSummaryConsigneeHoDto>();
-            string dirFilter = directorateId > 0 ? " and p.directorate_id = @DirectorateId " : "";
+            string dirFilter = dirId > 0 ? " and p.directorate_id = @DirectorateId " : "";
 
             string query = $@"
 select distinct p.outward_no, case when isnull(p.potype, 'NP') = 'NP' then 'Normal PO' else 'Covid Po' end as potype,
@@ -2131,8 +2134,8 @@ order by p.po_date desc";
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
             using SqlCommand cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@FinancialYearId", financialYearId);
-            if (directorateId > 0) cmd.Parameters.AddWithValue("@DirectorateId", directorateId);
+            cmd.Parameters.AddWithValue("@FinancialYearId", yearId);
+            if (dirId > 0) cmd.Parameters.AddWithValue("@DirectorateId", dirId);
 
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -2308,50 +2311,122 @@ order by d.DBStart_Name_En, l.location_name";
             return Ok(list);
         }
 
-        // GET: api/Reports/dispatch-detail?directorateId=5&userId=0
+        // GET: api/Reports/dispatch-detail?itemId=0&directorateId=0&userId=0
+        // Reports/DispatchDetail.aspx — PO item per consignee with its supplier dispatch batches.
         [HttpGet("dispatch-detail")]
-        public async Task<IActionResult> GetDispatchDetail([FromQuery] int directorateId = 5, [FromQuery] int userId = 0)
+        public async Task<IActionResult> GetDispatchDetail([FromQuery] int? itemId, [FromQuery] int? directorateId, [FromQuery] int? userId)
         {
-            List<DispatchDetailDto> list = new List<DispatchDetailDto>();
-            string query = @"
-select sd.Issue_id as dispatch_id, p.po_no, convert(varchar, p.po_date, 103) as po_date,
-       sp.name as supplier_name, m.item_name, sd.Supplyqty as dispatched_qty,
-       convert(varchar, sd.DispatchedDate, 103) as dispatch_date, sd.ChallanNo as chalan_no,
-       l.location_name
-from SupplierDispatch sd
-inner join purchase_order p on p.po_id = sd.po_id
-inner join massuppliers sp on sp.supplier_id = p.supplier_id
-inner join maslocations l on l.location_id = sd.location_id
-inner join po_items pi on pi.po_id = p.po_id and pi.consignee_id = sd.location_id
-inner join masitems m on m.item_id = pi.item_id
-where (@DirectorateId = 0 or p.directorate_id = @DirectorateId)
-  and (@UserId = 0 or l.user_id = @UserId)
-order by sd.DispatchedDate desc";
+            int item = itemId ?? 0;
+            int dir = directorateId ?? 0;
+            int user = userId ?? 0;
 
-            using SqlConnection con = new SqlConnection(_connectionString);
-            await con.OpenAsync();
-            using SqlCommand cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@DirectorateId", directorateId);
-            cmd.Parameters.AddWithValue("@UserId", userId);
+            string filter = @"
+where (@ItemId = 0 or a.item_id = @ItemId)
+  and (@DirectorateId = 0 or c1.authority = @DirectorateId)
+  and (@UserId = 0 or u.user_id = @UserId)";
 
-            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            string rowQuery = $@"
+select distinct a.po_id, a.po_item_id, a.item_id, a.quantity, a.consignee_id,
+       c.item_name, c.item_code_as_per_tender as item_code, x.single_unit_price,
+       c1.location_name, x.single_unit_price * a.quantity as Total_Price,
+       convert(varchar, b.po_date, 103) as po_date, b.PO_NO
+from po_items a
+inner join purchase_order b on a.po_id = b.po_id
+left outer join maslocations c1 on c1.location_id = a.consignee_id
+left outer join masitems c on a.item_id = c.item_id
+left outer join users u on u.location_id = c1.location_id
+left outer join (
+    select D.ITEM_ID, F.TENDER_ID, F.SUPPLIER_ID, D.single_unit_price
+    from AWARD_OF_CONTRACT F
+    inner join CONTRACT_ITEMS D on D.AWARD_OF_CONTRACT_ID = F.AWARD_OF_CONTRACT_ID
+) x on x.item_id = a.ITEM_ID and x.TENDER_ID = b.TENDER_ID and x.SUPPLIER_ID = b.SUPPLIER_ID
+{filter}
+order by c1.location_name";
+
+            string batchQuery = $@"
+select d.Issue_id, convert(varchar, d.Tentative_Sdate, 103) as Tentative_Sdate,
+       convert(varchar, d.dispatch_date, 103) as dispatch_date,
+       case when d.status = 'I' then 'Incomplete' else 'Complete' end as SupplyStatusN,
+       d.dispatch_no, sum(i.Supplyqty) as quantity, d.po_id, d.location_id
+from SupplierDispatch d
+left outer join Issue_item_details i on d.Issue_id = i.Issue_id
+where exists (
+    select 1 from po_items a
+    left outer join maslocations c1 on c1.location_id = a.consignee_id
+    left outer join users u on u.location_id = c1.location_id
+    {filter}
+      and a.po_id = d.po_id and a.consignee_id = d.location_id
+)
+group by d.Issue_id, d.dispatch_date, d.Tentative_Sdate, d.status, d.dispatch_no, d.po_id, d.location_id";
+
+            try
             {
-                list.Add(new DispatchDetailDto
-                {
-                    dispatch_id = reader["dispatch_id"] != DBNull.Value ? Convert.ToInt32(reader["dispatch_id"]) : (int?)null,
-                    po_no = reader["po_no"]?.ToString(),
-                    po_date = reader["po_date"]?.ToString(),
-                    supplier_name = reader["supplier_name"]?.ToString(),
-                    item_name = reader["item_name"]?.ToString(),
-                    dispatched_qty = reader["dispatched_qty"] != DBNull.Value ? Convert.ToDecimal(reader["dispatched_qty"]) : 0,
-                    dispatch_date = reader["dispatch_date"]?.ToString(),
-                    chalan_no = reader["chalan_no"]?.ToString(),
-                    location_name = reader["location_name"]?.ToString()
-                });
-            }
+                var list = new List<DispatchDetailDto>();
+                using SqlConnection con = new SqlConnection(_connectionString);
+                await con.OpenAsync();
 
-            return Ok(list);
+                using (SqlCommand cmd = new SqlCommand(rowQuery, con))
+                {
+                    cmd.Parameters.AddWithValue("@ItemId", item);
+                    cmd.Parameters.AddWithValue("@DirectorateId", dir);
+                    cmd.Parameters.AddWithValue("@UserId", user);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        list.Add(new DispatchDetailDto
+                        {
+                            po_id = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : (int?)null,
+                            po_no = reader["PO_NO"]?.ToString(),
+                            po_date = reader["po_date"]?.ToString(),
+                            item_name = reader["item_name"]?.ToString(),
+                            item_code = reader["item_code"]?.ToString(),
+                            quantity = reader["quantity"] != DBNull.Value ? Convert.ToDecimal(reader["quantity"]) : 0,
+                            consignee_id = reader["consignee_id"] != DBNull.Value ? Convert.ToInt32(reader["consignee_id"]) : (int?)null,
+                            consignee = reader["location_name"]?.ToString(),
+                            location = reader["location_name"]?.ToString(),
+                            unit_price = reader["single_unit_price"] != DBNull.Value ? Convert.ToDecimal(reader["single_unit_price"]) : (decimal?)null,
+                            total_price = reader["Total_Price"] != DBNull.Value ? Convert.ToDecimal(reader["Total_Price"]) : (decimal?)null
+                        });
+                    }
+                }
+
+                var batches = new Dictionary<(int, int), List<DispatchBatchDto>>();
+                using (SqlCommand cmd = new SqlCommand(batchQuery, con))
+                {
+                    cmd.Parameters.AddWithValue("@ItemId", item);
+                    cmd.Parameters.AddWithValue("@DirectorateId", dir);
+                    cmd.Parameters.AddWithValue("@UserId", user);
+                    using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        var key = (Convert.ToInt32(reader["po_id"]), Convert.ToInt32(reader["location_id"]));
+                        if (!batches.TryGetValue(key, out var group))
+                            batches[key] = group = new List<DispatchBatchDto>();
+                        group.Add(new DispatchBatchDto
+                        {
+                            issue_id = reader["Issue_id"] != DBNull.Value ? Convert.ToInt32(reader["Issue_id"]) : (int?)null,
+                            tentative_date = reader["Tentative_Sdate"]?.ToString(),
+                            supply_status = reader["SupplyStatusN"]?.ToString(),
+                            dispatch_date = reader["dispatch_date"]?.ToString(),
+                            dispatch_no = reader["dispatch_no"]?.ToString(),
+                            qty = reader["quantity"] != DBNull.Value ? Convert.ToDecimal(reader["quantity"]) : 0
+                        });
+                    }
+                }
+
+                foreach (var row in list)
+                {
+                    if (row.po_id.HasValue && row.consignee_id.HasValue
+                        && batches.TryGetValue((row.po_id.Value, row.consignee_id.Value), out var group))
+                        row.dispatchBatches = group;
+                }
+
+                return Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error loading dispatch detail.", error = ex.Message });
+            }
         }
 
         // GET: api/Reports/report-indent-po-details?financialYearId=19&directorateId=5&itemCode=E01

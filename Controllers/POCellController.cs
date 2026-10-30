@@ -2496,6 +2496,47 @@ namespace EMISAPIS.Controllers
                 return StatusCode(500, new { message = "Error streaming terms and conditions data grids.", error = ex.Message });
             }
         }
+        // Tender/terms_conditions.aspx "Add" / "Edit" (AddAndEditTermCondition.aspx) — insert when TermConditionId is 0, else update.
+        [HttpPost("SaveTermCondition")]
+        public async Task<IActionResult> SaveTermCondition([FromBody] SaveTermConditionRequest request)
+        {
+            string text = request?.TermCondition?.Trim() ?? string.Empty;
+            if (request == null || request.TenderId <= 0)
+                return BadRequest(new { message = "Please select tender." });
+            if (string.IsNullOrEmpty(text))
+                return BadRequest(new { message = "Term and condition can't be empty." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            string sqlQuery = request.TermConditionId > 0
+                ? @"UPDATE terms_conditions SET term_condition = @TermCondition, tender_id = @TenderId
+                    WHERE term_condition_id = @TermConditionId"
+                : @"INSERT INTO terms_conditions (term_condition, tender_id, NewtermCondition)
+                    VALUES (@TermCondition, @TenderId, 'N')";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                using (SqlCommand cmd = new SqlCommand(sqlQuery, conn))
+                {
+                    cmd.Parameters.AddWithValue("@TermCondition", text);
+                    cmd.Parameters.AddWithValue("@TenderId", request.TenderId);
+                    if (request.TermConditionId > 0)
+                        cmd.Parameters.AddWithValue("@TermConditionId", request.TermConditionId);
+
+                    await conn.OpenAsync();
+                    int rows = await cmd.ExecuteNonQueryAsync();
+                    if (rows == 0)
+                        return NotFound(new { message = "Term and condition not found." });
+                }
+
+                return Ok(new { message = request.TermConditionId > 0 ? "Updated successfully." : "Saved successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error saving term and condition.", error = ex.Message });
+            }
+        }
+
         [HttpGet("GetTenderSummaryReport")]
         public async Task<IActionResult> GetTenderSummaryReport()
         {

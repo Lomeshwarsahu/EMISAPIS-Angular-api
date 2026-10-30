@@ -396,6 +396,12 @@ public class SavedDataGridDto
         public int TenderId { get; set; } // tc.tender_id
         public string TenderNo { get; set; } = string.Empty; // t.tender_no
     }
+    public class SaveTermConditionRequest
+    {
+        public int TermConditionId { get; set; }
+        public int TenderId { get; set; }
+        public string? TermCondition { get; set; }
+    }
     public class TenderSummaryRdlcDto
     {
         public string TenderNo { get; set; } = string.Empty;
