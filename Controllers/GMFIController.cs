@@ -5142,6 +5142,93 @@ GROUP BY
             }
         }
 
+        // GET: api/GMFI/GetMainHeadById/0 returns all main heads; any other id returns that row.
+        [HttpGet("GetMainHeadById/{id:int}")]
+        public async Task<IActionResult> GetMainHeadById(int id)
+        {
+            string connString = _config.GetConnectionString("DefaultConnection");
+            var list = new List<MainHeadResponseDto>();
+            string selectSql = @"SELECT MHID, MainHead_Eng, MainHead_Hindi, IsActive, CreatedDate FROM Mas_MainHead
+                                 WHERE (@MHID = 0 OR MHID = @MHID) ORDER BY MHID DESC";
+            try
+            {
+                using SqlConnection conn = new SqlConnection(connString);
+                await conn.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(selectSql, conn);
+                cmd.Parameters.AddWithValue("@MHID", id);
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new MainHeadResponseDto
+                    {
+                        MHID = Convert.ToInt32(reader["MHID"]),
+                        MainHead_Eng = reader["MainHead_Eng"] != DBNull.Value ? reader["MainHead_Eng"].ToString() : string.Empty,
+                        MainHead_Hindi = reader["MainHead_Hindi"] != DBNull.Value ? reader["MainHead_Hindi"].ToString() : string.Empty,
+                        IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
+                        CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
+                    });
+                }
+
+                if (id == 0) return Ok(list);
+                return list.Count > 0 ? Ok(list[0]) : NotFound(new { message = "Main head not found." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Database fetch failed.", error = ex.Message });
+            }
+        }
+
+        [HttpPut("UpdateMainHead")]
+        public async Task<IActionResult> UpdateMainHead([FromBody] UpdateMainHeadDto dto)
+        {
+            if (dto == null || dto.MHID <= 0 || string.IsNullOrWhiteSpace(dto.MainHead_Eng))
+                return BadRequest(new { message = "MHID and MainHead English name are required." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            string updateSql = @"UPDATE Mas_MainHead SET MainHead_Eng = @Eng, MainHead_Hindi = @Hindi, IsActive = @IsActive
+                                 WHERE MHID = @MHID";
+            try
+            {
+                using SqlConnection conn = new SqlConnection(connString);
+                await conn.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(updateSql, conn);
+                cmd.Parameters.AddWithValue("@Eng", dto.MainHead_Eng.Trim());
+                cmd.Parameters.AddWithValue("@Hindi", (dto.MainHead_Hindi ?? string.Empty).Trim());
+                cmd.Parameters.AddWithValue("@IsActive", string.IsNullOrWhiteSpace(dto.IsActive) ? "Active" : dto.IsActive.Trim());
+                cmd.Parameters.AddWithValue("@MHID", dto.MHID);
+                int rows = await cmd.ExecuteNonQueryAsync();
+                return rows > 0
+                    ? Ok(new { message = "Main Head Updated Successfully.", mhid = dto.MHID })
+                    : NotFound(new { message = "Main head not found." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Database update failed.", error = ex.Message });
+            }
+        }
+
+        // Proxies Google Input Tools (English -> Hindi) so the browser avoids CORS; the page expects the raw response array.
+        [HttpGet("Transliterate")]
+        public async Task<IActionResult> Transliterate([FromQuery] string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return BadRequest(new { message = "Text is required." });
+
+            try
+            {
+                var client = HttpContext.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(10);
+                string url = "https://inputtools.google.com/request?itc=hi-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&text="
+                             + Uri.EscapeDataString(text.Trim());
+                string body = await client.GetStringAsync(url);
+                return Content(body, "application/json");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(502, new { message = "Transliteration service unavailable.", error = ex.Message });
+            }
+        }
+
         //new SubfundHead entry
 
         // Step 2: POST Method

@@ -648,6 +648,11 @@ namespace EMISAPIS.DTOS
     }
 
 
+    public class UpdateMainHeadDto : MainHeadDto
+    {
+        public int MHID { get; set; }
+    }
+
     public class MainHeadResponseDto
     {
         public int MHID { get; set; }
