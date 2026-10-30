@@ -5142,6 +5142,81 @@ GROUP BY
             }
         }
 
+        // Payment/Sanctions.aspx (kind TP) and Payment/PSanctions.aspx (kind P, site-not-ready invoices):
+        // POs whose verified invoices are waiting for sanction. poType NP / CP / All.
+        [HttpGet("GetPendingSanctions")]
+        public async Task<IActionResult> GetPendingSanctions([FromQuery] string? kind, [FromQuery] string? poType)
+        {
+            bool partial = string.Equals(kind, "P", StringComparison.OrdinalIgnoreCase);
+            string invoiceFilter = partial
+                ? "mp.PType in ('P') and b.SANCTIONID is not null and b.SiteNotFlag = 'Y' group by po_id, mp.PType, SANCTIONIDP"
+                : "mp.PType in ('TP') and b.SANCTIONID is not null group by po_id, mp.PType, b.SANCTIONID";
+            string sanctionCol = partial ? "isnull(b.SANCTIONIDP, 0)" : "b.SANCTIONID";
+            string potypeFilter = (poType ?? "All").ToUpperInvariant() switch
+            {
+                "NP" => " and isnull(p.potype, 'NP') = 'NP'",
+                "CP" => " and isnull(p.potype, 'NP') = 'CP'",
+                _ => string.Empty,
+            };
+
+            string sql = $@"
+select p.po_id, t.tender_no, p.outward_no + '/' + p.po_no as po_no, convert(varchar, p.po_date, 105) as po_date,
+       dir.facility_aut_name, m.item_code_as_per_tender, m.item_name, sp.name as Supplier, pi.quantity as POQTY,
+       case when isnull(p.potype, 'NP') = 'NP' then 'Normal PO' else 'Covid Po' end as potype,
+       bi.nosinvoice, bi.noofconsignee, bi.gross, isnull(bi.GROSSAMOUNT50, 0) as GROSSAMOUNT50, bi.SANCTIONID
+from purchase_order p
+left outer join (
+    select {sanctionCol} as SANCTIONID, mp.PType, b.po_id, count(invoiceid) as nosinvoice,
+           count(distinct location_id) as noofconsignee, sum(grossamount) as gross, sum(GROSSAMOUNT50) as GROSSAMOUNT50
+    from BLPINVOICES b
+    left outer join MasPStatus mp on mp.PType = b.status
+    where {invoiceFilter}
+) bi on bi.po_id = p.po_id
+inner join massuppliers sp on sp.supplier_id = p.supplier_id
+left outer join (
+    select sum(quantity) as quantity, po_id, pi.item_id from po_items pi group by po_id, pi.item_id
+) pi on pi.po_id = p.po_id
+inner join tenders t on t.tender_id = p.tender_id
+inner join masitems m on m.item_id = pi.item_id
+inner join facility_aut dir on dir.facility_aut_id = p.directorate_id
+where p.status in ('Completed', 'Order Placed', 'Partially Received') and bi.PType in ({(partial ? "'P'" : "'TP'")}){potypeFilter}";
+
+            try
+            {
+                var list = new List<Dictionary<string, object?>>();
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                await conn.OpenAsync();
+                using SqlCommand cmd = new SqlCommand(sql, conn);
+                using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new Dictionary<string, object?>
+                    {
+                        ["PoId"] = Convert.ToInt32(reader["po_id"]),
+                        ["SanctionId"] = reader["SANCTIONID"] == DBNull.Value ? 0 : Convert.ToInt32(reader["SANCTIONID"]),
+                        ["TenderNo"] = reader["tender_no"]?.ToString(),
+                        ["PoNo"] = reader["po_no"]?.ToString(),
+                        ["PoDate"] = reader["po_date"]?.ToString(),
+                        ["Directorate"] = reader["facility_aut_name"]?.ToString(),
+                        ["ItemCode"] = reader["item_code_as_per_tender"]?.ToString(),
+                        ["ItemName"] = reader["item_name"]?.ToString(),
+                        ["Supplier"] = reader["Supplier"]?.ToString(),
+                        ["PoQty"] = reader["POQTY"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["POQTY"]),
+                        ["PoType"] = reader["potype"]?.ToString(),
+                        ["NoOfInvoices"] = reader["nosinvoice"] == DBNull.Value ? 0 : Convert.ToInt32(reader["nosinvoice"]),
+                        ["NoOfConsignees"] = reader["noofconsignee"] == DBNull.Value ? 0 : Convert.ToInt32(reader["noofconsignee"]),
+                        ["Gross"] = reader["gross"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["gross"]),
+                        ["Gross50"] = reader["GROSSAMOUNT50"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["GROSSAMOUNT50"]),
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading pending sanctions.", error = ex.Message });
+            }
+        }
+
         // GET: api/GMFI/GetMainHeadById/0 returns all main heads; any other id returns that row.
         [HttpGet("GetMainHeadById/{id:int}")]
         public async Task<IActionResult> GetMainHeadById(int id)

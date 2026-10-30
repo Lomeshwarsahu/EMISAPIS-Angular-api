@@ -2454,6 +2454,64 @@ namespace EMISAPIS.Controllers
             }
         }
 
+        // indent/Indent_editDHS_PO.aspx gv_RowDeleting — removes an item from a consolidated indent
+        // (INDENT_CONS_ITEMS row, the facility indent's INDENT_ITEMS row, then that INDENT).
+        [HttpPost("DeleteIndentConsolidationItem")]
+        public async Task<IActionResult> DeleteIndentConsolidationItem([FromBody] DeleteIndentConsItemRequest request)
+        {
+            if (request == null || request.IndentConsolidationId <= 0 || request.ItemId <= 0)
+                return BadRequest(new { message = "Indent consolidation id and item id are required." });
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            const string findSql = @"
+SELECT TOP 1 ii.indent_id
+FROM INDENT_ITEMS ii
+WHERE ii.item_id = @ItemId
+  AND ii.indent_id = (SELECT TOP 1 indent_id FROM INDENT WHERE indent_consolidation_id = @IcId)";
+            const string deleteSql = @"
+DELETE FROM INDENT_CONS_ITEMS WHERE INDENT_CONSOLIDATED_ID = @IcId AND ITEM_ID = @ItemId;
+IF @IndentId IS NOT NULL
+BEGIN
+    DELETE FROM INDENT_ITEMS WHERE INDENT_ID = @IndentId AND ITEM_ID = @ItemId;
+    DELETE FROM INDENT WHERE INDENT_ID = @IndentId;
+END";
+
+            using SqlConnection conn = new SqlConnection(connString);
+            await conn.OpenAsync();
+            using SqlTransaction tx = conn.BeginTransaction();
+            try
+            {
+                object? indentId;
+                using (SqlCommand find = new SqlCommand(findSql, conn, tx))
+                {
+                    find.Parameters.AddWithValue("@ItemId", request.ItemId);
+                    find.Parameters.AddWithValue("@IcId", request.IndentConsolidationId);
+                    indentId = await find.ExecuteScalarAsync();
+                }
+
+                using (SqlCommand del = new SqlCommand(deleteSql, conn, tx))
+                {
+                    del.Parameters.AddWithValue("@IcId", request.IndentConsolidationId);
+                    del.Parameters.AddWithValue("@ItemId", request.ItemId);
+                    del.Parameters.AddWithValue("@IndentId", indentId ?? DBNull.Value);
+                    await del.ExecuteNonQueryAsync();
+                }
+
+                tx.Commit();
+                return Ok(new { message = "Item removed from indent." });
+            }
+            catch (SqlException ex) when (ex.Number == 547)
+            {
+                tx.Rollback();
+                return Conflict(new { message = "Delete not allowed, references found" });
+            }
+            catch (Exception ex)
+            {
+                tx.Rollback();
+                return StatusCode(500, new { message = "Error deleting indent item.", error = ex.Message });
+            }
+        }
+
         [HttpGet("GetTermsConditionsList")]
         public async Task<IActionResult> GetTermsConditionsList()
         {

@@ -814,7 +814,8 @@ ORDER BY p.po_date DESC";
 
             try
             {
-                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId)
+                    ?? await ResolvePoSupplierForStaffUserAsync(userId, poId); // HO/BME: SDdetailSupplierForBME.aspx
                 if (supplierId == null)
                     return NotFound(new { message = "Supplier user not found." });
 
@@ -957,7 +958,8 @@ WHERE po_id = @PoId";
 
             try
             {
-                int? loggedInSupplierId = await ResolveSupplierIdForUserAsync(userId);
+                int? loggedInSupplierId = await ResolveSupplierIdForUserAsync(userId)
+                    ?? await ResolvePoSupplierForStaffUserAsync(userId, poId); // HO/BME: SDdetailSupplierForBME.aspx
                 if (loggedInSupplierId == null || loggedInSupplierId.Value != supplierId)
                     return NotFound(new { message = "Supplier user not found." });
 
@@ -1070,7 +1072,8 @@ VALUES (@PoId, @SdMode, @SdAmount, @DocPath, @EntryDt, @IssueDt, 'Y', @DocumentN
 
             try
             {
-                int? loggedInSupplierId = await ResolveSupplierIdForUserAsync(userId);
+                int? loggedInSupplierId = await ResolveSupplierIdForUserAsync(userId)
+                    ?? await ResolvePoSupplierForStaffUserAsync(userId, poId); // HO/BME: SDdetailSupplierForBME.aspx
                 if (loggedInSupplierId == null || loggedInSupplierId.Value != supplierId)
                     return NotFound(new { message = "Supplier user not found." });
 
@@ -1183,7 +1186,8 @@ WHERE po_id = @PoId";
 
             try
             {
-                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId)
+                    ?? await ResolvePoSupplierForStaffUserAsync(userId, poId); // HO/BME: SDdetailSupplierForBME.aspx
                 if (supplierId == null)
                     return NotFound(new { message = "Supplier user not found." });
 
@@ -3502,7 +3506,9 @@ ORDER BY ri.item_detail_id";
 
             try
             {
-                int? supplierId = await ResolveSupplierIdForUserAsync(userId);
+                // Opened by suppliers and, as in legacy Order/InstalationReport.aspx, by DME/HO/Finance staff.
+                int? supplierId = await ResolveSupplierIdForUserAsync(userId)
+                    ?? await ResolveReceiptItemSupplierForStaffUserAsync(userId, receiptItemId);
                 if (supplierId == null)
                     return NotFound(new { message = "Supplier user not found." });
 
@@ -5400,6 +5406,28 @@ WHERE SCHEMEID = @TenderId AND SUPPLIERID = @SupplierId";
 
             object? participantResult = await participantCmd.ExecuteScalarAsync();
             return participantResult != null && participantResult != DBNull.Value;
+        }
+
+        /// <summary>For a non-supplier user, returns the supplier of the PO behind a receipt item; null when the user is unknown or a supplier.</summary>
+        private async Task<int?> ResolveReceiptItemSupplierForStaffUserAsync(int userId, int receiptItemId)
+        {
+            const string sql = @"
+SELECT TOP 1 po.supplier_id
+FROM receipt_item_details ri
+INNER JOIN Issue_item_details ii ON ii.issue_detail_id = ri.issue_detail_id
+INNER JOIN SupplierDispatch d ON d.Issue_id = ii.Issue_id
+INNER JOIN purchase_order po ON po.po_id = d.po_id
+WHERE ri.item_detail_id = @ReceiptItemId
+  AND EXISTS (SELECT 1 FROM users u WHERE u.user_id = @UserId AND ISNULL(u.user_type, '') <> 'SUP')";
+
+            using SqlConnection con = new SqlConnection(_connectionString);
+            await con.OpenAsync();
+            using SqlCommand cmd = new SqlCommand(sql, con);
+            cmd.Parameters.AddWithValue("@ReceiptItemId", receiptItemId);
+            cmd.Parameters.AddWithValue("@UserId", userId);
+
+            object? result = await cmd.ExecuteScalarAsync();
+            return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
         }
 
         /// <summary>For a non-supplier (HO) user, returns the supplier of the PO; null when the user is unknown or a supplier.</summary>

@@ -14,6 +14,8 @@ namespace EMISAPIS.Helpers
         private readonly IMongoCollection<PoReallocationFile> _priceAccessoriesCollection;
         // Legacy TenderCoverAObClaimAfterB (Freeze Cover B): "Demo for Bulk" PDF, keyed by tender_id (same shape as PORealloaction).
         private readonly IMongoCollection<PoReallocationFile> _demoFileCollection;
+        // Legacy MongoDB_Class.Insert_Performance_File: uploaded performance certificate, keyed by po_id.
+        private readonly IMongoCollection<PoReallocationFile> _perfCertificateCollection;
 
         public MongoService()
         {
@@ -27,6 +29,7 @@ namespace EMISAPIS.Helpers
             _priceReagentCollection = database.GetCollection<PoReallocationFile>("PriceRAFile");
             _priceAccessoriesCollection = database.GetCollection<PoReallocationFile>("PriceAccFile");
             _demoFileCollection = database.GetCollection<PoReallocationFile>("DemoFile");
+            _perfCertificateCollection = database.GetCollection<PoReallocationFile>("PerCertificate");
         }
 
         public async Task<ReceiptItemFiles?> GetFile(int itemId)
@@ -146,6 +149,13 @@ namespace EMISAPIS.Helpers
                 x => x.ExtensionId == extensionId,
                 existing,
                 new ReplaceOptions { IsUpsert = true });
+        }
+
+        public async Task<PoReallocationFile?> GetPerformanceCertificateFile(int poId)
+        {
+            return await _perfCertificateCollection
+                .Find(x => x.ExtensionId == poId)
+                .FirstOrDefaultAsync();
         }
 
         public async Task<PoReallocationFile?> GetReallocationFile(int extensionId)

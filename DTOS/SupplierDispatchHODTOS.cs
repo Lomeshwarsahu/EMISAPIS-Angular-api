@@ -102,4 +102,23 @@ namespace EMISAPIS.DTOS
         public int IssueId { get; set; }
         public int LocationId { get; set; }
     }
+
+    public class IncompleteReceiptRowDto : DispatchConsigneeBatchDto
+    {
+        public int ReceiptId { get; set; }
+        /// <summary>Installed / Received / Incomplete (receipts.status).</summary>
+        public string ReceiptStatus { get; set; } = string.Empty;
+    }
+
+    public class IncompleteReceiptItemDto
+    {
+        public int IssueId { get; set; }
+        public int LocationId { get; set; }
+        public int ReceiptId { get; set; }
+    }
+
+    public class IncompleteReceiptHistoryDto : IncompleteDispatchHistoryDto
+    {
+        public string Category { get; set; } = string.Empty;
+    }
 }

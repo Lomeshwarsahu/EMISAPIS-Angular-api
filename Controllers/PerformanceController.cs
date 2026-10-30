@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using EMISAPIS.DTOS;
+using EMISAPIS.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -466,12 +467,152 @@ namespace EMISAPIS.Controllers
             return Ok(new { message = "File Forwarded Successfully!" });
         }
 
+        // Performance/EMISPerf20_RDLC.aspx (Per20Certificate.rdlc) as printable HTML; ReportViewer is not available on .NET 6.
         [HttpGet("generate-perf20-pdf")]
         public IActionResult GeneratePerf20Pdf([FromQuery] int poNoId)
         {
-            // TODO: Generate PDF via RDLC or equivalent and return file
-            byte[] pdfBytes = System.Text.Encoding.UTF8.GetBytes($"Perf20 PDF placeholder for PONOID={poNoId}");
-            return File(pdfBytes, "application/pdf", $"Perf20_{poNoId}.pdf");
+            if (poNoId <= 0)
+                return BadRequest(new { message = "PONOID is required." });
+
+            const string headerSql = @" select A.PO_ID, convert(varchar,case when a.soissueDT is null then  a.po_date else a.soissueDT end,103) as po_date,sp.name  as SupplierName,  a.TENDER_ID, a.outward_no+'-'+a.PO_NO as PO_NO,nosc,POQTY,isnull(dis,0) as dis ,isnull(receipt_qty,0) as receipt_qty,isnull(insQTY,0) as insQTY,
+make,model,percentage,basic_rate,single_unit_price ,item_code_as_per_tender,item_name,b.item_id,case when te.releasetype='W' then 'Week' else 'Month' end as releasetype,te.releasevalue,te.tender_no
+ from purchase_order a
+inner join massuppliers sp on sp.supplier_id=a.supplier_id
+ INNER JOIN  tenders te on te.tender_id = a.tender_id
+left outer join 
+(
+
+select count (distinct consignee_id) as nosc, sum(quantity) POQTY,sum(dis) as dis,sum(receipt_qty) as receipt_qty,sum(insQTY) insQTY
+,a.po_id,
+a.make,a.model,a.percentage,a.basic_rate,a.single_unit_price ,a.item_code_as_per_tender ,a.item_name,a.item_id
+from 
+(
+
+select pi.consignee_id,pi.quantity,d.dis,r.receipt_qty,i.insQTY,pi.po_id,ci.make,ci.model,ci.percentage,ci.basic_rate,ci.single_unit_price
+,m.item_code_as_per_tender ,m.item_name,m.item_id
+ from po_items pi 
+inner join  contract_items ci on ci.contract_item_id=pi.contract_item_id
+inner join maslocations l on l.location_id=pi.consignee_id
+inner join masitems m on m.item_id=pi.item_id
+
+left outer join 
+(
+select r.location_id,sum(r.receipt_qty) as receipt_qty,r.po_id from receipts r
+group by r.location_id,r.po_id
+
+) r on r.location_id=pi.consignee_id and r.po_id=pi.po_id
+
+left outer join 
+(
+select r.location_id,sum(ri.received_qty) as insQTY,r.po_id from receipts r
+inner join receipt_item_details ri on ri.receipt_id=r.receipt_id
+group by r.location_id,r.po_id
+) i on i.location_id=pi.consignee_id and i.po_id=pi.po_id
+
+left outer join
+(
+select sum(si.Supplyqty) dis,s.po_id,s.location_id from SupplierDispatch s 
+inner join Issue_item_details si on si.Issue_id=s.Issue_id
+group by s.location_id,s.po_id
+) d on d.location_id=pi.consignee_id and d.po_id=pi.po_id
+where pi.po_id= @PoId 
+) a 
+group by a.po_id,a.make,a.model,a.percentage,a.basic_rate,a.single_unit_price ,
+item_code_as_per_tender ,item_name,item_id
+) b on b.po_id=a.po_id
+where a.po_id=@PoId";
+            const string itemsSql = @" select l.location_name, make_no as Srno,convert(varchar,installation_date,103) as installation_date ,convert(varchar,warenty_from,103) as warenty_from ,convert(varchar,warenty_to,103) as warenty_to,
+compDT,CloseDT,ComplDetail,ActionTaken,case when CompStatus is null then 'No Complain' else CompStatus end as CompStatus
+,POQTY as ConPOQTY,dis as ConDisp,receiptQTY as conRec,insqty as Coninst,
+
+r.po_id,r.location_id,ri.item_detail_id from receipt_item_details ri 
+inner join receipts r on r.receipt_id=ri.receipt_id
+inner join maslocations l on l.location_id=r.location_id
+
+left outer join 
+(
+select 0 as SlNo, l.location_name, pi.consignee_id,sum(pi.quantity) POQTY,isnull(dis,0) as dis ,isnull(receiptQTY,0) as receiptQTY ,isnull(insqty,0)insqty
+,pi.po_id from po_items pi 
+
+  inner join maslocations l on l.location_id=pi.consignee_id
+ left outer join
+(
+select sum(si.Supplyqty) dis,s.po_id,s.location_id from SupplierDispatch s 
+inner join Issue_item_details si on si.Issue_id=s.Issue_id
+where s.status='C'  
+group by s.location_id,s.po_id
+) d on d.location_id=pi.consignee_id and d.po_id=pi.po_id
+
+ left outer join 
+ (
+ select isnull(sum(r.receipt_qty),0) as receiptQTY ,r.po_id,r.location_id 
+ from receipts r
+where r.recieved_date is not null and r.status in ('C','Received') 
+group by po_id,r.location_id
+ )as re on re.po_id=pi.po_id  and re.location_id=pi.consignee_id
+
+
+  left outer join 
+ (
+ select sum(ri.received_qty) as insqty,r.po_id,r.location_id from receipts r
+left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+where r.recieved_date is not null and r.status in ('C') 
+group by r.po_id,r.location_id
+ )as ins on ins.po_id=pi.po_id  and ins.location_id=pi.consignee_id
+where pi.po_id=@PoId 
+group by pi.consignee_id,pi.po_id,l.location_name,dis,receiptQTY,insqty
+) d on d.consignee_id=l.location_id and d.po_id=r.po_id
+
+left outer join 
+( 
+select cp.status as CompStatus,cp.location_id,cp.item_id,cp.item_detail_id,r.po_id,convert(varchar,complaint_date,103) as compDT,convert(varchar,comp_closed_on,103) as CloseDT,complaint_details as ComplDetail,cp.preventive_action  as ActionTaken from complaints cp
+inner join receipt_item_details ric on ric.item_detail_id = cp.item_detail_id 
+inner join receipts r on r.receipt_id=ric.receipt_id and r.location_id=cp.location_id
+ ) cpp on cpp.po_id = r.po_id  and cpp.location_id=l.location_id and cpp.item_detail_id=ri.item_detail_id
+where r.po_id=@PoId 
+order by l.location_id";
+
+            DataTable dtHeader = Query(headerSql, ("@PoId", poNoId));
+            if (dtHeader.Rows.Count == 0)
+                return NotFound(new { message = "Purchase order not found." });
+            DataTable dtItems = Query(itemsSql, ("@PoId", poNoId));
+            DataRow h = dtHeader.Rows[0];
+
+            var report = new HtmlReportBuilder("EMIS: Performance Certificate")
+                .InfoGrid(new (string, object?)[]
+                {
+                    ("Supplier", h["SupplierName"]),
+                    ("Tender No", h["tender_no"]),
+                    ("PO No", h["PO_NO"]),
+                    ("PO Date", h["po_date"]),
+                    ("Item", $"{h["item_code_as_per_tender"]} - {h["item_name"]}"),
+                    ("Make / Model", $"{h["make"]} / {h["model"]}"),
+                    ("PO / Receipt / Installed Qty", $"{h["POQTY"]} / {h["receipt_qty"]} / {h["insQTY"]}"),
+                    ("Release Period", $"{h["releasevalue"]} {h["releasetype"]}"),
+                });
+
+            // Consignee summary (one row per location), then the serial-wise installation / complaint log.
+            var consignees = dtItems.AsEnumerable()
+                .GroupBy(r => r["location_id"]?.ToString())
+                .Select(g => g.First());
+            report.Heading("Consignee Wise Installation Summary")
+                .Table(consignees,
+                    ("Consignee", r => r["location_name"]),
+                    ("PO QTY", r => r["ConPOQTY"]),
+                    ("Received QTY", r => r["conRec"]),
+                    ("Installed QTY", r => r["Coninst"]))
+                .Heading("Consignee Wise Installation/Complain Log Details")
+                .Table(dtItems.AsEnumerable(),
+                    ("Consignee", r => r["location_name"]),
+                    ("Machine Serial No", r => r["Srno"]),
+                    ("Installation Date", r => r["installation_date"]),
+                    ("Warranty Upto", r => r["warenty_to"]),
+                    ("Complain Status", r => r["CompStatus"]),
+                    ("Complain Detail", r => r["CompStatus"]?.ToString() == "No Complain" ? "-" : $"{r["ComplDetail"]} Dated: {r["compDT"]}"),
+                    ("Action Details", r => r["CompStatus"]?.ToString() == "No Complain" ? "-" : $"{r["ActionTaken"]} Closed DT: {r["CloseDT"]}"))
+                .Signatures("BME", "GM(EQP)");
+
+            return Content(report.Build(), "text/html");
         }
 
         [HttpGet("get-cheque-prep-grid")]
@@ -550,12 +691,133 @@ namespace EMISAPIS.Controllers
             return Ok(new { message = "Cheque info updated successfully" });
         }
 
+        // Performance/SanctionNotSheet.aspx (rdlcSanc20.rdlc): 20% release sanction notesheet as printable HTML.
         [HttpGet("generate-sanction-notesheet")]
         public IActionResult GenerateSanctionNotesheet([FromQuery] int paymentid)
         {
-            // TODO: Generate Word document via RDLC or equivalent and return file
-            byte[] docBytes = System.Text.Encoding.UTF8.GetBytes($"Sanction Notesheet placeholder for PaymentID={paymentid}");
-            return File(docBytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", $"SanctionNotesheet_{paymentid}.docx");
+            if (paymentid <= 0)
+                return BadRequest(new { message = "Paymentid is required." });
+
+            const string sql = @" select c.item_name as name , b.BUDGETNAME,te.tender_no,p.outward_no+'/'+p.po_no as pono, 
+
+convert(varchar,(case when p.soissueDT is not null then soissueDT else p.po_date end),105) as podate
+,installedQTY,c.nosCon,Convert(varchar,LInstallationDT,105) as LInstallationDT,te.releasevalue,case when rtrim(ltrim(te.releasetype)) ='W' then 'Week' else 'Month' end as Releasep
+,cast(Round(bp.SANCTIONEDAMOUNT,0) as bigint) as sanctionamt,cast(Round(bp.supchequeamt,0) as bigint) as supchequeamt,
+cast(Round(TAXVALUE,0) as bigint) as Witled,Convert(varchar,bp.AIDDATE,105) as AIDDATE,bp.AIDNO,cast(Round(r.releaseamt,0) as bigint) as releaseamt
+,r.po_id
+,case when rtrim(ltrim(te.releasetype)) ='W' then Convert(varchar,(DATEADD(WEEK, te.releasevalue,i.LInstallationDT)),105)
+else case when rtrim(ltrim(te.releasetype))  ='M' then Convert(varchar,(DATEADD(MONTH, te.releasevalue,i.LInstallationDT)),105)  else 
+'NA'  end end as LimitDT 
+,isnull(cpp.status,'No Online Complain') as CStatus
+,te.tender_id,sp.supplier_id,p.po_id
+,case when te.performacereq='Y' then 'Yes' else case when  te.performacereq='N' then 'No'
+else 'NA' end end as Prequired
+,POQTY,nosCon
+from BLPTaxsRelease r
+left outer  join 
+(
+select p.po_id,count(distinct p.consignee_id) as nosCon,m.item_name,sum(p.quantity) as POQTY from po_items p
+inner join masitems m on m.item_id=p.item_id
+group by p.po_id,m.item_name 
+
+) c on c.po_id=r.po_id
+
+left outer join 
+(
+select t.TAXID,t.TAXVALUE,t.SANCTIONID from BLPTAXS t
+where  t.TAXTYPEID=250 
+)  t on t.TAXID=r.taxid
+
+left outer join 
+(
+select s.SANCTIONID,sum(s.SANCTIONEDAMOUNT) as SANCTIONEDAMOUNT,s.po_id,max(p.AIDDATE) as AIDDATE
+,p.AIDNO,sum(s.chequeAmt) as supchequeamt from BLPSANCTIONS s
+inner join BLPPAYMENTS p on p.PAYMENTID=s.PAYMENTID
+where p.STATUS='P'
+group by s.po_id,s.SANCTIONID,p.AIDNO
+) bp on bp.po_id=r.po_id and bp.SANCTIONID=t.SANCTIONID
+
+left outer join 
+(
+select sum(bi.INVOICEABSQTY) as installedQTY,b.po_id,b.SANCTIONID,count(distinct pi.consignee_id) nosCin,LInstallationDT from BLPINVOICES b 
+inner join BLPINVOICEITEMS bi on bi.INVOICEID=b.INVOICEID
+inner join po_items pi on pi.po_item_id=bi.ORDERITEMID
+inner join receipt_item_details r on r.item_detail_id =bi.RECEIPTITEMID
+left outer join 
+(
+select b.SANCTIONID,b.po_id,max(r.installation_date) as LInstallationDT from  receipt_item_details r
+inner join BLPINVOICEITEMS bi on bi.RECEIPTITEMID=r.item_detail_id
+inner join BLPINVOICES b on b.INVOICEID=bi.INVOICEID
+group by SANCTIONID,b.po_id
+) ins on ins.po_id=b.po_id and ins.SANCTIONID=b.SANCTIONID
+group by b.po_id,b.SANCTIONID,LInstallationDT
+) i on i.po_id=r.po_id and i.SANCTIONID=t.SANCTIONID
+
+
+left outer join 
+( 
+select cp.status,cp.location_id,cp.item_id,cp.item_detail_id,r.po_id from complaints cp
+inner join receipt_item_details ric on ric.item_detail_id = cp.item_detail_id 
+inner join receipts r on r.receipt_id=ric.receipt_id and r.location_id=cp.location_id
+ ) cpp on cpp.po_id =r.po_id  
+inner join MASBUDGET b on b.BUDGETID=r.fundid
+inner join  purchase_order p on p.po_id=r.po_id
+inner join massuppliers sp on sp.supplier_id=p.supplier_id
+inner join tenders te on te.tender_id=p.tender_id
+where r.paymentid=@PaymentId";
+            DataTable dt = Query(sql, ("@PaymentId", paymentid));
+            if (dt.Rows.Count == 0)
+                return NotFound(new { message = "No release found for this payment." });
+            DataRow first = dt.Rows[0];
+
+            var report = new HtmlReportBuilder("Sanction Notesheet: Performance (20%) Release")
+                .InfoGrid(new (string, object?)[]
+                {
+                    ("Tender No", first["tender_no"]),
+                    ("Fund", first["BUDGETNAME"]),
+                    ("Performance Required", first["Prequired"]),
+                    ("Release Clause", $"{first["releasevalue"]} {first["Releasep"]}"),
+                })
+                .Table(dt.AsEnumerable(),
+                    ("PO Number", r => $"{r["pono"]} Dt {r["podate"]}"),
+                    ("Item Name", r => r["name"]),
+                    ("PO QTY", r => r["POQTY"]),
+                    ("Installed QTY", r => r["installedQTY"]),
+                    ("Last Inst Date", r => r["LInstallationDT"]),
+                    ("Gross Paid", r => r["sanctionamt"]),
+                    ("Supplier Paid", r => r["supchequeamt"]),
+                    ("Witheld", r => r["Witled"]),
+                    ("Paid Info", r => $"{r["AIDNO"]}, Dt {r["AIDDATE"]}"),
+                    ("To be Released Amt", r => r["releaseamt"]),
+                    ("Complain Status", r => r["CStatus"]));
+
+            return Content(report.Build(), "text/html");
+        }
+
+        // Performancecertificate.aspx "Download": uploaded performance certificate PDF (Mongo PerCertificate, keyed by po_id).
+        [HttpGet("perf-certificate-file")]
+        public async Task<IActionResult> GetPerfCertificateFile([FromQuery] int poId)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+
+            var file = await new MongoService().GetPerformanceCertificateFile(poId);
+            if (file == null || file.ExtFile == null || file.ExtFile.Length == 0)
+                return NotFound(new { message = "Performance certificate not uploaded." });
+
+            string name = string.IsNullOrWhiteSpace(file.ExtFileName) ? $"PerfCertificate_{poId}" : file.ExtFileName;
+            return File(file.ExtFile, "application/pdf", name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? name : name + ".pdf");
+        }
+
+        private DataTable Query(string sql, params (string Name, object Value)[] parameters)
+        {
+            var dt = new DataTable();
+            using var conn = new SqlConnection(ConnStr);
+            using var cmd = new SqlCommand(sql, conn);
+            foreach (var (name, value) in parameters) cmd.Parameters.AddWithValue(name, value);
+            using var da = new SqlDataAdapter(cmd);
+            da.Fill(dt);
+            return dt;
         }
 
         // ── Performace20 Consignee ──────────────────────────────────────

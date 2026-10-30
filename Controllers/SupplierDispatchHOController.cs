@@ -563,5 +563,237 @@ where po_id = @PoId and FileName is null";
                 return StatusCode(500, new { message = "Error saving incomplete dispatch.", detail = ex.Message });
             }
         }
+
+        // InCompleteReceiptInstallation fillgrid — dispatches with the consignee receipt (only receipts with item quantities).
+        private const string IncompleteReceiptRowsSql = @"
+select d.Issue_id, convert(varchar, d.Tentative_Sdate, 103) as Tentative_Sdate,
+       convert(varchar, d.dispatch_date, 103) as dispatch_date, d.status, d.dispatch_no,
+       sum(i.Supplyqty) as quantity, d.po_id, d.location_id, l.location_name,
+       re.recieved_date, re.receipt_id, re.status as receipt_status
+from SupplierDispatch d
+inner join maslocations l on l.location_id = d.location_id
+left outer join Issue_item_details i on d.Issue_id = i.Issue_id
+left outer join (
+    select distinct r.issue_id, convert(varchar, r.recieved_date, 103) as recieved_date, r.po_id, r.status, r.receipt_id
+    from receipts r
+    inner join maslocations l on l.location_id = r.location_id
+    left outer join receipt_item_details ri on ri.receipt_id = r.receipt_id
+    where ri.received_qty is not null
+) re on re.issue_id = d.Issue_id and re.po_id = d.po_id
+where d.po_id = @PoId
+group by d.Issue_id, d.dispatch_date, d.Tentative_Sdate, d.status, d.dispatch_no, d.po_id, d.location_id,
+         re.recieved_date, l.location_name, re.receipt_id, re.status";
+
+        /// <summary>POCell/InCompleteReceiptInstallation.aspx grid — only received rows can be reverted.</summary>
+        [HttpGet("incomplete-receipt/rows")]
+        public async Task<IActionResult> GetIncompleteReceiptRows([FromQuery] int poId)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+
+            try
+            {
+                var list = new List<IncompleteReceiptRowDto>();
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(IncompleteReceiptRowsSql + " order by l.location_name, d.Issue_id", conn);
+                cmd.Parameters.AddWithValue("@PoId", poId);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    bool received = reader["recieved_date"] != DBNull.Value && reader["receipt_id"] != DBNull.Value;
+                    string status = reader["receipt_status"]?.ToString() ?? string.Empty;
+                    list.Add(new IncompleteReceiptRowDto
+                    {
+                        IssueId = Convert.ToInt32(reader["Issue_id"]),
+                        PoId = poId,
+                        LocationId = Convert.ToInt32(reader["location_id"]),
+                        LocationName = reader["location_name"]?.ToString() ?? string.Empty,
+                        TentativeDate = reader["Tentative_Sdate"]?.ToString() ?? string.Empty,
+                        DispatchDate = reader["dispatch_date"]?.ToString() ?? string.Empty,
+                        DispatchNo = reader["dispatch_no"]?.ToString() ?? string.Empty,
+                        Quantity = reader["quantity"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["quantity"]),
+                        ReceivedDate = received ? reader["recieved_date"].ToString()! : "Not Receipt",
+                        SupplyStatus = reader["status"]?.ToString() == "I" ? "Incomplete" : "Complete",
+                        ReceiptId = reader["receipt_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["receipt_id"]),
+                        ReceiptStatus = status == "C" ? "Installed" : status == "Received" ? "Received" : "Incomplete",
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading receipt rows.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>InCompleteReceiptInstallation history (legacy listed 'In Complete Receipt' only; deletions are shown too).</summary>
+        [HttpGet("incomplete-receipt/history")]
+        public async Task<IActionResult> GetIncompleteReceiptHistory()
+        {
+            const string sql = @"
+select p.po_no, convert(varchar, p.po_date, 103) as podate, s.name, upL.location_name as newLocation,
+       convert(varchar, pa.entryDT, 103) as entryDT, pa.remark, pa.doc_id, pa.UpdateCat
+from PO_Reallocation pa
+inner join purchase_order p on p.po_id = pa.po_id
+inner join massuppliers s on s.supplier_id = p.supplier_id
+inner join maslocations upL on upL.location_id = pa.UpLocationid
+where pa.UpdateCat in ('In Complete Receipt', 'Delete Installation')
+order by pa.entryDT desc";
+
+            try
+            {
+                var list = new List<IncompleteReceiptHistoryDto>();
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new SqlCommand(sql, conn);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    list.Add(new IncompleteReceiptHistoryDto
+                    {
+                        PoNo = reader["po_no"]?.ToString() ?? string.Empty,
+                        PoDate = reader["podate"]?.ToString() ?? string.Empty,
+                        SupplierName = reader["name"]?.ToString() ?? string.Empty,
+                        Location = reader["newLocation"]?.ToString() ?? string.Empty,
+                        EntryDate = reader["entryDT"]?.ToString() ?? string.Empty,
+                        Remark = reader["remark"]?.ToString() ?? string.Empty,
+                        DocId = int.TryParse(reader["doc_id"]?.ToString(), out int docId) ? docId : 0,
+                        Category = reader["UpdateCat"]?.ToString() ?? string.Empty,
+                    });
+                }
+                return Ok(list);
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error loading history.", detail = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// InCompleteReceiptInstallation BtnReallocate_Click. mode 'R': receipts.status = 'Incomplete' (facility re-enters it);
+        /// mode 'D': deletes the receipt and its installation rows. Logged in PO_Reallocation with the approval PDF.
+        /// </summary>
+        [HttpPost("incomplete-receipt")]
+        [RequestSizeLimit(FileValidationHelper.MaxPdfSizeBytes + 1024)]
+        public async Task<IActionResult> SaveIncompleteReceipt(
+            [FromForm] int poId,
+            [FromForm] string? mode,
+            [FromForm] string? remark,
+            [FromForm] string items,
+            IFormFile? file)
+        {
+            if (poId <= 0)
+                return BadRequest(new { message = "poId is required." });
+            bool deleteMode = string.Equals(mode, "D", StringComparison.OrdinalIgnoreCase);
+            if (!deleteMode && !string.Equals(mode, "R", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Select InComplete Facility Receipt or Delete Facility Receipt and Installation." });
+            if (!FileValidationHelper.ValidatePdf(file, out var fileErr, maxSizeBytes: FileValidationHelper.MaxPdfSizeBytes))
+                return BadRequest(new { message = string.IsNullOrEmpty(fileErr) ? "Upload Mail/Approval Copy/Notesheet in PDF Format." : fileErr });
+
+            List<IncompleteReceiptItemDto>? selected;
+            try
+            {
+                selected = System.Text.Json.JsonSerializer.Deserialize<List<IncompleteReceiptItemDto>>(items ?? string.Empty);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return BadRequest(new { message = "Invalid items payload." });
+            }
+            if (selected == null || selected.Count == 0)
+                return BadRequest(new { message = "No Checkbox is selected." });
+
+            remark = InputSanitizer.Sanitize(remark, 1000);
+            string category = deleteMode ? "Delete Installation" : "In Complete Receipt";
+
+            try
+            {
+                byte[] fileBytes;
+                await using (var ms = new MemoryStream())
+                {
+                    await file!.CopyToAsync(ms);
+                    fileBytes = ms.ToArray();
+                }
+
+                await using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
+
+                // Server-side check: each receipt must belong to this PO's dispatch and be received.
+                var validReceipts = new HashSet<(int, int, int)>();
+                await using (var cmd = new SqlCommand(IncompleteReceiptRowsSql, conn))
+                {
+                    cmd.Parameters.AddWithValue("@PoId", poId);
+                    await using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        if (reader["recieved_date"] != DBNull.Value && reader["receipt_id"] != DBNull.Value)
+                            validReceipts.Add((Convert.ToInt32(reader["Issue_id"]), Convert.ToInt32(reader["location_id"]), Convert.ToInt32(reader["receipt_id"])));
+                    }
+                }
+                if (selected.Any(s => !validReceipts.Contains((s.IssueId, s.LocationId, s.ReceiptId))))
+                    return BadRequest(new { message = "Selected row has no facility receipt for this PO." });
+
+                await using (var tx = (SqlTransaction)await conn.BeginTransactionAsync())
+                {
+                    try
+                    {
+                        foreach (var item in selected)
+                        {
+                            string sql = deleteMode
+                                ? @"delete from receipt_item_details where receipt_id = @ReceiptId;
+delete from receipts where receipt_id = @ReceiptId and po_id = @PoId and Issue_id = @IssueId;"
+                                : @"update receipts set status = 'Incomplete' where receipt_id = @ReceiptId and po_id = @PoId and Issue_id = @IssueId;";
+                            sql += @"
+insert into PO_Reallocation (po_id, remark, PrevLocationid, UpLocationid, EntryDT, UpdateCat, receipt_id)
+values (@PoId, @Remark, @LocationId, @LocationId, getdate(), @Category, @ReceiptId);";
+                            await using var cmd = new SqlCommand(sql, conn, tx);
+                            cmd.Parameters.AddWithValue("@ReceiptId", item.ReceiptId);
+                            cmd.Parameters.AddWithValue("@PoId", poId);
+                            cmd.Parameters.AddWithValue("@IssueId", item.IssueId);
+                            cmd.Parameters.AddWithValue("@LocationId", item.LocationId);
+                            cmd.Parameters.AddWithValue("@Remark", remark ?? string.Empty);
+                            cmd.Parameters.AddWithValue("@Category", category);
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                        await tx.CommitAsync();
+                    }
+                    catch (SqlException ex) when (ex.Number == 547)
+                    {
+                        await tx.RollbackAsync();
+                        return Conflict(new { message = "Cannot delete: this receipt is already used (e.g. invoice or complaint)." });
+                    }
+                }
+
+                // Legacy doc id = PO id followed by (reallocation count + 1).
+                int relocCount;
+                await using (var countCmd = new SqlCommand("select count(RelocID) from PO_Reallocation where po_id = @PoId", conn))
+                {
+                    countCmd.Parameters.AddWithValue("@PoId", poId);
+                    relocCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync() ?? 0) + 1;
+                }
+                if (!int.TryParse($"{poId}{relocCount}", out int docId))
+                    return StatusCode(500, new { message = "Could not generate document id." });
+
+                await _mongoService.UpsertReallocationFile(docId, fileBytes, ".pdf");
+
+                await using (var docCmd = new SqlCommand(@"
+update PO_Reallocation set FileName = @DocId, doc_id = @DocId, doc_Name = @DocName
+where po_id = @PoId and FileName is null", conn))
+                {
+                    docCmd.Parameters.AddWithValue("@DocId", docId);
+                    docCmd.Parameters.AddWithValue("@DocName", $"{poId}_{relocCount}IncReceipt");
+                    docCmd.Parameters.AddWithValue("@PoId", poId);
+                    await docCmd.ExecuteNonQueryAsync();
+                }
+
+                return Ok(new { message = deleteMode
+                    ? "Facility receipt and installation deleted successfully"
+                    : "Facility receipt has been marked Incomplete successfully" });
+            }
+            catch (SqlException ex)
+            {
+                return StatusCode(500, new { message = "Error saving incomplete receipt.", detail = ex.Message });
+            }
+        }
     }
 }
