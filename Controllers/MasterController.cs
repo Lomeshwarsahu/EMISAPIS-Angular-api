@@ -327,7 +327,11 @@ namespace EMISAPIS.Controllers
 
             var folderName = "Specification";
             var fileName = $"{itemId}.pdf";
-            var uploadsDir = Path.Combine(_env.WebRootPath ?? _env.ContentRootPath, folderName);
+            // Same folder ReportSpecification/items/{id}/download reads from (legacy EMSRole/Specification).
+            var configured = _config["FileStorage:SpecificationPath"];
+            var uploadsDir = string.IsNullOrWhiteSpace(configured)
+                ? Path.GetFullPath(Path.Combine(LegacyFileRoot.Resolve(_config, _env), folderName))
+                : Path.GetFullPath(configured);
             Directory.CreateDirectory(uploadsDir);
             var filePath = Path.Combine(uploadsDir, fileName);
 

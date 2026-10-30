@@ -957,43 +957,27 @@ where r.paymentid=@PaymentId";
         [HttpGet("get-release-years")]
         public IActionResult GetReleaseYears()
         {
+            // Performance/PerformancecertificateFIN.aspx FillYear()
             var list = new List<ReleaseYearDto>();
             try
             {
                 using var conn = new SqlConnection(ConnStr);
                 conn.Open();
-                string sql = "select release_year_id, release_year_name from mas_release_year order by release_year_name";
+                const string sql = "select year, financial_year_id from mas_financial_year where financial_year_id > 15 order by from_date desc";
                 using var cmd = new SqlCommand(sql, conn);
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read())
                 {
                     list.Add(new ReleaseYearDto
                     {
-                        ReleaseYearId = Convert.ToInt32(reader["release_year_id"]),
-                        ReleaseYearName = reader["release_year_name"]?.ToString() ?? ""
+                        ReleaseYearId = Convert.ToInt32(reader["financial_year_id"]),
+                        ReleaseYearName = reader["year"]?.ToString() ?? ""
                     });
                 }
             }
-            catch (Exception ex)
+            catch (SqlException ex)
             {
-                Console.WriteLine($"[PerformanceController] GetReleaseYears handled exception: {ex.Message}");
-                try
-                {
-                    using var conn = new SqlConnection(ConnStr);
-                    conn.Open();
-                    string sql = "select yearid as release_year_id, financialyear as release_year_name from masfinancialyears order by financialyear desc";
-                    using var cmd = new SqlCommand(sql, conn);
-                    using var reader = cmd.ExecuteReader();
-                    while (reader.Read())
-                    {
-                        list.Add(new ReleaseYearDto
-                        {
-                            ReleaseYearId = Convert.ToInt32(reader["release_year_id"]),
-                            ReleaseYearName = reader["release_year_name"]?.ToString() ?? ""
-                        });
-                    }
-                }
-                catch { }
+                return StatusCode(500, new { message = "Error loading release years.", detail = ex.Message });
             }
             return Ok(list);
         }
@@ -1001,43 +985,27 @@ where r.paymentid=@PaymentId";
         [HttpGet("get-funds")]
         public IActionResult GetFunds()
         {
+            // Performance/PerformancecertificateFIN.aspx FillBudget() — "Fund" is the budget head (MASBUDGET)
             var list = new List<FundDto>();
             try
             {
                 using var conn = new SqlConnection(ConnStr);
                 conn.Open();
-                string sql = "select fund_id, fund_name from mas_fund order by fund_name";
+                const string sql = "select budgetid, budgetname from MASBUDGET order by budgetname";
                 using var cmd = new SqlCommand(sql, conn);
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read())
                 {
                     list.Add(new FundDto
                     {
-                        FundId = Convert.ToInt32(reader["fund_id"]),
-                        FundName = reader["fund_name"]?.ToString() ?? ""
+                        FundId = Convert.ToInt32(reader["budgetid"]),
+                        FundName = reader["budgetname"]?.ToString() ?? ""
                     });
                 }
             }
-            catch (Exception ex)
+            catch (SqlException ex)
             {
-                Console.WriteLine($"[PerformanceController] GetFunds handled exception: {ex.Message}");
-                try
-                {
-                    using var conn = new SqlConnection(ConnStr);
-                    conn.Open();
-                    string sql = "select fundid as fund_id, fundname as fund_name from masfunds order by fundname";
-                    using var cmd = new SqlCommand(sql, conn);
-                    using var reader = cmd.ExecuteReader();
-                    while (reader.Read())
-                    {
-                        list.Add(new FundDto
-                        {
-                            FundId = Convert.ToInt32(reader["fund_id"]),
-                            FundName = reader["fund_name"]?.ToString() ?? ""
-                        });
-                    }
-                }
-                catch { }
+                return StatusCode(500, new { message = "Error loading funds.", detail = ex.Message });
             }
             return Ok(list);
         }
@@ -1045,92 +1013,142 @@ where r.paymentid=@PaymentId";
         [HttpGet("get-fin-release-grid")]
         public IActionResult GetFinReleaseGrid([FromQuery] int releaseYearId, [FromQuery] int fundId)
         {
+            // Performance/PerformancecertificateFIN.aspx fillgrid(): pending 20% withheld taxes (TAXTYPEID 250) not yet
+            // released, file forwarded to FIN. Release year is not a grid filter in the legacy page; fund = BUDGETID (optional).
             var list = new List<FinReleaseGridDto>();
+            string sql = @"  select  distinct
+ p.outward_no+'/'+p.po_no as pono,(case when p.soissueDT is null then convert(varchar,p.po_date,103) else convert(varchar,p.soissueDT,103) end) as po_date,
+ pi.quantity as POQTY,inst.instQTY
+ ,convert(varchar,LastInstDT,103) as LastInstDT1,LastInstDT
+
+ 
+
+ ,te.tender_no
+
+ ,case when  te.performacereq ='Y' then 'Yes' else case when  te.performacereq ='N' then  'No' else 'NA' end end as PRequired
+ ,mp.PStatus,sp.supplier_id
+ ,p.Potype
+ ,p.po_id
+,te.releasetype,te.releasevalue,ms.item_code_as_per_tender,ms.item_name
+,isnull(cpp.status,'No Online Complain') as CStatus
+, case when rtrim(ltrim(te.releasetype)) ='W' then Convert(varchar,(DATEADD(WEEK, te.releasevalue,red.LastInstDT)),103)
+else case when rtrim(ltrim(te.releasetype))  ='M' then Convert(varchar,(DATEADD(MONTH, te.releasevalue,red.LastInstDT)),103)  else 
+'NA'  end end as LimitDT 
+, case when rec20by is not null then 'Forward' else '' end as PresentFile,p.fileno,Convert(varchar,p.filedt,103) as filedt
+,case when rec20by is not null then 'Download' else '' end as DownloadPerf
+,cast(Round(t.TAXVALUE,0) as bigint) as WithledAmt,cast(Round(s.SANCTIONEDAMOUNT,0) as bigint) as SANCTIONEDAMOUNT,Convert(varchar,s.SANCTIONDATE,103) as SANCTIONDATE
+,s.SANCTIONID,cast(Round(isnull(rt.RecoveredAmt,0),0) as bigint) as RecoveredAmt ,isnull(rt.Remarks,'-') as Remarks,t.TAXID
+,cast(Round(isnull(rt.ReleaseAmt,0),0) as bigint) as  ReleaseAmt
+ ,sp.name
+,s.BUDGETID,b.BUDGETNAME,
+s.PAYMENTID
+,bp.AIDNO,Convert(varchar,bp.AIDDATE,103) as AIDDATE
+,bp.CGMSCPAIDBANKID,mc.ACCOUNTNAME as cgmscACNAME,mc.ACCOUNTNO as CGMSCACNO,mc.BRANCH as cgmscBranch,mc.IFSCCODE
+,bp.SUPPAIDBANKID,sc.BANKNAME,sc.IFSCCODE,sc.BRANCH as supBranch,sc.ACCOUNTNO,sc.ACCOUNTNAME as supACNAME
+  from BLPTAXS t
+inner join BLPSANCTIONS s on s.SANCTIONID=t.SANCTIONID
+inner join MASBUDGET b on b.BUDGETID=s.BUDGETID
+inner join purchase_order p on p.po_id=s.po_id
+INNER JOIN  tenders te on te.tender_id = p.tender_id
+inner join BLPPAYMENTS bp on bp.PAYMENTID=s.PAYMENTID
+LEFT OUTER join MasSupplierAccNos sc on sc.BANKACCOUNTID=bp.SUPPAIDBANKID
+inner join MasCGMSCAccNos mc on mc.bankid=bp.CGMSCPAIDBANKID
+LEFT OUTER JOIN
+(
+SELECT   
+sum(pi.quantity) AS quantity, pi.po_id, pi.item_id, sum(pi.totalprice) AS totalprice
+FROM po_items pi
+ GROUP BY pi.po_id, pi.item_id
+ ) pi ON pi.po_id = p.po_id 
+ LEFT OUTER JOIN
+(
+SELECT max(ri.installation_date) LastInstDT, r.po_id
+FROM   receipts r 
+inner join receipt_item_details ri ON ri.receipt_id = r.receipt_id
+WHERE r.recieved_date IS NOT NULL AND r.status IN ('C')
+GROUP BY r.po_id
+) AS red ON red.po_id = pi.po_id
+ LEFT OUTER JOIN
+(
+SELECT sum(ri.received_qty) as instQTY,r.po_id
+FROM   receipts r 
+inner join receipt_item_details ri ON ri.receipt_id = r.receipt_id
+WHERE r.recieved_date IS NOT NULL AND r.status IN ('C')
+GROUP BY r.po_id
+) AS inst ON inst.po_id = pi.po_id
+inner join masitems ms on ms.item_id = pi.item_id
+inner join massuppliers sp on sp.supplier_id=p.supplier_id
+inner join BLPPAYMENTS py on py.paymentid=s.paymentid 
+inner join MasCGMSCAccNos mcn on mcn.bankid = py.CGMSCPAIDBANKID
+left outer join MasPStatus mp on mp.PType=py.status 
+
+left outer join 
+( 
+select cp.status,cp.location_id,cp.item_id,cp.item_detail_id,r.po_id from complaints cp
+inner join receipt_item_details ric on ric.item_detail_id = cp.item_detail_id 
+inner join receipts r on r.receipt_id=ric.receipt_id and r.location_id=cp.location_id
+ ) cpp on cpp.po_id = pi.po_id  
+
+ left outer join 
+ (
+ select  Max(m.PONOID) as PONOID  from users u 
+inner join masfilemovementother m on m.TOUSERID=u.user_id and  Ptype=2  and m.TOUSERID in (5,29)
+group by m.PONOID
+
+ ) pres on pres.PONOID=p.po_id 
+
+ left outer join
+
+ (select RecoveredAmt,Remarks,TAXID, SanctionID,ReleaseAmt from BLPTaxsRelease )
+ rt on rt.taxid = t.TAXID and rt.SanctionID = t.SANCTIONID
+
+where py.STATUS='P'  and t.TAXTYPEID=250  and isnull(t.TAXVALUE,0)>0 and pres.PONOID is not null and isnull(t.ISRELEASE,'N')='N'  and t.paymentid is null
+" + (fundId > 0 ? " and s.BUDGETID = @fundId" : "") + @"
+order by s.BUDGETID, sp.supplier_id";
             try
             {
                 using var conn = new SqlConnection(ConnStr);
                 conn.Open();
-                string sql = @"select distinct
-                  p.po_id, p.po_no, sp.name as supplier_name, p.fileno as nasti_no,
-                  pi.quantity as installed_qty,
-                  convert(varchar, red.LastInstDT, 103) as last_installed_date,
-                  s.withheld_amt, s.to_be_released_amt, s.recovered_amount,
-                  s.remarks, s.cheque_dt, s.paid_from, s.paid_to,
-                  te.tender_no, isnull(cp.status, 'No Online Complain') as complaint_status,
-                  te.performacereq as performance_required,
-                  case when te.releasetype = 'W' then convert(varchar, dateadd(week, te.releasevalue, red.LastInstDT), 103)
-                       when te.releasetype = 'M' then convert(varchar, dateadd(month, te.releasevalue, red.LastInstDT), 103)
-                       else 'NA' end as LimitDT
-                  from purchase_order p
-                  inner join po_items pi on pi.po_id = p.po_id
-                  inner join massuppliers sp on sp.supplier_id = p.supplier_id
-                  inner join tenders te on te.tender_id = p.tender_id
-                  left outer join (
-                    select max(ri.installation_date) as LastInstDT, r.po_id
-                    from receipts r inner join receipt_item_details ri on ri.receipt_id = r.receipt_id
-                    where r.recieved_date is not null and r.status in ('C')
-                    group by r.po_id
-                  ) red on red.po_id = p.po_id
-                  left outer join (
-                    select cp.status, r.po_id from complaints cp
-                    inner join receipt_item_details ric on ric.item_detail_id = cp.item_detail_id
-                    inner join receipts r on r.receipt_id = ric.receipt_id
-                  ) cp on cp.po_id = p.po_id
-                  left outer join (
-                    select po_id, sum(withheld_amt) as withheld_amt, sum(to_be_released_amt) as to_be_released_amt,
-                      sum(recovered_amount) as recovered_amount, max(remarks) as remarks,
-                      max(cheque_dt) as cheque_dt, max(paid_from) as paid_from, max(paid_to) as paid_to
-                    from payment_release where release_year_id = @releaseYearId and fund_id = @fundId
-                    group by po_id
-                  ) s on s.po_id = p.po_id
-                  where 1=1
-                  order by sp.name";
-
                 using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@releaseYearId", releaseYearId);
-                cmd.Parameters.AddWithValue("@fundId", fundId);
+                if (fundId > 0) cmd.Parameters.AddWithValue("@fundId", fundId);
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read())
                 {
                     var limitDT = reader["LimitDT"]?.ToString() ?? "";
-                    var cstatus = reader["complaint_status"]?.ToString() ?? "";
-                    bool isEligible = false;
-                    if (limitDT != "NA" && limitDT != "")
-                    {
-                        if (DateTime.TryParseExact(limitDT, "dd/MM/yyyy",
+                    bool isEligible = limitDT == "NA";
+                    if (!isEligible && DateTime.TryParseExact(limitDT, "dd/MM/yyyy",
                             System.Globalization.CultureInfo.InvariantCulture,
-                            System.Globalization.DateTimeStyles.None, out DateTime dtLimit))
-                        {
-                            isEligible = DateTime.Now > dtLimit;
-                        }
+                            System.Globalization.DateTimeStyles.None, out var dtLimit))
+                    {
+                        isEligible = DateTime.Now > dtLimit;
                     }
-                    else if (limitDT == "NA") isEligible = true;
 
                     list.Add(new FinReleaseGridDto
                     {
                         PoId = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : 0,
-                        PoNo = reader["po_no"]?.ToString() ?? "",
-                        SupplierName = reader["supplier_name"]?.ToString() ?? "",
-                        NastiNo = reader["nasti_no"]?.ToString() ?? "",
-                        InstalledQty = reader["installed_qty"] != DBNull.Value ? Convert.ToDecimal(reader["installed_qty"]) : 0,
-                        LastInstalledDate = reader["last_installed_date"]?.ToString() ?? "",
-                        WithheldAmt = reader["withheld_amt"] != DBNull.Value ? Convert.ToDecimal(reader["withheld_amt"]) : 0,
-                        ToBeReleasedAmt = reader["to_be_released_amt"] != DBNull.Value ? Convert.ToDecimal(reader["to_be_released_amt"]) : 0,
-                        RecoveredAmount = reader["recovered_amount"] != DBNull.Value ? Convert.ToDecimal(reader["recovered_amount"]) : 0,
-                        Remarks = reader["remarks"]?.ToString() ?? "",
-                        ChequeDt = reader["cheque_dt"]?.ToString() ?? "",
-                        PaidFrom = reader["paid_from"]?.ToString() ?? "",
-                        PaidTo = reader["paid_to"]?.ToString() ?? "",
+                        Fund = reader["BUDGETNAME"]?.ToString() ?? "",
+                        SupplierName = reader["name"]?.ToString() ?? "",
+                        NastiNo = reader["fileno"]?.ToString() ?? "",
+                        PoNo = reader["pono"]?.ToString() ?? "",
+                        InstalledQty = reader["instQTY"] != DBNull.Value ? Convert.ToDecimal(reader["instQTY"]) : 0,
+                        LastInstalledDate = reader["LastInstDT1"]?.ToString() ?? "",
+                        ChequeDt = reader["AIDDATE"]?.ToString() ?? "",
+                        WithheldAmt = reader["WithledAmt"] != DBNull.Value ? Convert.ToDecimal(reader["WithledAmt"]) : 0,
+                        RecoveredAmount = reader["RecoveredAmt"] != DBNull.Value ? Convert.ToDecimal(reader["RecoveredAmt"]) : 0,
+                        ToBeReleasedAmt = reader["ReleaseAmt"] != DBNull.Value ? Convert.ToDecimal(reader["ReleaseAmt"]) : 0,
+                        Remarks = reader["Remarks"]?.ToString() ?? "",
+                        PaidFrom = string.Join(", ", new[] { reader["cgmscACNAME"]?.ToString(), reader["CGMSCACNO"]?.ToString(), reader["cgmscBranch"]?.ToString() }.Where(x => !string.IsNullOrWhiteSpace(x))),
+                        PaidTo = string.Join(", ", new[] { reader["supACNAME"]?.ToString(), reader["ACCOUNTNO"]?.ToString(), reader["supBranch"]?.ToString() }.Where(x => !string.IsNullOrWhiteSpace(x))),
                         TenderNo = reader["tender_no"]?.ToString() ?? "",
-                        PerformanceRequired = reader["performance_required"]?.ToString() ?? "",
-                        ComplaintStatus = cstatus,
+                        PerformanceRequired = reader["PRequired"]?.ToString() ?? "",
+                        ComplaintStatus = reader["CStatus"]?.ToString() ?? "",
                         IsEligible = isEligible,
                     });
                 }
             }
-            catch (Exception ex)
+            catch (SqlException ex)
             {
-                Console.WriteLine($"[PerformanceController] GetFinReleaseGrid handled exception: {ex.Message}");
+                return StatusCode(500, new { message = "Error loading FIN release grid.", detail = ex.Message });
             }
             return Ok(list);
         }
