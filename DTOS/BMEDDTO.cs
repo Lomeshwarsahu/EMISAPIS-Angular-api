@@ -442,6 +442,14 @@ namespace EMISAPIS.DTOS
         public int UserId { get; set; } // Current User ID
     }
 
+    // Legacy TenderCoverA.aspx btnFreezCovA_Click ("Freeze Cov A-Evaluation")
+    public class FreezeCoverAEvaluationRequest
+    {
+        public int TenderId { get; set; }
+        public string RoleId { get; set; } // 22 / 12 = technical evaluation, others = financial
+        public int UserId { get; set; }
+    }
+
     public class UpdateTenderNoDto
     {
         public int tender_id { get; set; }
@@ -710,6 +718,7 @@ namespace EMISAPIS.DTOS
         public string TenderDate { get; set; }
         public int SchStatusDid { get; set; }
         public string EndDate { get; set; }
+        public string CoverADate { get; set; } // tenders.cover_a (dd/MM/yyyy), legacy "Cov-A Date"
     }
 
     public class TenderItemDetailsDto

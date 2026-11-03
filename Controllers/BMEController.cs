@@ -3498,7 +3498,8 @@ where 1=1 and t.tender_id = @Tid";
               ELSE 'Cancelled' END) as Status,
         CONVERT(VARCHAR, tender_date, 103) as tender_date, 
         mas.SCHSTATUSDID, 
-        CONVERT(VARCHAR, ENDDate, 103) as ENDDate
+        CONVERT(VARCHAR, ENDDate, 103) as ENDDate,
+        CONVERT(VARCHAR, ms.cover_a, 103) as CovADT
         FROM tenders ms 
         INNER JOIN masschemesstatusdetails mas ON mas.SCHEMEID = ms.tender_id  
         WHERE ms.tender_id = @Tid";
@@ -3522,7 +3523,8 @@ where 1=1 and t.tender_id = @Tid";
                                 Status = reader["Status"].ToString(),
                                 TenderDate = reader["tender_date"].ToString(),
                                 SchStatusDid = Convert.ToInt32(reader["SCHSTATUSDID"]),
-                                EndDate = reader["ENDDate"].ToString()
+                                EndDate = reader["ENDDate"].ToString(),
+                                CoverADate = reader["CovADT"].ToString()
                             };
                         }
                     }
@@ -4608,6 +4610,57 @@ select t.tender_id, isnull(nosItems,0) as NoSitems,
             catch (Exception ex)
             {
                 return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Legacy TenderCoverA.aspx btnFreezCovA_Click ("Freeze Cov A-Evaluation"): once every Cover A supplier has an
+        // Eligible / Not Eligible / Clarification value from this role, mark the role's Cover A evaluation finished.
+        [HttpPost("FreezeCoverAEvaluation")]
+        public async Task<IActionResult> FreezeCoverAEvaluation([FromBody] FreezeCoverAEvaluationRequest request)
+        {
+            if (request == null || request.TenderId <= 0)
+                return BadRequest(new { message = "Select Tender No first" });
+
+            bool isTech = request.RoleId == "22" || request.RoleId == "12";
+            string pendingColumn = isTech ? "ISCovTechEli" : "IsCOVFinEli";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
+                {
+                    await conn.OpenAsync();
+
+                    // Legacy Tender.checkSupplierEvaluationCompleted(tenderid, "2", "Tech"/"Fin")
+                    string pendingSql = $@"SELECT COUNT(DISTINCT sc.SUPPLIERID)
+                                           FROM masschemesstatusdetails sc
+                                           INNER JOIN tenders t ON t.tender_id = sc.SCHEMEID
+                                           WHERE t.tender_id = @Tid AND t.csid = 2 AND sc.{pendingColumn} IS NULL";
+                    using (SqlCommand pendingCmd = new SqlCommand(pendingSql, conn))
+                    {
+                        pendingCmd.Parameters.AddWithValue("@Tid", request.TenderId);
+                        int pending = Convert.ToInt32(await pendingCmd.ExecuteScalarAsync());
+                        if (pending > 0)
+                            return BadRequest(new { message = "Some Suppliers are Pending for Evaluation" });
+                    }
+
+                    string finishSql = isTech
+                        ? "UPDATE tenders SET ISCovAFinishedTech = 'Y', ISCovAFinishedTechEntry = GETDATE(), TechUserid = @UId WHERE tender_id = @Tid"
+                        : "UPDATE tenders SET ISCovAFinishedFin = 'Y', ISCovAFinishedEntry = GETDATE(), FinUserid = @UId WHERE tender_id = @Tid";
+                    using (SqlCommand finishCmd = new SqlCommand(finishSql, conn))
+                    {
+                        finishCmd.Parameters.AddWithValue("@UId", request.UserId);
+                        finishCmd.Parameters.AddWithValue("@Tid", request.TenderId);
+                        int rows = await finishCmd.ExecuteNonQueryAsync();
+                        if (rows == 0)
+                            return NotFound(new { message = "Tender not found." });
+                    }
+
+                    return Ok(new { message = "Completed Evaluation, Please Go to upload Object Claim Summary" });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error while freezing Cover A evaluation", details = ex.Message });
             }
         }
 
