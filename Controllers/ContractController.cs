@@ -914,15 +914,11 @@ ORDER BY complaint_date";
             {
                 string whclause = "";
 
-                if (!string.IsNullOrEmpty(finYrId))
-                {
-                    whclause = " and p.financial_year_id =" + finYrId;
-                }
-
-                if (!string.IsNullOrEmpty(directorateId))
-                {
-                    whclause += " and p.directorate_id=" + directorateId;
-                }
+                // Query-string values only reach SQL as parameters; non-numeric ids (e.g. "undefined") skip the filter.
+                bool hasYr = int.TryParse(finYrId, out int yr);
+                bool hasDir = int.TryParse(directorateId, out int dir);
+                if (hasYr) whclause = " and p.financial_year_id = @FinYrId";
+                if (hasDir) whclause += " and p.directorate_id = @DirectorateId";
 
                 string query = @"
 select  facility_aut_id,facility_aut_name,OUTWARD_NO+'/'+PO_NO as PONO,POtype,CODE,ITEM_NAME, po_date,SUPPLIER_NAME,TENDER_NO,
@@ -973,7 +969,7 @@ from
     where 1=1 " + whclause + @"
     and p.status not in ('Incomplete','Waiting For Approval','Cancelled')
 ) a
-where a.POtype = '" + POTYPE + @"'
+where a.POtype = @PoType
 group by facility_aut_name,POtype,facility_aut_id,
 OUTWARD_NO,PO_NO,POtype,CODE,ITEM_NAME,po_date,
 SUPPLIER_NAME,TENDER_NO,PDate,percentage,basic_rate
@@ -982,6 +978,9 @@ order by PDate desc";
                 using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
+                    if (hasYr) cmd.Parameters.AddWithValue("@FinYrId", yr);
+                    if (hasDir) cmd.Parameters.AddWithValue("@DirectorateId", dir);
+                    cmd.Parameters.AddWithValue("@PoType", POTYPE ?? "");
                     await conn.OpenAsync();
 
                     using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
@@ -1050,9 +1049,9 @@ order by PDate desc";
                 if (!string.IsNullOrEmpty(fromDate) && !string.IsNullOrEmpty(toDate))
                 {
                     whereFromTo = @" and py.AIDDATE between 
-            CONVERT(varchar(10), CONVERT(date, '" + fromDate + @"', 103), 120)
+            CONVERT(varchar(10), CONVERT(date, @FromDate, 103), 120)
             and 
-            CONVERT(varchar(10), CONVERT(date, '" + toDate + @"', 103), 120) ";
+            CONVERT(varchar(10), CONVERT(date, @ToDate, 103), 120) ";
                 }
 
                 string query = @"
@@ -1135,6 +1134,11 @@ order by AidDate desc";
                 using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
+                    if (whereFromTo != "")
+                    {
+                        cmd.Parameters.AddWithValue("@FromDate", fromDate);
+                        cmd.Parameters.AddWithValue("@ToDate", toDate);
+                    }
                     await conn.OpenAsync();
 
                     using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
@@ -1406,9 +1410,11 @@ order by p.AIDDATE desc";
 
         [HttpGet("Reports/GetItemWPODetails")]
         public async Task<IActionResult> GetItemWPODetails(
-    string finYrId,
-    string itemCode,
-    string directorateId)
+    string? finYrId = null,
+    string? itemCode = null,
+    string? directorateId = null,
+    [FromQuery] bool reagentOnly = false,
+    [FromQuery] int? userId = null)
         {
             List<IndentDetailsDTO> list = new List<IndentDetailsDTO>();
 
@@ -1416,13 +1422,27 @@ order by p.AIDDATE desc";
             {
                 string whereClause = "";
 
-                if (!string.IsNullOrEmpty(finYrId))
+                // Drill-down links can send "undefined"/"null": treat those as no filter instead of failing.
+                bool hasYr = int.TryParse(finYrId, out int yr);
+                bool hasDir = int.TryParse(directorateId, out int dir);
+                bool hasItem = !string.IsNullOrWhiteSpace(itemCode) && itemCode != "undefined" && itemCode != "null";
+
+                if (hasYr)
                     whereClause += " AND p.financial_year_id = @finYrId";
 
-                if (!string.IsNullOrEmpty(itemCode))
+                if (hasItem)
                     whereClause += " AND R.ITEM_CODE_AS_PER_TENDER = @itemCode";
 
-                if (!string.IsNullOrEmpty(directorateId))
+                // Menu "Reagent PO Report" (legacy POSummaryDrillDwnQtyReagent.aspx fillgrid): Order Placed reagent POs
+                // of the user's directorate (users.facility_aut_id, 0 = all).
+                if (reagentOnly)
+                {
+                    whereClause += " AND p.status = 'Order Placed' AND R.categoryId = 2";
+                    if (!hasDir && userId > 0)
+                        whereClause += " AND (isnull((select u.facility_aut_id from users u where u.user_id = @userId), 0) in (0, p.directorate_id))";
+                }
+
+                if (hasDir)
                     whereClause += " AND p.directorate_id = @directorateId";
 
                 string query = @"
@@ -1505,14 +1525,17 @@ order by p.AIDDATE desc";
                 using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
-                    if (!string.IsNullOrEmpty(finYrId))
-                        cmd.Parameters.AddWithValue("@finYrId", finYrId);
+                    if (hasYr)
+                        cmd.Parameters.AddWithValue("@finYrId", yr);
 
-                    if (!string.IsNullOrEmpty(itemCode))
+                    if (hasItem)
                         cmd.Parameters.AddWithValue("@itemCode", itemCode);
 
-                    if (!string.IsNullOrEmpty(directorateId))
-                        cmd.Parameters.AddWithValue("@directorateId", directorateId);
+                    if (hasDir)
+                        cmd.Parameters.AddWithValue("@directorateId", dir);
+
+                    if (reagentOnly && !hasDir && userId > 0)
+                        cmd.Parameters.AddWithValue("@userId", userId);
 
                     await conn.OpenAsync();
 

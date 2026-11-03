@@ -456,7 +456,7 @@ namespace EMISAPIS.Controllers
         }
         [HttpGet("GetSuppliersGridRecords")]
         public async Task<IActionResult> GetSuppliersGridRecords(
-        [FromQuery] string searchText = "",
+        [FromQuery] string? searchText = "",
         [FromQuery] bool incInactive = false)
         {
             var supplierList = new List<SupplierGridDto>();
@@ -1113,7 +1113,7 @@ where 1=1 order by b.BUDGETNAME";
         // 1. Without Institute: GET api/GMFI/GetMappedFundsSummary/12
         // 2. With Institute: GET api/GMFI/GetMappedFundsSummary/12?dmeUserId=45
         [HttpGet("GetMappedFundsSummary/{directorateId}")]
-        public async Task<IActionResult> GetMappedFundsSummary(int directorateId, [FromQuery] string dmeUserId = "0")
+        public async Task<IActionResult> GetMappedFundsSummary(int directorateId, [FromQuery] string? dmeUserId = "0")
         {
             // Safety parameter bounds check guard
             if (directorateId <= 0)
@@ -2518,7 +2518,7 @@ where 1=1 order by b.BUDGETNAME";
             }
         }
         [HttpGet("GetUnpaidPoGridData")]
-        public async Task<IActionResult> GetUnpaidPoGridData([FromQuery] int financialYearId, [FromQuery] string fromDate = null, [FromQuery] string toDate = null)
+        public async Task<IActionResult> GetUnpaidPoGridData([FromQuery] int financialYearId, [FromQuery] string? fromDate = null, [FromQuery] string? toDate = null)
         {
             if (financialYearId <= 0)
             {
@@ -3205,9 +3205,9 @@ where 1=1 order by b.BUDGETNAME";
         //file gridview 
         [HttpGet("GetDashboardGrid")]
         public async Task<IActionResult> GetDashboardGrid(
-            [FromQuery] string poType = "All",
-            [FromQuery] string fitUnfit = "All",
-            [FromQuery] string eqType = "0",
+            [FromQuery] string? poType = "All",
+            [FromQuery] string? fitUnfit = "All",
+            [FromQuery] string? eqType = "0",
             [FromQuery] int authorityId = 0,
             [FromQuery] bool myDesk = false,
             [FromQuery] int userId = 0)

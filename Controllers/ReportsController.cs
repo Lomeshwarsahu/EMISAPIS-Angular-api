@@ -523,6 +523,7 @@ and m.item_id =@itemId
                         isnull(pi.totalprice, 0) as totalprice,
                         case when m.categoryId = 2 then 'Reagent' else 'Equipment' end as Eqptype,
                         p.po_id,
+                        p.po_date as po_date_raw,
                         isnull(sdd.supply_qty,0) as supply_qty,
                         isnull(re.receiptQTY,0) as receiptQTY,
                         isnull(ins.insqty,0) as insqty
@@ -556,7 +557,7 @@ and m.item_id =@itemId
                     ) ins on ins.po_id=pi.po_id and ins.location_id=pi.consignee_id
                     where (p.status is null or p.status not in ('Incomplete', 'Waiting For Approval', 'Cancelled'))
                     {whereClause}
-                    order by p.po_date desc
+                    order by po_date_raw desc
                 ";
 
                 using (SqlCommand cmd = new SqlCommand(query, con))
@@ -702,7 +703,7 @@ and m.item_id =@itemId
 
         // GET: api/Reports/balance-status?balanceType=I&directorateId=5
         [HttpGet("balance-status")]
-        public async Task<IActionResult> GetBalanceStatus([FromQuery] string balanceType = "I", [FromQuery] int directorateId = 5)
+        public async Task<IActionResult> GetBalanceStatus([FromQuery] string? balanceType = "I", [FromQuery] int directorateId = 5)
         {
             List<BalanceStatusDTO> list = new List<BalanceStatusDTO>();
 
@@ -1303,7 +1304,11 @@ left outer join (
     inner join tenders t on t.tender_id = ac.tender_id
     where getdate() between ac.contract_date and ac.contract_end_date
 ) rc on rc.item_id = m.item_id
-left outer join tenders t on t.tender_id = ci.tender_id
+left outer join (
+    select t.item_id, t.tenderDT, ti.tender_no, ti.finalstatus
+    from (select item_id, max(tender_date) tenderDT from v_Tenderstatus group by item_id) t
+    inner join v_Tenderstatus ti on ti.item_id = t.item_id and ti.tender_date = t.tenderDT
+) t on t.item_id = m.item_id
 where 1=1 {yearFilter} {indentFilter}
 group by i.indent_id, i.indent_item_id, ind.facility_id, m.item_code_as_per_tender, m.item_id, pi.POQTY,
          ml.location_name, m.item_name, rc.name, rc.basic_rate, rc.percentage, f.facility_aut_code, f.facility_aut_id,
@@ -1678,7 +1683,7 @@ order by sp.name";
 
         // GET: api/Reports/balance-status-supplier?balanceType=I
         [HttpGet("balance-status-supplier")]
-        public async Task<IActionResult> GetBalanceStatusSupplier([FromQuery] string balanceType = "I", [FromQuery] int supplierId = 0)
+        public async Task<IActionResult> GetBalanceStatusSupplier([FromQuery] string? balanceType = "I", [FromQuery] int supplierId = 0)
         {
             return await GetBalanceStatus(balanceType, 0);
         }
@@ -1687,7 +1692,7 @@ order by sp.name";
 
         // GET: api/Reports/balance-status-cmho?balanceType=I&userId=20
         [HttpGet("balance-status-cmho")]
-        public async Task<IActionResult> GetBalanceStatusCMHO([FromQuery] string balanceType = "I", [FromQuery] int userId = 0)
+        public async Task<IActionResult> GetBalanceStatusCMHO([FromQuery] string? balanceType = "I", [FromQuery] int userId = 0)
         {
             List<BalanceStatusDTO> list = new List<BalanceStatusDTO>();
 
@@ -1796,51 +1801,60 @@ order by l.location_name";
         }
 
         // GET: api/Reports/payment-report?poType=NP
+        // Reports/PaymentReport.aspx — paid sanctions + released withheld amounts (all suppliers; same SQL as the supplier version).
         [HttpGet("payment-report")]
         public async Task<IActionResult> GetPaymentReport([FromQuery] string? poType)
         {
             List<PaymentReportDto> list = new List<PaymentReportDto>();
-            string poFilter = !string.IsNullOrEmpty(poType) ? " and isnull(p.potype, 'NP') = @PoType " : "";
+            string poFilter = string.Equals(poType, "NP", StringComparison.OrdinalIgnoreCase) ? " and isnull(p.potype, 'NP') = 'NP' "
+                : string.Equals(poType, "CP", StringComparison.OrdinalIgnoreCase) ? " and isnull(p.potype, 'NP') = 'CP' " : "";
 
             string query = $@"
-select p.po_id, p.po_no, convert(varchar, p.po_date, 103) as po_date, t.tender_no, sp.name as supplier_name,
-       m.item_name, sum(pi.totalprice) as totalprice,
-       isnull(sum(pay.PAIDAMT), 0) as paid_amount,
-       sum(pi.totalprice) - isnull(sum(pay.PAIDAMT), 0) as balance_amount,
-       case when isnull(sum(pay.PAIDAMT), 0) = 0 then 'Unpaid'
-            when isnull(sum(pay.PAIDAMT), 0) >= sum(pi.totalprice) then 'Paid'
-            else 'Partially Paid' end as payment_status
-from purchase_order p
+select p.po_no,
+       case when p.soissueDT is null then convert(varchar, p.po_date, 103) else convert(varchar, p.soissueDT, 103) end as po_date,
+       sp.name, s.SANCTIONEDAMOUNT as GrossAmt, isnull(s.DEDUCTIONS, 0) as totalDed, isnull(s.addition, 0) as totalAddition,
+       s.chequeAmt as ChequeAmt, py.AIDNO, convert(varchar, py.AIDDATE, 103) as chequedate, s.PAYMENTID
+from BLPSANCTIONS s
+inner join BLPPAYMENTS py on py.PAYMENTID = s.PAYMENTID
+inner join MASBUDGET b on b.BUDGETID = s.BUDGETID
+inner join purchase_order p on s.po_id = p.po_id
 inner join massuppliers sp on sp.supplier_id = p.supplier_id
-inner join po_items pi on pi.po_id = p.po_id
-inner join masitems m on m.item_id = pi.item_id
-inner join tenders t on t.tender_id = p.tender_id
-left outer join BLPSANCTIONS s on s.po_id = p.po_id
-left outer join BLPPAYMENTS pay on pay.paymentid = s.paymentid and pay.status = 'P'
-where p.status in ('Order Placed', 'Partially Received', 'Completed') {poFilter}
-group by p.po_id, p.po_no, p.po_date, t.tender_no, sp.name, m.item_name
-order by p.po_date desc";
+where s.STATUS in ('P') {poFilter}
+
+union all
+
+select p.po_no,
+       case when p.soissueDT is null then convert(varchar, p.po_date, 103) else convert(varchar, p.soissueDT, 103) end as po_date,
+       sp.name, t.RELEASEAMT as GrossAmt, 0 as totalDed, 0 as totalAddition,
+       t.RELEASEAMT as ChequeAmt, py.AIDNO, convert(varchar, py.AIDDATE, 103) as chequedate, py.PAYMENTID
+from BLPTAXS t
+inner join BLPSANCTIONS s on s.SANCTIONID = t.SANCTIONID
+inner join MASBUDGET b on b.BUDGETID = s.BUDGETID
+inner join purchase_order p on p.po_id = s.po_id
+inner join massuppliers sp on sp.supplier_id = p.supplier_id
+inner join BLPPAYMENTS py on py.paymentid = t.paymentid
+where py.STATUS = 'P' and t.TAXTYPEID = 250 {poFilter}
+
+order by PAYMENTID";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
             using SqlCommand cmd = new SqlCommand(query, con);
-            if (!string.IsNullOrEmpty(poType)) cmd.Parameters.AddWithValue("@PoType", poType);
 
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
                 list.Add(new PaymentReportDto
                 {
-                    po_id = reader["po_id"] != DBNull.Value ? Convert.ToInt32(reader["po_id"]) : (int?)null,
                     po_no = reader["po_no"]?.ToString(),
                     po_date = reader["po_date"]?.ToString(),
-                    tender_no = reader["tender_no"]?.ToString(),
-                    supplier_name = reader["supplier_name"]?.ToString(),
-                    item_name = reader["item_name"]?.ToString(),
-                    totalprice = reader["totalprice"] != DBNull.Value ? Convert.ToDecimal(reader["totalprice"]) : 0,
-                    paid_amount = reader["paid_amount"] != DBNull.Value ? Convert.ToDecimal(reader["paid_amount"]) : 0,
-                    balance_amount = reader["balance_amount"] != DBNull.Value ? Convert.ToDecimal(reader["balance_amount"]) : 0,
-                    payment_status = reader["payment_status"]?.ToString()
+                    supplier = reader["name"]?.ToString(),
+                    gross_amount = reader["GrossAmt"] != DBNull.Value ? Convert.ToDecimal(reader["GrossAmt"]) : 0,
+                    total_deduction = reader["totalDed"] != DBNull.Value ? Convert.ToDecimal(reader["totalDed"]) : 0,
+                    total_addition = reader["totalAddition"] != DBNull.Value ? Convert.ToDecimal(reader["totalAddition"]) : 0,
+                    cheque_amount = reader["ChequeAmt"] != DBNull.Value ? Convert.ToDecimal(reader["ChequeAmt"]) : 0,
+                    cheque_date = reader["chequedate"]?.ToString(),
+                    cheque_no = reader["AIDNO"]?.ToString()
                 });
             }
 
@@ -1903,9 +1917,9 @@ order by d.DBStart_Name_En";
             string filter = directorateId == 12 ? " where u.user_id = @UserId " : " where l.DP_DistrictID = @UserId ";
 
             string query = $@"
-select e.existing_item_id, m.item_name, e.serial_no, l.location_name, u.user_name,
-       convert(varchar, e.entry_date, 103) as entry_date,
-       case when e.working_status = 'W' then 'Working' else 'Not Working' end as working_status
+select e.existing_item_id, m.item_name, e.make_no as serial_no, l.location_name, u.user_name,
+       convert(varchar, e.entryDt, 103) as entry_date,
+       case when e.wstatus = 'NW' then 'Not Working' else 'Working' end as working_status
 from existing_item e
 inner join masitems m on m.item_id = e.item_id
 inner join maslocations l on l.location_id = e.location_id
@@ -2272,8 +2286,8 @@ order by p.po_date desc";
             string query = @"
 select l.location_id as facility_id, l.location_name as facility_name, d.DBStart_Name_En as district_name,
        m.item_name, count(e.existing_item_id) as in_stock,
-       sum(case when e.working_status = 'W' then 1 else 0 end) as working,
-       sum(case when e.working_status != 'W' then 1 else 0 end) as not_working,
+       sum(case when isnull(e.wstatus, '') <> 'NW' then 1 else 0 end) as working,
+       sum(case when e.wstatus = 'NW' then 1 else 0 end) as not_working,
        count(e.existing_item_id) as installed
 from existing_item e
 inner join masitems m on m.item_id = e.item_id
@@ -2566,18 +2580,21 @@ order by t.tender_no";
             List<TenderStatusReportDto> list = new List<TenderStatusReportDto>();
             string query = @"
 select t.tender_id, t.tender_no, convert(varchar, t.tender_date, 103) as tender_date,
-       t.finalstatus, f.year, count(distinct ti.item_id) as total_items
+       s.cStatus as finalstatus, f.year, count(distinct ti.item_id) as total_items
 from tenders t
 inner join mas_financial_year f on f.financial_year_id = t.financial_year_id
 left outer join tender_items ti on ti.tender_id = t.tender_id
+left outer join mascoverstatus s on s.csid = t.csid
 where (@YearId = 0 or t.financial_year_id = @YearId)
-group by t.tender_id, t.tender_no, t.tender_date, t.finalstatus, f.year
+  and (@StatusId = 0 or t.csid = @StatusId)
+group by t.tender_id, t.tender_no, t.tender_date, s.cStatus, f.year
 order by t.tender_date desc";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
             using SqlCommand cmd = new SqlCommand(query, con);
             cmd.Parameters.AddWithValue("@YearId", yearId);
+            cmd.Parameters.AddWithValue("@StatusId", statusId);
 
             using SqlDataReader reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -2679,18 +2696,22 @@ order by t.tender_no, m.item_name";
         }
 
         // GET: api/Reports/emd-refund-report
+        // Reports/EMDRefundReport.aspx — refunded EMD cheques (legacy is per supplier; this HO route lists all suppliers).
         [HttpGet("emd-refund-report")]
         public async Task<IActionResult> GetEmdRefundReport()
         {
             List<EmdRefundReportDto> list = new List<EmdRefundReportDto>();
             string query = @"
-select t.tender_no, sp.name as supplier_name, isnull(ef.amount, 0) as emd_amount,
-       case when ef.status = 'A' then 'Approved' when ef.status = 'R' then 'Rejected' else 'Pending' end as refund_status,
-       convert(varchar, ef.action_date, 103) as refund_date
-from emd_file ef
-inner join tenders t on t.tender_id = ef.tender_id
-inner join massuppliers sp on sp.supplier_id = ef.supplier_id
-order by ef.action_date desc";
+select ed.id, s.name, case when ed.TenderNo != '-' then t.tender_no else ed.OtherTenderNo end as TenderNo,
+       ed.refundchequeamt as RefundedEMD, ed.EMDAmt as Requested_EMD, convert(varchar, ed.EMDDepositeDt, 103) as EMDDepositeDt,
+       ec.ChequeNo, convert(varchar, ec.ChequeDate, 103) as Chequedate, ed.backlog_chequeno,
+       convert(varchar, ed.backlog_chequedt, 103) as backlog_chequedt, (ed.EMDAmt - ed.refundchequeamt) as previous_refundedamt
+from EMDDepositeDetail ed
+inner join massuppliers s on s.supplier_id = ed.SupId
+left join tenders t on cast(t.tender_id as varchar(50)) = ed.TenderNo
+inner join EMDCheque ec on ec.ChequeID = ed.ChequeID
+where ec.status = 'C'
+order by ed.id desc";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
@@ -2701,11 +2722,16 @@ order by ef.action_date desc";
             {
                 list.Add(new EmdRefundReportDto
                 {
-                    tender_no = reader["tender_no"]?.ToString(),
-                    supplier_name = reader["supplier_name"]?.ToString(),
-                    emd_amount = reader["emd_amount"] != DBNull.Value ? Convert.ToDecimal(reader["emd_amount"]) : 0,
-                    refund_status = reader["refund_status"]?.ToString(),
-                    refund_date = reader["refund_date"]?.ToString()
+                    tender_no = reader["TenderNo"]?.ToString(),
+                    supplier_name = reader["name"]?.ToString(),
+                    refunded_emd = reader["RefundedEMD"] != DBNull.Value ? Convert.ToDecimal(reader["RefundedEMD"]) : 0,
+                    requested_emd = reader["Requested_EMD"] != DBNull.Value ? Convert.ToDecimal(reader["Requested_EMD"]) : 0,
+                    emd_deposit_dt = reader["EMDDepositeDt"]?.ToString(),
+                    cheque_no = reader["ChequeNo"]?.ToString(),
+                    cheque_date = reader["Chequedate"]?.ToString(),
+                    backlog_cheque_no = reader["backlog_chequeno"]?.ToString(),
+                    backlog_cheque_dt = reader["backlog_chequedt"]?.ToString(),
+                    previous_refunded_amt = reader["previous_refundedamt"] != DBNull.Value ? Convert.ToDecimal(reader["previous_refundedamt"]) : 0
                 });
             }
 
@@ -2713,16 +2739,18 @@ order by ef.action_date desc";
         }
 
         // GET: api/Reports/eel-suggestion-report
+        // Reports/EEL_SuggestionReport.aspx
         [HttpGet("eel-suggestion-report")]
         public async Task<IActionResult> GetEelSuggestionReport()
         {
             List<EelSuggestionReportDto> list = new List<EelSuggestionReportDto>();
             string query = @"
-select s.specification_id, m.item_name, s.suggested_by, s.suggestion,
-       convert(varchar, s.created_date, 103) as created_date
-from eel_specifications s
-inner join masitems m on m.item_id = s.item_id
-order by s.created_date desc";
+select es.id, es.name, es.mobileno, es.emailid, es.itemname, es.SUGGESTIONCONDITION,
+       case when es.cgmscsupplier = 2 then es.othersupplier else s.name end as supplier,
+       convert(varchar, es.entrydt, 103) as entrydt
+from eelsuggestion es
+left outer join massuppliers s on s.supplier_id = es.supplierid
+order by es.id desc";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
@@ -2733,11 +2761,13 @@ order by s.created_date desc";
             {
                 list.Add(new EelSuggestionReportDto
                 {
-                    specification_id = reader["specification_id"] != DBNull.Value ? Convert.ToInt32(reader["specification_id"]) : (int?)null,
-                    item_name = reader["item_name"]?.ToString(),
-                    suggested_by = reader["suggested_by"]?.ToString(),
-                    suggestion = reader["suggestion"]?.ToString(),
-                    created_date = reader["created_date"]?.ToString()
+                    id = reader["id"] != DBNull.Value ? Convert.ToInt32(reader["id"]) : (int?)null,
+                    item_name = reader["itemname"]?.ToString(),
+                    supplier_name = reader["supplier"]?.ToString(),
+                    suggestion = reader["SUGGESTIONCONDITION"]?.ToString(),
+                    mobile = reader["mobileno"]?.ToString(),
+                    email = reader["emailid"]?.ToString(),
+                    entry_date = reader["entrydt"]?.ToString()
                 });
             }
 
@@ -2848,7 +2878,7 @@ order by u.user_name";
         public async Task<IActionResult> GetItems()
         {
             List<ItemDTO> list = new List<ItemDTO>();
-            string query = "select item_id, item_name from masitems where status = 'A' order by item_name";
+            string query = "select item_id, item_name from masitems order by item_name";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
@@ -2897,7 +2927,7 @@ order by u.user_name";
         public async Task<IActionResult> GetSuppliers()
         {
             List<SupplierLookupDto> list = new List<SupplierLookupDto>();
-            string query = "select supplier_id, name as supplier_name from massuppliers where status = 'A' order by name";
+            string query = "select supplier_id, name as supplier_name from massuppliers order by name";
 
             using SqlConnection con = new SqlConnection(_connectionString);
             await con.OpenAsync();
@@ -3383,7 +3413,6 @@ order by POdate";
         }
 
         // GET: api/Reports/equipment-tag-report
-        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpGet("equipment-tag-report")]
         public async Task<IActionResult> GetEquipmentTagReport(
             [FromQuery] string? poType,
@@ -3438,7 +3467,7 @@ left outer join maslocations l on l.location_id = r.location_id
 left outer join Districts d on d.DP_DistrictID = l.DP_DistrictID
 left outer join po_items pi on pi.po_id = r.po_id and (r.location_id = pi.consignee_id or pi.consignee_id is null)
 left outer join purchase_order p on p.po_id = r.po_id
-left outer join masitems m on m.item_id = ISNULL(pi.item_id, ri.item_id)
+left outer join masitems m on m.item_id = pi.item_id
 where 1=1 and (m.item_id is null or m.item_id not in (2668, 2666)) {poTypeWhere} {whereFromTo}
 
 union all

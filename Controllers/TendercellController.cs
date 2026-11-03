@@ -96,7 +96,7 @@ namespace EMISAPIS.Controllers
         }
 
         [HttpGet("GetIndentGridData/{directorateId}")]
-        public async Task<IActionResult> GetIndentGridData(int directorateId, [FromQuery] string yearid = null, [FromQuery] string userId = null)
+        public async Task<IActionResult> GetIndentGridData(int directorateId, [FromQuery] string? yearid = null, [FromQuery] string? userId = null)
         {
             if (directorateId != 11 && directorateId != 12)
             {

@@ -989,10 +989,10 @@ where  getdate() between ac.contract_date  and DATEADD(day, 1, ac.contract_end_d
 
         [HttpGet("GetRCreports")]
         public async Task<IActionResult> GetRCreports(
-        [FromQuery] string financialYearId = "",
-        [FromQuery] string tenderId = "",
-        [FromQuery] string supplierId = "",
-        [FromQuery] string status = "")
+        [FromQuery] string? financialYearId = "",
+        [FromQuery] string? tenderId = "",
+        [FromQuery] string? supplierId = "",
+        [FromQuery] string? status = "")
         {
             List<AwardOfContractDTO> list = new List<AwardOfContractDTO>(); 
 

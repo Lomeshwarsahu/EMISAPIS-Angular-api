@@ -315,16 +315,15 @@ namespace EMISAPIS.DTOS
 
     public class PaymentReportDto
     {
-        public int? po_id { get; set; }
         public string? po_no { get; set; }
         public string? po_date { get; set; }
-        public string? tender_no { get; set; }
-        public string? supplier_name { get; set; }
-        public string? item_name { get; set; }
-        public decimal? totalprice { get; set; }
-        public decimal? paid_amount { get; set; }
-        public decimal? balance_amount { get; set; }
-        public string? payment_status { get; set; }
+        public string? supplier { get; set; }
+        public decimal? gross_amount { get; set; }
+        public decimal? total_deduction { get; set; }
+        public decimal? total_addition { get; set; }
+        public decimal? cheque_amount { get; set; }
+        public string? cheque_date { get; set; }
+        public string? cheque_no { get; set; }
     }
 
     public class OpeningStockSummaryDto
@@ -550,18 +549,25 @@ namespace EMISAPIS.DTOS
     {
         public string? tender_no { get; set; }
         public string? supplier_name { get; set; }
-        public decimal? emd_amount { get; set; }
-        public string? refund_status { get; set; }
-        public string? refund_date { get; set; }
+        public decimal? refunded_emd { get; set; }
+        public decimal? requested_emd { get; set; }
+        public string? emd_deposit_dt { get; set; }
+        public string? cheque_no { get; set; }
+        public string? cheque_date { get; set; }
+        public string? backlog_cheque_no { get; set; }
+        public string? backlog_cheque_dt { get; set; }
+        public decimal? previous_refunded_amt { get; set; }
     }
 
     public class EelSuggestionReportDto
     {
-        public int? specification_id { get; set; }
+        public int? id { get; set; }
         public string? item_name { get; set; }
-        public string? suggested_by { get; set; }
+        public string? supplier_name { get; set; }
         public string? suggestion { get; set; }
-        public string? created_date { get; set; }
+        public string? mobile { get; set; }
+        public string? email { get; set; }
+        public string? entry_date { get; set; }
     }
 
     public class IndentReportPocellDto

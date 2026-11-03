@@ -53,7 +53,7 @@ namespace EMISAPIS.Controllers
         public async Task<IActionResult> GetCovidStock(
             [FromQuery] int userId,
             [FromQuery] int? pid = null,
-            [FromQuery] string filterType = "All",
+            [FromQuery] string? filterType = "All",
             [FromQuery] int? pageNumber = null,
             [FromQuery] int? pageSize = null)
         {
@@ -548,7 +548,6 @@ VALUES
         }
 
         /// <summary>NodleInformation.ascx / NodleInformationNew.aspx — Nodal Officer entry list.</summary>
-        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpGet("nodal-information")]
         public async Task<IActionResult> GetNodalInformation([FromQuery] int userId)
         {
@@ -623,7 +622,6 @@ ORDER BY m.DP_DistrictID, ft.facility_type_id";
         }
 
         /// <summary>NodleInformation.ascx — Save new nodal officer entry.</summary>
-        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpPost("nodal-information")]
         public async Task<IActionResult> SaveNodalInformation([FromBody] NodalInformationSaveDto dto)
         {
@@ -661,7 +659,6 @@ VALUES(@UserId, @Name, @Designation, @EmailId, @MobileNo, GETDATE(), 'Y')";
         }
 
         /// <summary>NodleInformation.ascx — Deactivate/delete nodal officer entry.</summary>
-        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         [HttpDelete("nodal-information/{id:int}")]
         public async Task<IActionResult> DeleteNodalInformation(int id)
         {

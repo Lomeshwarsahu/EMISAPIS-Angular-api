@@ -70,7 +70,7 @@ namespace EMISAPIS.Controllers
 
         [AllowAnonymous]
         [HttpGet("profile/{id:int}")]
-        public async Task<IActionResult> GetSupplierProfile(int id, [FromQuery] string mode = "login")
+        public async Task<IActionResult> GetSupplierProfile(int id, [FromQuery] string? mode = "login")
         {
             if (id <= 0)
                 return BadRequest(new { message = "Invalid id." });
@@ -2310,7 +2310,7 @@ WHERE d.po_id = @PoId AND d.location_id = @LocId AND d.Issue_id = @IssueId";
         public async Task<IActionResult> GetSupplierPoReceiptOptions(
             int userId,
             [FromQuery] int financialYearId = 0,
-            [FromQuery] string poType = "All")
+            [FromQuery] string? poType = "All")
         {
             if (userId <= 0)
                 return BadRequest(new { message = "Invalid user id." });
@@ -2403,7 +2403,7 @@ ORDER BY b.po_date DESC";
             int userId,
             [FromQuery] int poId = 0,
             [FromQuery] int financialYearId = 0,
-            [FromQuery] string poType = "All")
+            [FromQuery] string? poType = "All")
         {
             if (userId <= 0)
                 return BadRequest(new { message = "Invalid user id." });
@@ -4168,7 +4168,7 @@ WHERE supplier_id = @SupplierId";
         [HttpGet("accepted-report/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierAcceptedReport(
             int userId,
-            [FromQuery] string filterType = "tender",
+            [FromQuery] string? filterType = "tender",
             [FromQuery] int tenderId = 0,
             [FromQuery] int supplierId = 0)
         {
@@ -4239,7 +4239,7 @@ ORDER BY tp.fdate DESC";
         [HttpGet("receipt-complain/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierReceiptComplain(
             int userId,
-            [FromQuery] string status = "Booked")
+            [FromQuery] string? status = "Booked")
         {
             if (userId <= 0)
                 return BadRequest(new { message = "Invalid user id." });
@@ -4675,7 +4675,7 @@ WHERE Id = @Id AND SupId = @SupId";
         [HttpGet("payment-report/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierPaymentReport(
             int userId,
-            [FromQuery] string poType = "NP")
+            [FromQuery] string? poType = "NP")
         {
             if (userId <= 0)
                 return BadRequest(new { message = "Invalid user id." });
@@ -5100,7 +5100,7 @@ WHERE sc.sanctionid = @SanctionId";
         [HttpGet("balance-status/by-user/{userId:int}")]
         public async Task<IActionResult> GetSupplierBalanceStatus(
             int userId,
-            [FromQuery] string balanceType = "R")
+            [FromQuery] string? balanceType = "R")
         {
             if (userId <= 0)
                 return BadRequest(new { message = "Invalid user id." });

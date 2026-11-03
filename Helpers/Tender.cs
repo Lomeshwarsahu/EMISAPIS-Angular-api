@@ -54,7 +54,7 @@ public class Tender
                   AND (
                         (csid IN (3, 4, 5) AND cover_a IS NOT NULL)
                         OR 
-                        (csid IN (5) AND (ISNULL(isgemTender, 'N') = 'Y' OR ISNULL(isDirectPurchase, 'N') = 'Y'))
+                        (csid IN (5) AND ISNULL(isgemTender, 'N') = 'Y')
                       )
                 ORDER BY cover_a DESC";
 
@@ -67,7 +67,9 @@ public class Tender
         }
         else
         {
-            strcsid = " and csid =" + stid;
+            // stid comes from the query string: only a numeric status id may reach the SQL text
+            if (!int.TryParse(stid, out int csid)) return new DataTable();
+            strcsid = " and csid =" + csid;
         }
 
         if (undOBClaim == "Under Prep")

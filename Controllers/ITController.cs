@@ -503,6 +503,7 @@ namespace EMISAPIS.Controllers
                 SELECT s.submenuid, s.submenuname, s.submenulink, s.menuid, m.menuname,
                        s.submenuorder, s.isactive
                 FROM masSubMenu s
+                INNER JOIN masMenu m ON m.MenuID = s.MenuID
                 INNER JOIN masSubMenuRole sr ON sr.submenuid = s.submenuid
                 WHERE s.isActive = 1 AND s.MenuID = @MenuId AND sr.Roleid = @RoleId
                 ORDER BY s.SubMenuOrder", conn);
