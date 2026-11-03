@@ -8,7 +8,15 @@
 		<!-- Legacy DTOs/controllers: nullable warnings only, not build blockers -->
 		<NoWarn>$(NoWarn);CS8618;CS8600;CS8601;CS8605;CS0219</NoWarn>
 		<UseAppHost>false</UseAppHost>
+		<!-- Deploy output always goes to ./publish; keep it out of the project's own items -->
+		<PublishDir>$(MSBuildProjectDirectory)/publish/</PublishDir>
+		<DefaultItemExcludes>$(DefaultItemExcludes);publish/**</DefaultItemExcludes>
 	</PropertyGroup>
+
+	<!-- Every Release build also refreshes ./publish, so the folder copied to the server is never stale -->
+	<Target Name="AutoPublishAfterBuild" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' AND '$(_IsPublishing)' != 'true' AND '$(AutoPublishing)' != 'true'">
+		<MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish" Properties="Configuration=$(Configuration);NoBuild=true;AutoPublishing=true" />
+	</Target>
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="6.0.36" />

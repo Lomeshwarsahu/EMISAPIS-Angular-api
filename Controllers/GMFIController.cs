@@ -5420,7 +5420,7 @@ where p.status in ('Completed', 'Order Placed', 'Partially Received') and bi.PTy
             }
 
             string connString = _config.GetConnectionString("DefaultConnection");
-            SubHeadResponseDto subHead = null;
+            var list = new List<SubHeadResponseDto>();
 
             using (SqlConnection conn = new SqlConnection(connString))
             {
@@ -5428,7 +5428,7 @@ where p.status in ('Completed', 'Order Placed', 'Partially Received') and bi.PTy
                 try
                 {
                     // WHERE clause add kiya gaya hai
-                    string selectSql = "SELECT MHID, SHID, SubHead_Eng, SubHead_Hindi, IsActive, CreatedDate FROM SubHead WHERE MHID = @Mhid";
+                    string selectSql = "SELECT MHID, SHID, SubHead_Eng, SubHead_Hindi, IsActive, CreatedDate FROM SubHead WHERE MHID = @Mhid ORDER BY SHID";
 
                     using (SqlCommand cmd = new SqlCommand(selectSql, conn))
                     {
@@ -5437,10 +5437,10 @@ where p.status in ('Completed', 'Order Placed', 'Partially Received') and bi.PTy
 
                         using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
                         {
-                            // Kyunki ID se sirf ek hi record aayega, isliye 'while' ki jagah 'if' use karenge
-                            if (await reader.ReadAsync())
+                            // Ek main head ke multiple sub heads ho sakte hain, isliye saare rows return karo
+                            while (await reader.ReadAsync())
                             {
-                                subHead = new SubHeadResponseDto
+                                list.Add(new SubHeadResponseDto
                                 {
                                     MHID = reader["MHID"] != DBNull.Value ? Convert.ToInt32(reader["MHID"]) : 0,
                                     SHID = reader["SHID"] != DBNull.Value ? Convert.ToInt32(reader["SHID"]) : 0,
@@ -5448,18 +5448,13 @@ where p.status in ('Completed', 'Order Placed', 'Partially Received') and bi.PTy
                                     SubHead_Hindi = reader["SubHead_Hindi"] != DBNull.Value ? reader["SubHead_Hindi"].ToString() : string.Empty,
                                     IsActive = reader["IsActive"] != DBNull.Value ? reader["IsActive"].ToString() : string.Empty,
                                     CreatedDate = reader["CreatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedDate"]) : null
-                                };
+                                });
                             }
                         }
                     }
 
-                    // Agar database me us ID ka koi data nahi mila
-                    if (subHead == null)
-                    {
-                        return NotFound(new { message = "SubHead not found." });
-                    }
-
-                    return Ok(subHead);
+                    // Sub head na ho to empty list (404 nahi) — UI "no sub heads" dikhata hai
+                    return Ok(list);
                 }
                 catch (Exception ex)
                 {
