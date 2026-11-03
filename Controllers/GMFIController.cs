@@ -5490,6 +5490,101 @@ GROUP BY
             }
         }
 
+
+        // PUT Method: Update SubHead
+        [HttpPut("UpdateSubHead/{shid}")]
+        public async Task<IActionResult> UpdateSubHead(int shid, [FromBody] SubHeadDto dto)
+        {
+            // Basic validation
+            if (shid <= 0)
+            {
+                return BadRequest(new { message = "Valid SHID is required." });
+            }
+
+            if (dto == null || string.IsNullOrWhiteSpace(dto.SubHead_Eng))
+            {
+                return BadRequest(new
+                {
+                    message = "SubHead English name is required."
+                });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+
+                using (SqlTransaction trans = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        string updateSql = @"
+                    UPDATE SubHead
+                    SET
+                        MHID = @MHID,
+                        SubHead_Eng = @Eng,
+                        SubHead_Hindi = @Hindi,
+                        IsActive = @IsActive
+                    WHERE SHID = @SHID;
+
+                    SELECT @@ROWCOUNT;";
+
+                        int rowsAffected;
+
+                        using (SqlCommand cmd = new SqlCommand(updateSql, conn, trans))
+                        {
+                            cmd.Parameters.Add("@SHID", SqlDbType.Int).Value = shid;
+                            cmd.Parameters.Add("@MHID", SqlDbType.Int).Value = dto.MHID;
+                            cmd.Parameters.Add("@Eng", SqlDbType.NVarChar).Value =
+                                dto.SubHead_Eng.Trim();
+
+                            cmd.Parameters.Add("@Hindi", SqlDbType.NVarChar).Value =
+                                string.IsNullOrWhiteSpace(dto.SubHead_Hindi)
+                                    ? string.Empty
+                                    : dto.SubHead_Hindi.Trim();
+
+                            cmd.Parameters.Add("@IsActive", SqlDbType.NVarChar).Value =
+                                string.IsNullOrWhiteSpace(dto.IsActive)
+                                    ? "Active"
+                                    : dto.IsActive.Trim();
+
+                            rowsAffected = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+                        }
+
+                        if (rowsAffected == 0)
+                        {
+                            await trans.RollbackAsync();
+
+                            return NotFound(new
+                            {
+                                message = "SubHead record not found.",
+                                shid = shid
+                            });
+                        }
+
+                        await trans.CommitAsync();
+
+                        return Ok(new
+                        {
+                            message = "Sub Head Updated Successfully.",
+                            shid = shid
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        await trans.RollbackAsync();
+
+                        return StatusCode(500, new
+                        {
+                            message = "Database transaction failed.",
+                            error = ex.Message
+                        });
+                    }
+                }
+            }
+        }
+
         // 2. Aapka GET Method
         [HttpGet("GetSubHeads")]
         public async Task<IActionResult> GetSubHeads()
@@ -5533,6 +5628,8 @@ GROUP BY
                 }
             }
         }
+
+
 
 
         [HttpGet("GetSubHeadById/{Mhid}")]
@@ -5592,6 +5689,81 @@ GROUP BY
                 }
             }
         }
+
+        [HttpGet("GetSubHeadByIdShid/{shid}")]
+        public async Task<IActionResult> GetSubHeadByIdShid(int shid)
+        {
+            if (shid <= 0)
+            {
+                return BadRequest(new { message = "Invalid SHID." });
+            }
+
+            string connString = _config.GetConnectionString("DefaultConnection");
+            SubHeadResponseDto subHead = null;
+
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                await conn.OpenAsync();
+
+                try
+                {
+                    string selectSql = @"
+                SELECT MHID, SHID, SubHead_Eng, SubHead_Hindi,
+                       IsActive, CreatedDate
+                FROM SubHead
+                WHERE SHID = @SHID";
+
+                    using (SqlCommand cmd = new SqlCommand(selectSql, conn))
+                    {
+                        cmd.Parameters.Add("@SHID", SqlDbType.Int).Value = shid;
+
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            if (await reader.ReadAsync())
+                            {
+                                subHead = new SubHeadResponseDto
+                                {
+                                    MHID = reader["MHID"] != DBNull.Value
+                                        ? Convert.ToInt32(reader["MHID"]) : 0,
+
+                                    SHID = reader["SHID"] != DBNull.Value
+                                        ? Convert.ToInt32(reader["SHID"]) : 0,
+
+                                    SubHead_Eng = reader["SubHead_Eng"] != DBNull.Value
+                                        ? reader["SubHead_Eng"].ToString() : string.Empty,
+
+                                    SubHead_Hindi = reader["SubHead_Hindi"] != DBNull.Value
+                                        ? reader["SubHead_Hindi"].ToString() : string.Empty,
+
+                                    IsActive = reader["IsActive"] != DBNull.Value
+                                        ? reader["IsActive"].ToString() : string.Empty,
+
+                                    CreatedDate = reader["CreatedDate"] != DBNull.Value
+                                        ? Convert.ToDateTime(reader["CreatedDate"]) : null
+                                };
+                            }
+                        }
+                    }
+
+                    if (subHead == null)
+                    {
+                        return NotFound(new { message = "SubHead not found." });
+                    }
+
+                    return Ok(subHead);
+                }
+                catch (Exception ex)
+                {
+                    return StatusCode(500, new
+                    {
+                        message = "Database fetch failed.",
+                        error = ex.Message
+                    });
+                }
+            }
+        }
+
+
 
         [HttpGet("Transliterate")]
         public async Task<IActionResult> Transliterate([FromQuery] string text)
