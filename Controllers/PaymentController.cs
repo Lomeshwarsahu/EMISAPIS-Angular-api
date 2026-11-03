@@ -234,8 +234,8 @@ and s.STATUS in ('P'))ORDER BY Rowno";
 
             if (request.Potype == "CP")
                 whereclause += " and  isnull(p.potype,'NP')='CP' ";
-            if (request.Potype == "SP")
-                whereclause += " and  isnull(p.potype,'NP')='SP' ";
+            //if (request.Potype == "SP")
+            //    whereclause += " and  isnull(p.potype,'NP')='SP' ";
 
             if (request.Potype == "All")
                 whereclause += "";
@@ -256,50 +256,298 @@ and s.STATUS in ('P'))ORDER BY Rowno";
 
             if (request.Potype == "SP")
             {
-                query = @"select fitunfit,po_id,tender_no, po_no ,Supplier, po_date,facility_aut_name,item_code_as_per_tender,item_name , POQTY,cast(POValue as bigint) as POValue, Supplyqty, instalationQty, receiptQTY, LastRDate1,potype ,fileno, filedt, PresentFile, presentuserid, TOUSERID, penaltypercent, reasonid ,ReasonName,issolved ,dbo.GetSiteNotReady(po_id) as SiteStatus , Rowno , todate , entDT, remarks,Extstatus from ( select case when (SUM(POQTY)=(isnull(SUM(insqty),0)+isnull(sum(deniedqty),0)) and SUM(POQTY)=(isnull(SUM(receiptQTY),0)+isnull(SUM(DenRec),0)) and (reasonid=11 or reasonid=13 or reasonid is null) ) then 'Fit for Payment' else case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11 OR reasonid=15 ) ) then 'Fit for Payment' else case when (SUM(POQTY)! =isnull(SUM(receiptQTY),0) and (reasonid=16 ) ) then 'Fit for Payment' else 'Not Fit For Payment' end end end as fitunfit, dbo.GetExtStatus(po_id) as Extstatus, a.po_id,tender_no,outward_no+'/'+po_no as po_no ,Supplier, CONVERT(varchar,po_date,103)as po_date,facility_aut_name,item_code_as_per_tender,item_name ,SUM(POQTY) as POQTY,sum(totalprice) POValue,SUM(Supplyqty)as Supplyqty, isnull(SUM(insqty),0) as instalationQty,isnull(SUM(receiptQTY),0) receiptQTY,CONVERT(varchar,LastRDate,103) as LastRDate1,potype ,fileno,CONVERT(varchar,filedt,103) as filedt,isnull(pres.user_name,'TPO(V)') PresentFile,isnull(pres.user_id,383) as presentuserid,isnull(pres.TOUSERID,383) as TOUSERID,isnull(penaltypercent,0) penaltypercent, reasonid ,ReasonName,issolved ,dbo.GetSiteNotReady(po_id) as SiteStatus ,ROW_NUMBER() OVER(ORDER BY LastRDaterow ) AS Rowno ,isnull(todate,'NA') as todate ,isnull(entDT,'NA') as entDT, remarks from ( select t.penaltypercent, p.po_id,t.tender_no,p.outward_no,p.po_no,(case when p.soissueDT is null then p.po_date else p.soissueDT end) as po_date,p.directorate_id,dir.facility_aut_name,m.item_code_as_per_tender,m.item_name,sp.name as Supplier,pi.quantity as POQTY,pi.totalprice,Supplyqty,re.receiptQTY, red.LastRDate ,case when isnull(rpo.reasonid,0) =13 then red.LastRDate else case when isnull(rpo.reasonid,0) !=0 then getdate() else red.LastRDate end end as LastRDaterow ,ins.insqty,den.deniedqty,DenR.DenRec,case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype ,p.fileno,p.filedt,rpo.ReasonName,rpo.issolved AS issolved,reasonid,rpo.remarks from purchase_order p inner join massuppliers sp on sp.supplier_id=p.supplier_id left outer join ( select sum(pi.quantity) as quantity,pi.po_id,pi.item_id,sum(pi.totalprice) as totalprice from po_items pi group by pi.po_id,pi.item_id ) pi on pi.po_id=p.po_id inner join tenders t on t.tender_id=p.tender_id inner join masitems m on m.item_id=pi.item_id inner join facility_aut dir on dir.facility_aut_id=p.directorate_id left outer join ( select po_id,isnull(sum(Supplyqty),0) as Supplyqty from SupplierDispatch d inner join Issue_item_details i on d.Issue_id=i.Issue_id inner join maslocations u on u.location_id= d.location_id where d.status='C' group by po_id ) as sup on sup.po_id=pi.po_id left outer join ( select isnull(sum(r.receipt_qty),0) as receiptQTY ,r.po_id from receipts r where r.recieved_date is not null and r.status in ('C','Received') group by po_id )as re on re.po_id=pi.po_id left outer join ( select sum(ri.received_qty) as insqty,r.po_id from receipts r left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id where r.recieved_date is not null and r.status in ('C') group by r.po_id )as ins on ins.po_id=pi.po_id left outer join ( select sum (deniedqty) as deniedqty ,ponoid from descrepency where issolved is null group by ponoid )as Den on Den.ponoid=pi.po_id left outer join ( select sum (deniedqty) as DenRec,ponoid from descrepency where receiptid is null and issolved is null group by ponoid )as DenR on DenR.ponoid=pi.po_id left outer join ( select max(r.recieved_date)LastRDate,r.po_id from receipts r left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id where r.recieved_date is not null and r.status in ('C','Received') group by r.po_id )as red on red.po_id=pi.po_id left outer join ( select Max(SORID) SRID,r.PONOID as rpo_id from SOORDERREASON r inner join ReasonMaster rm on rm.reasonid=r.reasonid where r.reasonid not in (1) group by r.PONOID ) rpo1 on rpo1.rpo_id=p.po_id left outer join ( select r.SORID,r.reasonid,rm.ReasonName,remarks, case when r.reasonid=13 then 'Y' else 'N' end as issolved from SOORDERREASON r inner join ReasonMaster rm on rm.reasonid=r.reasonid where r.reasonid not in (1) ) rpo on rpo.SORID=rpo1.SRID where 1=1 --and p.po_id in (2393) and p.status in ('Completed','Order Placed','Partially Received') and p.Ispayment is null and Supplyqty>0 and LastRDate is not null
-        " + whereclause + @"
-        ) a
-        left outer join 
-        (
-        select u.user_name,m.PONOID,u.user_id,m.TOUSERID,
-        convert(varchar, m.todate,103) as todate,
-        convert(varchar, m.ENTRYDT, 100) as entDT
-        from users u 
-        inner join masfilemovement m on m.TOUSERID=u.user_id and m.PRESENTFILEFLAG='Y'
-        ) pres on pres.PONOID=a.po_id   
-        where 1=1 " + whFileMyDesk + @"
-        group by entDT,todate, outward_no,pres.user_name,pres.user_id,potype,po_no,
-        po_date,facility_aut_name,item_code_as_per_tender,item_name,LastRDate,
-        LastRDaterow,Supplier,po_id,tender_no,fileno,filedt,pres.TOUSERID,
-        penaltypercent,ReasonName,issolved ,a.reasonid,a.REMARKS
-        )b
-        where 1=1 
-        " + ftunft + @"
-        and po_id in (select distinct po_id from receipts r where SiteNotFlag='Y')
-        order by ROW_NUMBER() OVER(ORDER BY Rowno )";
+                 query = @"select fitunfit,po_id,tender_no, po_no ,Supplier, po_date,facility_aut_name,item_code_as_per_tender,item_name 
+, POQTY,cast(POValue as bigint) as POValue, Supplyqty, instalationQty, receiptQTY, LastRDate1,potype
+,fileno, filedt, PresentFile, presentuserid, TOUSERID, penaltypercent,
+reasonid
+,ReasonName,issolved
+,dbo.GetSiteNotReady(po_id) as SiteStatus
+, Rowno
+, todate
+, entDT,
+remarks,Extstatus from 
+(
+
+select 
+case when (SUM(POQTY)=(isnull(SUM(insqty),0)+isnull(sum(deniedqty),0)) and SUM(POQTY)=(isnull(SUM(receiptQTY),0)+isnull(SUM(DenRec),0))  and (reasonid=11 or reasonid=13 or reasonid is null) ) then 'Fit for Payment'
+else  case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11 OR reasonid=15 ) ) then 'Fit for Payment'
+else  case when (SUM(POQTY)! =isnull(SUM(receiptQTY),0) and (reasonid=16 ) ) then 'Fit for Payment'
+else   'Not Fit For Payment' 
+end end end as fitunfit,
+dbo.GetExtStatus(po_id) as Extstatus,
+
+a.po_id,tender_no,outward_no+'/'+po_no as po_no ,Supplier, CONVERT(varchar,po_date,103)as po_date,facility_aut_name,item_code_as_per_tender,item_name
+,SUM(POQTY) as POQTY,sum(totalprice) POValue,SUM(Supplyqty)as Supplyqty, isnull(SUM(insqty),0)  as instalationQty,isnull(SUM(receiptQTY),0)  receiptQTY,CONVERT(varchar,LastRDate,103) as LastRDate1,potype
+,fileno,CONVERT(varchar,filedt,103) as filedt,isnull(pres.user_name,'TPO(V)') PresentFile,isnull(pres.user_id,383) as presentuserid,isnull(pres.TOUSERID,383) as TOUSERID,isnull(penaltypercent,0) penaltypercent,
+reasonid
+,ReasonName,issolved
+,dbo.GetSiteNotReady(po_id) as SiteStatus
+,ROW_NUMBER() OVER(ORDER BY LastRDaterow ) AS Rowno
+,isnull(todate,'NA') as  todate
+,isnull(entDT,'NA') as  entDT,
+remarks
+
+from (
+
+select t.penaltypercent, p.po_id,t.tender_no,p.outward_no,p.po_no,(case when p.soissueDT is null then p.po_date else p.soissueDT end) as  po_date,p.directorate_id,dir.facility_aut_name,m.item_code_as_per_tender,m.item_name,sp.name as Supplier,pi.quantity as POQTY,pi.totalprice,Supplyqty,re.receiptQTY,
+red.LastRDate ,case when  isnull(rpo.reasonid,0) =13 then red.LastRDate  else case when isnull(rpo.reasonid,0) !=0 then getdate()  else red.LastRDate end end as LastRDaterow
+,ins.insqty,den.deniedqty,DenR.DenRec,case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype
+,p.fileno,p.filedt,rpo.ReasonName,rpo.issolved AS issolved,reasonid,rpo.remarks
+from  purchase_order p 
+ inner join massuppliers sp on sp.supplier_id=p.supplier_id
+ left outer join  
+ (
+select sum(pi.quantity) as quantity,pi.po_id,pi.item_id,sum(pi.totalprice) as totalprice  from po_items pi  
+group by pi.po_id,pi.item_id
+) pi on pi.po_id=p.po_id
+ inner join tenders t on t.tender_id=p.tender_id
+ inner join masitems m on m.item_id=pi.item_id
+ inner join facility_aut dir on dir.facility_aut_id=p.directorate_id
+  left outer join  
+ (   
+  select po_id,isnull(sum(Supplyqty),0) as Supplyqty  from SupplierDispatch d
+inner join Issue_item_details i on d.Issue_id=i.Issue_id
+inner  join maslocations u on u.location_id= d.location_id
+where d.status='C'  
+group by po_id
+  ) as sup on sup.po_id=pi.po_id  
+ 
+  left outer join  
+  (
+  select isnull(sum(r.receipt_qty),0) as receiptQTY ,r.po_id
+  from receipts r
+where r.recieved_date is not null and r.status in ('C','Received')  
+group by po_id
+  )as re on re.po_id=pi.po_id  
+
+   left outer join  
+  (
+  select sum(ri.received_qty) as insqty,r.po_id from receipts r
+left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+where r.recieved_date is not null and r.status in ('C')  
+group by r.po_id
+  )as ins on ins.po_id=pi.po_id  
+
+    left outer join  
+  (
+  
+select sum (deniedqty) as deniedqty ,ponoid from descrepency where issolved is null  
+group by ponoid
+  )as Den on Den.ponoid=pi.po_id
+
+     left outer join  
+  (
+  
+  select sum (deniedqty) as DenRec,ponoid from descrepency where receiptid is null and issolved is null
+  group by ponoid
+  )as DenR on DenR.ponoid=pi.po_id  
+
+ 
+   left outer join  
+  (
+  select max(r.recieved_date)LastRDate,r.po_id from receipts r
+left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+where r.recieved_date is not null and r.status in ('C','Received')  
+group by r.po_id
+  )as red on red.po_id=pi.po_id  
+ 
+
+  left outer join  
+    (
+    select Max(SORID) SRID,r.PONOID as   rpo_id
+    from SOORDERREASON r 
+    inner join ReasonMaster rm on rm.reasonid=r.reasonid 
+    where  r.reasonid not in (1)  
+    group by r.PONOID
+    ) rpo1 on rpo1.rpo_id=p.po_id
+
+    left outer join  
+    (
+     select  r.SORID,r.reasonid,rm.ReasonName,remarks, case when r.reasonid=13 then 'Y' else 'N' end as issolved
+    from SOORDERREASON r 
+    inner join ReasonMaster rm on rm.reasonid=r.reasonid 
+    where  r.reasonid not in (1)  
+    ) rpo  on rpo.SORID=rpo1.SRID
+
+   
+  where 1=1 --and p.po_id in (2393) 
+  and  p.status in ('Completed','Order Placed','Partially Received') and p.Ispayment is null and Supplyqty>0 and LastRDate is not null  " + whereclause + @"
+  ) a 
+  left outer join  
+  (
+  select u.user_name,m.PONOID,u.user_id,m.TOUSERID,convert(varchar, m.todate,103) as todate,convert(varchar, m.ENTRYDT, 100) as entDT 
+  from users u  
+  inner join masfilemovement m on m.TOUSERID=u.user_id and m.PRESENTFILEFLAG='Y'
+  ) pres on pres.PONOID=a.po_id   
+  where 1=1  " + whFileMyDesk + @"
+  group by entDT,todate, outward_no,pres.user_name,pres.user_id,potype,po_no,po_date,facility_aut_name,item_code_as_per_tender,item_name,LastRDate,LastRDaterow,Supplier,po_id,tender_no,fileno,filedt,pres.TOUSERID,penaltypercent,ReasonName,issolved ,a.reasonid,a.REMARKS
+) b
+where 1=1  " + ftunft + @"
+and po_id in (select distinct po_id from receipts r where SiteNotFlag='Y' )
+and po_id not in (select distinct p.po_id FROM receipts r  
+          left outer join receipt_item_details ri on ri.receipt_id = r.receipt_id
+          inner join purchase_order p on p.po_id=r.po_id 
+          inner join maslocations  m on m.location_id=r.location_id  
+          inner join  BLPINVOICES b on b.RECEIPTID=r.receipt_id and b.location_id=r.location_id and b.po_id=r.po_id
+          inner join BLPSANCTIONS s on s.SANCTIONID=b.SANCTIONIDP
+           where r.po_id=2170 and r.status in ('C','Received')  and r.SiteNotFlag='Y' and s.STATUS  in ('P'))
+order by ROW_NUMBER() OVER(ORDER BY Rowno )";
+                //        query = @"select fitunfit,po_id,tender_no, po_no ,Supplier, po_date,facility_aut_name,item_code_as_per_tender,item_name , POQTY,cast(POValue as bigint) as POValue, Supplyqty, instalationQty, receiptQTY, LastRDate1,potype ,fileno, filedt, PresentFile, presentuserid, TOUSERID, penaltypercent, reasonid ,ReasonName,issolved ,dbo.GetSiteNotReady(po_id) as SiteStatus , Rowno , todate , entDT, remarks,Extstatus from ( select case when (SUM(POQTY)=(isnull(SUM(insqty),0)+isnull(sum(deniedqty),0)) and SUM(POQTY)=(isnull(SUM(receiptQTY),0)+isnull(SUM(DenRec),0)) and (reasonid=11 or reasonid=13 or reasonid is null) ) then 'Fit for Payment' else case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11 OR reasonid=15 ) ) then 'Fit for Payment' else case when (SUM(POQTY)! =isnull(SUM(receiptQTY),0) and (reasonid=16 ) ) then 'Fit for Payment' else 'Not Fit For Payment' end end end as fitunfit, dbo.GetExtStatus(po_id) as Extstatus, a.po_id,tender_no,outward_no+'/'+po_no as po_no ,Supplier, CONVERT(varchar,po_date,103)as po_date,facility_aut_name,item_code_as_per_tender,item_name ,SUM(POQTY) as POQTY,sum(totalprice) POValue,SUM(Supplyqty)as Supplyqty, isnull(SUM(insqty),0) as instalationQty,isnull(SUM(receiptQTY),0) receiptQTY,CONVERT(varchar,LastRDate,103) as LastRDate1,potype ,fileno,CONVERT(varchar,filedt,103) as filedt,isnull(pres.user_name,'TPO(V)') PresentFile,isnull(pres.user_id,383) as presentuserid,isnull(pres.TOUSERID,383) as TOUSERID,isnull(penaltypercent,0) penaltypercent, reasonid ,ReasonName,issolved ,dbo.GetSiteNotReady(po_id) as SiteStatus ,ROW_NUMBER() OVER(ORDER BY LastRDaterow ) AS Rowno ,isnull(todate,'NA') as todate ,isnull(entDT,'NA') as entDT, remarks from ( select t.penaltypercent, p.po_id,t.tender_no,p.outward_no,p.po_no,(case when p.soissueDT is null then p.po_date else p.soissueDT end) as po_date,p.directorate_id,dir.facility_aut_name,m.item_code_as_per_tender,m.item_name,sp.name as Supplier,pi.quantity as POQTY,pi.totalprice,Supplyqty,re.receiptQTY, red.LastRDate ,case when isnull(rpo.reasonid,0) =13 then red.LastRDate else case when isnull(rpo.reasonid,0) !=0 then getdate() else red.LastRDate end end as LastRDaterow ,ins.insqty,den.deniedqty,DenR.DenRec,case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype ,p.fileno,p.filedt,rpo.ReasonName,rpo.issolved AS issolved,reasonid,rpo.remarks from purchase_order p inner join massuppliers sp on sp.supplier_id=p.supplier_id left outer join ( select sum(pi.quantity) as quantity,pi.po_id,pi.item_id,sum(pi.totalprice) as totalprice from po_items pi group by pi.po_id,pi.item_id ) pi on pi.po_id=p.po_id inner join tenders t on t.tender_id=p.tender_id inner join masitems m on m.item_id=pi.item_id inner join facility_aut dir on dir.facility_aut_id=p.directorate_id left outer join ( select po_id,isnull(sum(Supplyqty),0) as Supplyqty from SupplierDispatch d inner join Issue_item_details i on d.Issue_id=i.Issue_id inner join maslocations u on u.location_id= d.location_id where d.status='C' group by po_id ) as sup on sup.po_id=pi.po_id left outer join ( select isnull(sum(r.receipt_qty),0) as receiptQTY ,r.po_id from receipts r where r.recieved_date is not null and r.status in ('C','Received') group by po_id )as re on re.po_id=pi.po_id left outer join ( select sum(ri.received_qty) as insqty,r.po_id from receipts r left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id where r.recieved_date is not null and r.status in ('C') group by r.po_id )as ins on ins.po_id=pi.po_id left outer join ( select sum (deniedqty) as deniedqty ,ponoid from descrepency where issolved is null group by ponoid )as Den on Den.ponoid=pi.po_id left outer join ( select sum (deniedqty) as DenRec,ponoid from descrepency where receiptid is null and issolved is null group by ponoid )as DenR on DenR.ponoid=pi.po_id left outer join ( select max(r.recieved_date)LastRDate,r.po_id from receipts r left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id where r.recieved_date is not null and r.status in ('C','Received') group by r.po_id )as red on red.po_id=pi.po_id left outer join ( select Max(SORID) SRID,r.PONOID as rpo_id from SOORDERREASON r inner join ReasonMaster rm on rm.reasonid=r.reasonid where r.reasonid not in (1) group by r.PONOID ) rpo1 on rpo1.rpo_id=p.po_id left outer join ( select r.SORID,r.reasonid,rm.ReasonName,remarks, case when r.reasonid=13 then 'Y' else 'N' end as issolved from SOORDERREASON r inner join ReasonMaster rm on rm.reasonid=r.reasonid where r.reasonid not in (1) ) rpo on rpo.SORID=rpo1.SRID where 1=1 --and p.po_id in (2393) and p.status in ('Completed','Order Placed','Partially Received') and p.Ispayment is null and Supplyqty>0 and LastRDate is not null
+                //" + whereclause + @"
+                //) a
+                //left outer join 
+                //(
+                //select u.user_name,m.PONOID,u.user_id,m.TOUSERID,
+                //convert(varchar, m.todate,103) as todate,
+                //convert(varchar, m.ENTRYDT, 100) as entDT
+                //from users u 
+                //inner join masfilemovement m on m.TOUSERID=u.user_id and m.PRESENTFILEFLAG='Y'
+                //) pres on pres.PONOID=a.po_id   
+                //where 1=1 " + whFileMyDesk + @"
+                //group by entDT,todate, outward_no,pres.user_name,pres.user_id,potype,po_no,
+                //po_date,facility_aut_name,item_code_as_per_tender,item_name,LastRDate,
+                //LastRDaterow,Supplier,po_id,tender_no,fileno,filedt,pres.TOUSERID,
+                //penaltypercent,ReasonName,issolved ,a.reasonid,a.REMARKS
+                //)b
+                //where 1=1 
+                //" + ftunft + @"
+                //and po_id in (select distinct po_id from receipts r where SiteNotFlag='Y')
+                //order by ROW_NUMBER() OVER(ORDER BY Rowno )";
             }
 
             else
             {
-                query = @"select fitunfit,po_id,tender_no, po_no ,Supplier, po_date,facility_aut_name,item_code_as_per_tender,item_name , POQTY,cast(POValue as bigint) as POValue, Supplyqty, instalationQty, receiptQTY, LastRDate1,potype ,fileno, filedt, PresentFile, presentuserid, TOUSERID, penaltypercent, reasonid ,ReasonName,issolved ,dbo.GetSiteNotReady(po_id) as SiteStatus , Rowno , todate , entDT, remarks,Extstatus from ( select case when (SUM(POQTY)=(isnull(SUM(insqty),0)+isnull(sum(deniedqty),0)) and SUM(POQTY)=(isnull(SUM(receiptQTY),0)+isnull(SUM(DenRec),0)) and (reasonid=11 or reasonid=13 or reasonid is null) ) then 'Fit for Payment' else case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11 ) ) then 'Fit for Payment' else case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (isLC= 'Y') ) then 'Fit for Payment' else case when (SUM(POQTY)! =isnull(SUM(receiptQTY),0) and (reasonid=16 ) ) then 'Fit for Payment' else 'Not Fit For Payment' end end end end as fitunfit, dbo.GetExtStatus(po_id) as Extstatus, a.po_id,tender_no,outward_no+'/'+po_no as po_no ,Supplier, CONVERT(varchar,po_date,103)as po_date,facility_aut_name,item_code_as_per_tender,item_name ,SUM(POQTY) as POQTY,sum(totalprice) POValue,SUM(Supplyqty)as Supplyqty, isnull(SUM(insqty),0) as instalationQty,isnull(SUM(receiptQTY),0) receiptQTY,CONVERT(varchar,LastRDate,103) as LastRDate1,potype ,fileno,CONVERT(varchar,filedt,103) as filedt,isnull(pres.user_name,'TPO(V)') PresentFile,isnull(pres.user_id,383) as presentuserid,isnull(pres.TOUSERID,383) as TOUSERID,isnull(penaltypercent,0) penaltypercent, reasonid ,ReasonName,issolved ,dbo.GetSiteNotReady(po_id) as SiteStatus ,ROW_NUMBER() OVER(ORDER BY LastRDaterow ) AS Rowno ,isnull(todate,'NA') as todate ,isnull(entDT,'NA') as entDT, remarks from ( select t.penaltypercent, p.po_id,t.tender_no,p.outward_no,p.po_no,p.isLC,(case when p.soissueDT is null then p.po_date else p.soissueDT end) as po_date,p.directorate_id,dir.facility_aut_name,m.item_code_as_per_tender,m.item_name,sp.name as Supplier,pi.quantity as POQTY,pi.totalprice,Supplyqty,re.receiptQTY, red.LastRDate ,case when isnull(rpo.reasonid,0) =13 then red.LastRDate else case when isnull(rpo.reasonid,0) !=0 then getdate() else red.LastRDate end end as LastRDaterow ,ins.insqty,den.deniedqty,DenR.DenRec,case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype ,p.fileno,p.filedt,rpo.ReasonName,rpo.issolved AS issolved,reasonid,rpo.remarks from purchase_order p inner join massuppliers sp on sp.supplier_id=p.supplier_id left outer join ( select sum(pi.quantity) as quantity,pi.po_id,pi.item_id,sum(pi.totalprice) as totalprice from po_items pi group by pi.po_id,pi.item_id ) pi on pi.po_id=p.po_id inner join tenders t on t.tender_id=p.tender_id inner join masitems m on m.item_id=pi.item_id inner join facility_aut dir on dir.facility_aut_id=p.directorate_id left outer join ( select po_id,isnull(sum(Supplyqty),0) as Supplyqty from SupplierDispatch d inner join Issue_item_details i on d.Issue_id=i.Issue_id inner join maslocations u on u.location_id= d.location_id where d.status='C' group by po_id ) as sup on sup.po_id=pi.po_id left outer join ( select isnull(sum(r.receipt_qty),0) as receiptQTY ,r.po_id from receipts r where r.recieved_date is not null and r.status in ('C','Received') group by po_id )as re on re.po_id=pi.po_id left outer join ( select sum(ri.received_qty) as insqty,r.po_id from receipts r left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id where r.recieved_date is not null and r.status in ('C') group by r.po_id )as ins on ins.po_id=pi.po_id left outer join ( select sum (deniedqty) as deniedqty ,ponoid from descrepency where issolved is null group by ponoid )as Den on Den.ponoid=pi.po_id left outer join ( select sum (deniedqty) as DenRec,ponoid from descrepency where receiptid is null and issolved is null group by ponoid )as DenR on DenR.ponoid=pi.po_id left outer join ( select max(r.recieved_date)LastRDate,r.po_id from receipts r left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id where r.recieved_date is not null and r.status in ('C','Received') group by r.po_id )as red on red.po_id=pi.po_id left outer join ( select Max(SORID) SRID,r.PONOID as rpo_id from SOORDERREASON r inner join ReasonMaster rm on rm.reasonid=r.reasonid where r.reasonid not in (1) group by r.PONOID ) rpo1 on rpo1.rpo_id=p.po_id left outer join ( select r.SORID,r.reasonid,rm.ReasonName,remarks, case when r.reasonid=13 then 'Y' else 'N' end as issolved from SOORDERREASON r inner join ReasonMaster rm on rm.reasonid=r.reasonid where r.reasonid not in (1) ) rpo on rpo.SORID=rpo1.SRID where 1=1 --and p.po_id in (3062) and p.status in ('Completed','Order Placed','Partially Received') and p.Ispayment is null and Supplyqty>0 and LastRDate is not null " + whereclause + @"
-        ) a
-        left outer join 
-        (
-        select u.user_name,m.PONOID,u.user_id,m.TOUSERID,
-        convert(varchar, m.todate,103) as todate,
-        convert(varchar, m.ENTRYDT, 100) as entDT
-        from users u 
-        inner join masfilemovement m on m.TOUSERID=u.user_id and m.PRESENTFILEFLAG='Y'
-        ) pres on pres.PONOID=a.po_id 
-        where 1=1 " + whFileMyDesk + @"
-        group by entDT,todate, outward_no,pres.user_name,pres.user_id,potype,
-        po_no,isLC,po_date,facility_aut_name,item_code_as_per_tender,item_name,
-        LastRDate,LastRDaterow,Supplier,po_id,tender_no,fileno,filedt,
-        pres.TOUSERID,penaltypercent,ReasonName,issolved ,a.reasonid,a.REMARKS
-        )b
-        where 1=1 
-        " + ftunft + @"
-        order by ROW_NUMBER() OVER(ORDER BY Rowno )";
+              
+                query = @"select fitunfit,po_id,tender_no, po_no ,Supplier, po_date,facility_aut_name,item_code_as_per_tender,item_name 
+, POQTY,cast(POValue as bigint) as POValue, Supplyqty, instalationQty, receiptQTY, LastRDate1,potype 
+,fileno, filedt, PresentFile, presentuserid, TOUSERID, penaltypercent,
+reasonid
+,ReasonName,issolved
+,dbo.GetSiteNotReady(po_id) as SiteStatus
+, Rowno
+, todate
+, entDT,
+remarks,Extstatus from 
+(
+
+select 
+case when (SUM(POQTY)=(isnull(SUM(insqty),0)+isnull(sum(deniedqty),0)) and SUM(POQTY)=(isnull(SUM(receiptQTY),0)+isnull(SUM(DenRec),0))  and (reasonid=11 or reasonid=13 or reasonid is null) ) then 'Fit for Payment'
+else  case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (reasonid=11  ) ) then 'Fit for Payment'
+else  case when (SUM(POQTY)=isnull(SUM(receiptQTY),0) and (isLC= 'Y') ) then 'Fit for Payment'
+else  case when (SUM(POQTY)! =isnull(SUM(receiptQTY),0) and (reasonid=16 ) ) then 'Fit for Payment'
+
+else   'Not Fit For Payment' end end end end as fitunfit,
+dbo.GetExtStatus(po_id) as Extstatus,
+
+a.po_id,tender_no,outward_no+'/'+po_no as po_no ,Supplier, CONVERT(varchar,po_date,103)as po_date,facility_aut_name,item_code_as_per_tender,item_name
+,SUM(POQTY) as POQTY,sum(totalprice) POValue,SUM(Supplyqty)as Supplyqty, isnull(SUM(insqty),0)  as instalationQty,isnull(SUM(receiptQTY),0)  receiptQTY,CONVERT(varchar,LastRDate,103) as LastRDate1,potype
+,fileno,CONVERT(varchar,filedt,103) as filedt,isnull(pres.user_name,'TPO(V)') PresentFile,isnull(pres.user_id,383) as presentuserid,isnull(pres.TOUSERID,383) as TOUSERID,isnull(penaltypercent,0) penaltypercent,
+reasonid
+,ReasonName,issolved
+,dbo.GetSiteNotReady(po_id) as SiteStatus
+,ROW_NUMBER() OVER(ORDER BY LastRDaterow ) AS Rowno
+,isnull(todate,'NA') as  todate
+,isnull(entDT,'NA') as  entDT,
+remarks
+
+from (
+
+select t.penaltypercent, p.po_id,t.tender_no,p.outward_no,p.po_no,p.isLC,(case when p.soissueDT is null then p.po_date else p.soissueDT end) as  po_date,p.directorate_id,dir.facility_aut_name,m.item_code_as_per_tender,m.item_name,sp.name as Supplier,pi.quantity as POQTY,pi.totalprice,Supplyqty,re.receiptQTY,
+red.LastRDate ,case when  isnull(rpo.reasonid,0) =13 then red.LastRDate  else case when isnull(rpo.reasonid,0) !=0 then getdate()  else red.LastRDate end end as LastRDaterow
+,ins.insqty,den.deniedqty,DenR.DenRec,case when isnull(p.potype,'NP')='NP' then 'Normal PO' else 'Covid Po' end potype
+,p.fileno,p.filedt,rpo.ReasonName,rpo.issolved AS issolved,reasonid,rpo.remarks
+from  purchase_order p 
+ inner join massuppliers sp on sp.supplier_id=p.supplier_id
+ left outer join  
+ (
+select sum(pi.quantity) as quantity,pi.po_id,pi.item_id,sum(pi.totalprice) as totalprice  from po_items pi  
+group by pi.po_id,pi.item_id
+) pi on pi.po_id=p.po_id
+ inner join tenders t on t.tender_id=p.tender_id
+ inner join masitems m on m.item_id=pi.item_id
+ inner join facility_aut dir on dir.facility_aut_id=p.directorate_id
+  left outer join  
+ (   
+  select po_id,isnull(sum(Supplyqty),0) as Supplyqty  from SupplierDispatch d
+inner join Issue_item_details i on d.Issue_id=i.Issue_id
+inner  join maslocations u on u.location_id= d.location_id
+where d.status='C'  
+group by po_id
+  ) as sup on sup.po_id=pi.po_id  
+ 
+  left outer join  
+  (
+  select isnull(sum(r.receipt_qty),0) as receiptQTY ,r.po_id
+  from receipts r
+where r.recieved_date is not null and r.status in ('C','Received')  
+group by po_id
+  )as re on re.po_id=pi.po_id  
+
+   left outer join  
+  (
+  select sum(ri.received_qty) as insqty,r.po_id from receipts r
+left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+where r.recieved_date is not null and r.status in ('C')  
+group by r.po_id
+  )as ins on ins.po_id=pi.po_id  
+
+    left outer join  
+  (
+  
+select sum (deniedqty) as deniedqty ,ponoid from descrepency where issolved is null  
+group by ponoid
+  )as Den on Den.ponoid=pi.po_id
+
+     left outer join  
+  (
+  
+  select sum (deniedqty) as DenRec,ponoid from descrepency where receiptid is null and issolved is null
+  group by ponoid
+  )as DenR on DenR.ponoid=pi.po_id  
+
+ 
+   left outer join  
+  (
+  select max(r.recieved_date)LastRDate,r.po_id from receipts r
+left outer join receipt_item_details ri on ri.receipt_id=r.receipt_id
+where r.recieved_date is not null and r.status in ('C','Received')  
+group by r.po_id
+  )as red on red.po_id=pi.po_id  
+ 
+
+  left outer join  
+    (
+    select Max(SORID) SRID,r.PONOID as   rpo_id
+    from SOORDERREASON r 
+    inner join ReasonMaster rm on rm.reasonid=r.reasonid 
+    where  r.reasonid not in (1)  
+    group by r.PONOID
+    ) rpo1 on rpo1.rpo_id=p.po_id
+
+    left outer join  
+    (
+     select  r.SORID,r.reasonid,rm.ReasonName,remarks, case when r.reasonid=13 then 'Y' else 'N' end as issolved
+    from SOORDERREASON r 
+    inner join ReasonMaster rm on rm.reasonid=r.reasonid 
+    where  r.reasonid not in (1)  
+    ) rpo  on rpo.SORID=rpo1.SRID
+
+   
+  where 1=1 --and p.po_id in (3062) 
+  and  p.status in ('Completed','Order Placed','Partially Received') and p.Ispayment is null and Supplyqty>0 and LastRDate is not null   and  isnull(p.potype,'NP')='NP'  
+  " + whereclause + @"
+  ) a 
+  left outer join  
+  (
+  select u.user_name,m.PONOID,u.user_id,m.TOUSERID,convert(varchar, m.todate,103) as todate,convert(varchar, m.ENTRYDT, 100) as entDT 
+  from users u  
+  inner join masfilemovement m on m.TOUSERID=u.user_id and m.PRESENTFILEFLAG='Y'
+  ) pres on pres.PONOID=a.po_id  
+  where 1=1  " + whFileMyDesk + @"
+  group by entDT,todate, outward_no,pres.user_name,pres.user_id,potype,po_no,isLC,po_date,facility_aut_name,item_code_as_per_tender,item_name,LastRDate,LastRDaterow,Supplier,po_id,tender_no,fileno,filedt,pres.TOUSERID,penaltypercent,ReasonName,issolved ,a.reasonid,a.REMARKS
+) b
+where 1=1  " + ftunft + @"
+order by ROW_NUMBER() OVER(ORDER BY Rowno )";
             }
             Console.WriteLine(query);
             SqlCommand cmd = new SqlCommand(query, con);
@@ -309,26 +557,6 @@ and s.STATUS in ('P'))ORDER BY Rowno";
             SqlDataReader reader = await cmd.ExecuteReaderAsync();
 
             List<FitPaymentDTO> list = new List<FitPaymentDTO>();
-
-            //while (await reader.ReadAsync())
-            //{
-            //    list.Add(new FitPaymentDTO
-            //    {
-            //        //PoId = Convert.ToInt32(reader["po_id"]),
-            //        PoId = reader["po_id"] == DBNull.Value ? 0 : Convert.ToInt32(reader["po_id"]),
-            //        TenderNo = reader["tender_no"]?.ToString(),
-            //        PoNo = reader["po_no"]?.ToString(),
-            //        Supplier = reader["Supplier"]?.ToString(),
-            //        PoDate = reader["po_date"]?.ToString(),
-            //        ItemName = reader["item_name"]?.ToString(),
-
-            //        POQty = reader["POQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["POQTY"]),
-            //        SupplyQty = reader["Supplyqty"] == DBNull.Value ? 0 : Convert.ToInt32(reader["Supplyqty"]),
-            //        ReceiptQty = reader["receiptQTY"] == DBNull.Value ? 0 : Convert.ToInt32(reader["receiptQTY"]),
-
-            //        PresentFile = reader["PresentFile"]?.ToString()
-            //    });
-            //}
             while (await reader.ReadAsync())
             {
                 list.Add(new FitPaymentDTO
