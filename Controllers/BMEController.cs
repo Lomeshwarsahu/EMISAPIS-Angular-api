@@ -2740,8 +2740,8 @@ where  getdate() between ac.contract_date  and DATEADD(day, 1, ac.contract_end_d
                 {
                     await conn.OpenAsync();
 
-                    // --- 1. Validation Logic: EMD Amount Check ---
-                    if (dto.EmdAmount <= 0)
+                    // --- 1. Validation Logic: EMD Amount Check (0 is allowed, negative is not) ---
+                    if (dto.EmdAmount < 0)
                     {
                         return BadRequest(new { message = "Please Enter EMD" });
                     }
