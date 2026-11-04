@@ -746,10 +746,11 @@ inner join masitemP p on p.PID=m.pid
             string sql = "";
             if (mode == 1)
             {
-                sql = @"SELECT tender_id, tender_no + ' ,OpenDT-' + CONVERT(VARCHAR, cover_a, 103) AS name 
-                FROM tenders 
-                WHERE csid = 2 AND financial_year_id >= 15 AND cover_a IS NOT NULL 
-                ORDER BY cover_a DESC";
+                // Cover A Evaluation dropdown: latest tender on top; ISNULL so a tender without a number is not a blank row
+                sql = @"SELECT tender_id, ISNULL(tender_no, 'NA') + ' ,OpenDT-' + CONVERT(VARCHAR, cover_a, 103) AS name
+                FROM tenders
+                WHERE csid = 2 AND financial_year_id >= 15 AND cover_a IS NOT NULL
+                ORDER BY tender_id DESC";
             }
             else if (mode == 2)
             {
