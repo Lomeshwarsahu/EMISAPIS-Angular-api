@@ -1787,6 +1787,9 @@ where  getdate() between ac.contract_date  and DATEADD(day, 1, ac.contract_end_d
                 }
             }
 
+            // Latest tender on top
+            query += " ORDER BY A.TENDER_ID DESC";
+
             try
             {
                 using (SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection")))
@@ -3678,9 +3681,9 @@ where 1=1 and t.tender_id = @Tid";
                         string isGemTenderStr = request.IsGemTender ? "Y" : "N";
 
                         string query = @"INSERT INTO TENDERS 
-                                (TENDER_NO, tender_date, TENDER_DESCRIPTION, FINANCIAL_YEAR_ID, isGemTender, eProcID, tValue) 
+                                (TENDER_NO, tender_date, TENDER_DESCRIPTION, FINANCIAL_YEAR_ID, isGemTender, isDirectPurchase, eProcID, tValue) 
                                 VALUES 
-                                (@TNo, @TDate, @TDesc, @FinId, @IsGem, @GemNo, @TVal)";
+                                (@TNo, @TDate, @TDesc, @FinId, @IsGem, @IsDirect, @GemNo, @TVal)";
 
                         using (SqlCommand cmd = new SqlCommand(query, conn))
                         {
@@ -3689,6 +3692,7 @@ where 1=1 and t.tender_id = @Tid";
                             cmd.Parameters.AddWithValue("@TDesc", request.TenderDescription.Trim());
                             cmd.Parameters.AddWithValue("@FinId", request.FinancialYearId);
                             cmd.Parameters.AddWithValue("@IsGem", isGemTenderStr);
+                            cmd.Parameters.AddWithValue("@IsDirect", request.IsDirectPurchase ? "Y" : "N");
 
                             // Handle NULL for GemBidNo
                             cmd.Parameters.AddWithValue("@GemNo", string.IsNullOrEmpty(request.GemBidNo) ? (object)DBNull.Value : request.GemBidNo.Trim());

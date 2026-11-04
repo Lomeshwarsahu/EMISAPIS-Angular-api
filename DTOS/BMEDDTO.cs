@@ -745,8 +745,9 @@ namespace EMISAPIS.DTOS
         public string TenderDate { get; set; } // Format: YYYY-MM-DD
         public string FinancialYearId { get; set; }
         public bool IsGemTender { get; set; }
+        public bool IsDirectPurchase { get; set; }
         public string GemBidNo { get; set; }
-        public decimal TenderValue { get; set; }
+        public decimal TenderValue { get; set; } // In crore (the form converts lakh to crore)
     }
 
     public class ParticipationItemDTO

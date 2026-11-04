@@ -29,8 +29,9 @@ public class Tender
         if (undOBClaim == "Under Prep")
         {
             strcsid = " and csid in (2)";
-            // Legacy Tender.cs: both technical and finance Cover A evaluation must be done
-            whUnderObjectClaim = " and sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null ";
+            // Legacy Tender.cs needs both technical and finance Cover A evaluation; changed so a tender
+            // also shows once either role has frozen Cover A evaluation (BME/FreezeCoverAEvaluation)
+            whUnderObjectClaim = " and ((sc.IsCOVFinEli is not null and sc.ISCovTechEli is not null) or t.ISCovAFinishedTech = 'Y' or t.ISCovAFinishedFin = 'Y') ";
         }
         else if (undOBClaim == "Under Obj")
         {

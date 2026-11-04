@@ -689,8 +689,8 @@ namespace EMISAPIS.Controllers
                     ms.CovATechRemarksBefore_OBClM, ms.CovAFINRemarksBefore_OBClM, ms.IsObjUploadElig, ms.ObjUploadRemrks
                 FROM tenders t
                 INNER JOIN masschemesstatusdetails ms ON ms.SCHEMEID = t.tender_id
-                INNER JOIN masEligiblity tEl ON tEl.ID = ms.ISCovTechEli
-                INNER JOIN masEligiblity FEl ON FEl.ID = ms.IsCOVFinEli
+                LEFT JOIN masEligiblity tEl ON tEl.ID = ms.ISCovTechEli
+                LEFT JOIN masEligiblity FEl ON FEl.ID = ms.IsCOVFinEli
                 INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
                 INNER JOIN MASDOCUMENTTYPE dt ON dt.dtypeid = ms.EMDDOCTYPE
                 LEFT OUTER JOIN (
