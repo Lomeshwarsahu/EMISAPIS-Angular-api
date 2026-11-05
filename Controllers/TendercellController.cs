@@ -594,19 +594,13 @@ namespace EMISAPIS.Controllers
             int cnNElig = 0;
             bool value = false;
 
-            // 1. Validation Logic (समान लॉजिक जो आपके वेबफोर्म्स में था)
+            // 1. Validation Logic (legacy btnUpdateItems): remark is required only for an unticked (Not Eligible) item
             foreach (var item in model.Items)
             {
-                bool isChecked = item.IsChecked;
-                string reason = item.RemarksA?.Trim() ?? string.Empty;
-
-                if (isChecked && string.IsNullOrEmpty(reason))
+                if (!item.IsChecked && string.IsNullOrEmpty(item.RemarksA?.Trim()))
                 {
-                    value = true; // अगर चेकबॉक्स टिक है पर रीज़न खाली है
-                }
-                else if (!isChecked && string.IsNullOrEmpty(reason))
-                {
-                    value = true; // यदि टिक नहीं है और रीज़न खाली है
+                    value = true;
+                    break;
                 }
             }
 
@@ -672,6 +666,116 @@ namespace EMISAPIS.Controllers
 
 
 
+        // ---------------- Legacy TenderCoverAObClaimAfter.aspx: Finalization of Cover A ----------------
+
+        // Tender.cs checkCoVAEligibleSupIsAllItemsStatus: quoted items still without an Eligible / Not Eligible flag
+        private static async Task<bool> HasPendingCoverAItemsAsync(SqlConnection conn, SqlTransaction? tx, int tenderId, int? schStatusDid)
+        {
+            string sql = @"SELECT COUNT(*) FROM masschemesstatusdetails s
+                LEFT OUTER JOIN schemestatusdetailschild sc ON sc.SCHSTATUSDID = s.SCHSTATUSDID
+                WHERE s.SCHEMEID = @Tid AND sc.FLAGCOB IS NULL" + (schStatusDid.HasValue ? " AND sc.SCHSTATUSDID = @Sid" : "");
+            using SqlCommand cmd = new SqlCommand(sql, conn, tx);
+            cmd.Parameters.AddWithValue("@Tid", tenderId);
+            if (schStatusDid.HasValue) cmd.Parameters.AddWithValue("@Sid", schStatusDid.Value);
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync()) > 0;
+        }
+
+        // btnaccepted_Click ("Bidder"): saves the Final Eligibility and Final Remarks after Object Claim for one bidder
+        [HttpPost("UpdateFinalCoverABidder")]
+        public async Task<IActionResult> UpdateFinalCoverABidder([FromBody] UpdateFinalCoverABidderRequest request)
+        {
+            string eli = (request.Eligibility ?? "").Trim();
+            string remarks = (request.Remarks ?? "").Trim();
+            if (eli != "Y" && eli != "N") return BadRequest(new { message = "Please Eligible/Not Eligible" });
+            if (eli == "N" && remarks == "") return BadRequest(new { message = "Please Enter Rejection Remark for Not Eligible" });
+
+            try
+            {
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                await conn.OpenAsync();
+                using SqlTransaction tx = conn.BeginTransaction();
+
+                if (eli == "Y" && await HasPendingCoverAItemsAsync(conn, tx, request.TenderId, request.SchStatusDid))
+                    return BadRequest(new { message = "Please make Eligible/Not Eligible each quoted Items for this bidder" });
+
+                // Not Eligible bidder: every quoted item becomes Not Eligible
+                if (eli == "N")
+                {
+                    using SqlCommand c = new SqlCommand("UPDATE schemestatusdetailschild SET FLAGCOB = 'N' WHERE SCHSTATUSDID = @Sid AND schemeid = @Tid", conn, tx);
+                    c.Parameters.AddWithValue("@Sid", request.SchStatusDid);
+                    c.Parameters.AddWithValue("@Tid", request.TenderId);
+                    await c.ExecuteNonQueryAsync();
+                }
+
+                using SqlCommand u = new SqlCommand(@"UPDATE masschemesstatusdetails SET ISELIGIBLE_B = @Eli, FinalCovrARemarks = @Rem, FinalCovrAEntryDT = GETDATE()
+                    WHERE SCHSTATUSDID = @Sid AND schemeid = @Tid", conn, tx);
+                u.Parameters.AddWithValue("@Eli", eli);
+                u.Parameters.AddWithValue("@Rem", remarks);
+                u.Parameters.AddWithValue("@Sid", request.SchStatusDid);
+                u.Parameters.AddWithValue("@Tid", request.TenderId);
+                if (await u.ExecuteNonQueryAsync() == 0)
+                    return NotFound(new { message = "Record not found to update." });
+
+                tx.Commit();
+                return Ok(new
+                {
+                    message = eli == "N"
+                        ? "Cover A Process With Non Eligible Status, All items are completely Not eligible"
+                        : "Cover A Process Finalized for the Supplier Successfully"
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error updating final Cover A", error = ex.Message });
+            }
+        }
+
+        // btnFreezCovA_Click ("Finalize COVER A Shortlisting"): tender goes to csid 3 with the Cover B open date
+        [HttpPost("FinalizeCoverA")]
+        public async Task<IActionResult> FinalizeCoverA([FromBody] FinalizeCoverARequest request)
+        {
+            if (request.TenderId <= 0) return BadRequest(new { message = "Select Tender No first" });
+            if (!DateTime.TryParse(request.CoverBDate, out DateTime covB)) return BadRequest(new { message = "Cover B Open Date Required" });
+
+            try
+            {
+                using SqlConnection conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
+                await conn.OpenAsync();
+
+                if (await HasPendingCoverAItemsAsync(conn, null, request.TenderId, null))
+                    return BadRequest(new { message = "Before Finalization of Cover A, Please make Eligible/Not Eligible each quoted Items for all Bidders" });
+
+                // Tender.cs checkSupplierEvaluationCompleted(tenderid, "7", "FinalCOVA")
+                using (SqlCommand p = new SqlCommand(@"SELECT COUNT(DISTINCT sc.SUPPLIERID) FROM masschemesstatusdetails sc
+                    INNER JOIN tenders t ON t.tender_id = sc.SCHEMEID WHERE t.tender_id = @Tid AND t.csid = 7 AND sc.ISELIGIBLE_B IS NULL", conn))
+                {
+                    p.Parameters.AddWithValue("@Tid", request.TenderId);
+                    if (Convert.ToInt32(await p.ExecuteScalarAsync()) > 0)
+                        return BadRequest(new { message = "Final Cover A Summary Sheet Not Completed for all suppliers" });
+                }
+
+                DateTime? objEnd = null;
+                using (SqlCommand c = new SqlCommand("SELECT ObjCEndDT FROM tenders WHERE tender_id = @Tid", conn))
+                {
+                    c.Parameters.AddWithValue("@Tid", request.TenderId);
+                    object? v = await c.ExecuteScalarAsync();
+                    if (v != null && v != DBNull.Value) objEnd = Convert.ToDateTime(v).Date;
+                }
+                if (objEnd == null) return BadRequest(new { message = "Claim Objection End Date not found for this tender" });
+                if (covB.Date < objEnd) return BadRequest(new { message = "Cover B Date Should be Greater/Equal to Tender Claim Objection Last Date" });
+
+                using SqlCommand u = new SqlCommand("UPDATE tenders SET csid = 3, cover_b = @B WHERE tender_id = @Tid", conn);
+                u.Parameters.AddWithValue("@B", covB.Date);
+                u.Parameters.AddWithValue("@Tid", request.TenderId);
+                await u.ExecuteNonQueryAsync();
+                return Ok(new { message = "COVER-A Final Summary Sheet Updated Successfully" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "COVER-A Final Summary Sheet Not Saved", error = ex.Message });
+            }
+        }
+
         // ---------------- Legacy TenderCoverAObClaim.aspx: Claim-Object Preparation ----------------
 
         // setItemName + ItemDetails
@@ -693,7 +797,7 @@ namespace EMISAPIS.Controllers
                 LEFT JOIN masEligiblity tEl ON tEl.ID = ms.ISCovTechEli
                 LEFT JOIN masEligiblity FEl ON FEl.ID = ms.IsCOVFinEli
                 INNER JOIN massuppliers mas ON mas.supplier_id = ms.SUPPLIERID
-                INNER JOIN MASDOCUMENTTYPE dt ON dt.dtypeid = ms.EMDDOCTYPE
+                LEFT JOIN MASDOCUMENTTYPE dt ON dt.dtypeid = ms.EMDDOCTYPE
                 LEFT OUTER JOIN (
                     SELECT COUNT(ch.ITEMID) cntparticipated, sc.SCHEMEID, sc.SUPPLIERID FROM SCHEMESTATUSDETAILSCHILD ch
                     INNER JOIN masschemesstatusdetails sc ON sc.SCHSTATUSDID = ch.SCHSTATUSDID

@@ -173,4 +173,19 @@
         public string EndDate { get; set; } = string.Empty;
     }
 
+    // Legacy TenderCoverAObClaimAfter.aspx (Finalization of Cover A)
+    public class UpdateFinalCoverABidderRequest
+    {
+        public int TenderId { get; set; }
+        public int SchStatusDid { get; set; }
+        public string Eligibility { get; set; } = string.Empty;
+        public string? Remarks { get; set; }
+    }
+
+    public class FinalizeCoverARequest
+    {
+        public int TenderId { get; set; }
+        public string CoverBDate { get; set; } = string.Empty;
+    }
+
 }
