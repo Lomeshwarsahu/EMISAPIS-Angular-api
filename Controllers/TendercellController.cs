@@ -298,7 +298,8 @@ namespace EMISAPIS.Controllers
                         WHEN ms.CSID = '3' THEN 'Cover B Opened' 
                         WHEN ms.CSID = '4' THEN 'Under Demo' 
                         WHEN ms.CSID = '5' THEN 'Price Bid' 
-                        ELSE 'Tender Cancelled' 
+                        WHEN ms.CSID = '6' THEN 'Tender Cancelled' 
+                        ELSE ms.CStatus 
                      END) AS Status,
                     CONVERT(VARCHAR(10), m.TENDER_DATE, 103) AS TENDER_DATE, 
                     ms.CStatus,
@@ -400,11 +401,11 @@ namespace EMISAPIS.Controllers
                     ms.ISELIGIBLE_B
                 FROM tenders t WITH (NOLOCK)
                 INNER JOIN masschemesstatusdetails ms WITH (NOLOCK) ON ms.SCHEMEID = t.tender_id
-                INNER JOIN masEligiblity tEl WITH (NOLOCK) ON tEl.ID = ms.ISCovTechEli
-                INNER JOIN masEligiblity FEl WITH (NOLOCK) ON FEl.ID = ms.IsCOVFinEli
-                INNER JOIN masEligiblity OBEl WITH (NOLOCK) ON OBEl.ID = ms.IsObjUploadElig
+                LEFT JOIN masEligiblity tEl WITH (NOLOCK) ON tEl.ID = ms.ISCovTechEli
+                LEFT JOIN masEligiblity FEl WITH (NOLOCK) ON FEl.ID = ms.IsCOVFinEli
+                LEFT JOIN masEligiblity OBEl WITH (NOLOCK) ON OBEl.ID = ms.IsObjUploadElig
                 INNER JOIN massuppliers mas WITH (NOLOCK) ON mas.supplier_id = ms.SUPPLIERID
-                INNER JOIN MASDOCUMENTTYPE dt WITH (NOLOCK) ON dt.dtypeid = ms.EMDDOCTYPE
+                LEFT JOIN MASDOCUMENTTYPE dt WITH (NOLOCK) ON dt.dtypeid = ms.EMDDOCTYPE
                 LEFT OUTER JOIN 
                 (
                     SELECT COUNT(ch.ITEMID) AS cntparticipated, sc.SCHEMEID, sc.SUPPLIERID 
@@ -680,7 +681,7 @@ namespace EMISAPIS.Controllers
             string headerSql = @"SELECT m.tender_id, m.tender_no, CONVERT(varchar(10), m.TENDER_DATE, 103) AS TENDER_DATE,
                     CONVERT(varchar, m.cover_a, 103) AS covADT, m.csid,
                     (CASE WHEN ms.CSID = '1' THEN 'Tender Live' WHEN ms.CSID = '2' THEN 'Cover A Opened' WHEN ms.CSID = '3' THEN 'Cover B Opened'
-                          WHEN ms.CSID = '4' THEN 'Under Demo' WHEN ms.CSID = '5' THEN 'Price Bid' ELSE 'Tender Cancelled' END) AS Status
+                          WHEN ms.CSID = '4' THEN 'Under Demo' WHEN ms.CSID = '5' THEN 'Price Bid' WHEN ms.CSID = '6' THEN 'Tender Cancelled' ELSE ms.CStatus END) AS Status
                 FROM mascoverstatus ms INNER JOIN TENDERS m ON m.csid = ms.csid
                 WHERE m.tender_id = @Tid";
             string gridSql = @"SELECT ms.SCHSTATUSDID, t.tender_id, mas.name, mas.supplier_id, ms.EMD,
